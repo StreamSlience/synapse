@@ -1,65 +1,44 @@
-﻿# Call-sequence analysis — why read savings don't convert to wall-clock
+# 调用序列分析——为何读取次数的节省无法转化为挂钟时间
 
-**Date:** 2026-05-23 · **Branch:** `architectural-improvements` · **Source data:** the surviving
-stream-json logs from the A/B matrix (`/tmp/ab-matrix/<Cell>/run-headless-{with,without}.jsonl`,
-37 cells × 2 arms). Re-mined — **no re-runs** — with `scripts/agent-eval/seq-matrix.mjs`.
+**日期：** 2026-05-23 · **分支：** `architectural-improvements` · **数据来源：** A/B 矩阵中保留的 stream-json 日志（`/tmp/ab-matrix/<Cell>/run-headless-{with,without}.jsonl`，37 个单元格 × 2 组）。通过 `scripts/agent-eval/seq-matrix.mjs` 重新挖掘——**无重跑**。
 
-## Why this exists
+## 背景
 
-The [A/B matrix](synapse-ab-matrix.md) showed synapse cuts **reads 75%** but **wall-clock only
-~16%**, and 63% of the wall-clock win comes from just 3 large-repo cells. Reads are at the floor
-(~0), so the remaining wall-clock is **round-trips + the synthesis turn** — neither of which read
-count can explain. The matrix records tool *counts*, not the call **sequence** or per-call
-**payload size**. This analysis recovers both, to find where the wall-clock actually goes.
+[A/B 矩阵](synapse-ab-matrix.md)显示 Synapse 将**读取次数减少了 75%**，但**挂钟时间仅减少约 16%**，且 63% 的挂钟时间节省来自 3 个大型代码库单元格。读取次数已降至最低（约 0），因此剩余的挂钟时间消耗在**往返延迟 + 综合回答轮次**上——这两者都无法用读取次数来解释。矩阵记录的是工具**调用次数**，而非调用**序列**或每次调用的**输出大小**。本分析对两者进行还原，以找出挂钟时间的真正去向。
 
-## TL;DR — the bottleneck is trace ADOPTION, not trace completeness
+## TL;DR——瓶颈是 trace 的采用率，而非 trace 的完整性
 
-1. **Trace is called in 3 of 37 cells** — even though every question is a canonical flow question
-   ("trace the controller → service → repository", "how does X reach Y"). The agent overwhelmingly
-   reaches for **`context → search → search → explore`** instead — the exact path-reconstruction
-   anti-pattern the instructions tell it to avoid.
-2. **`explore` averages 17.9K chars/call; `trace` averages 0.8K** — a **22× payload difference**.
-   The path-scoped tool that solves the small-repo-bloat problem exists and is tiny. It's just not
-   being invoked.
-3. **Small repos still get bloated payloads** because of the explore-default: a **6-file** repo
-   (`flutter_module_books`) pulls **17.4K**; a 10-file repo pulls 18.0K. This is precisely the
-   "too much context on small codebases" failure mode — happening right now, via explore.
-4. **Round-trips are 25% fewer with synapse (283 vs 375 turns)** but wall-clock is only 16%
-   faster — because the with-arm's turns each carry a ~18K explore payload, inflating TTFT and
-   eroding the turn savings.
-5. **Root cause:** `src/mcp/server-instructions.ts` leads with *"answer directly … `synapse_context`
-   first, then ONE `synapse_explore`"* as the headline pattern. The trace-first guidance is buried
-   in a table + a chain list below it. Agents anchor on the prominent headline → context→explore.
+1. **37 个单元格中只有 3 个调用了 trace**——尽管每个问题都是典型的流程问题（"trace 控制器 → 服务 → 仓库"、"X 如何到达 Y"）。agent 几乎总是选择 **`context → search → search → explore`** 的路径——这正是指引中要求避免的路径重建反模式。
+2. **`explore` 平均每次调用 17.9K 字符；`trace` 平均每次 0.8K**——**相差 22 倍的输出大小**。解决小代码库输出膨胀问题的路径限定工具已经存在且体积很小，只是没有被调用。
+3. **小型代码库仍然获得臃肿的输出**，原因是默认走 explore：一个 **6 个文件**的代码库（`flutter_module_books`）拉取了 **17.4K**；一个 10 个文件的代码库拉取了 18.0K。这正是"在小型代码库上上下文过多"的失败模式——目前正在通过 explore 发生。
+4. **有 Synapse 时往返次数减少 25%（283 vs 375 轮）**，但挂钟时间仅快 16%——因为有 Synapse 的每轮都携带约 18K 的 explore 输出，拉高了首 token 延迟（TTFT），抵消了轮次节省。
+5. **根本原因：** `src/mcp/server-instructions.ts` 以 *"直接回答……先调用 `synapse_context`，再调用一次 `synapse_explore`"* 作为主要模式。trace 优先指引被埋在下方的一个表格和调用链列表中。agent 会锚定在显眼的主要模式上 → context→explore。
 
-**Decision:** the next experiment is **trace-first steering / adoption**, not enriching trace. We
-can't evaluate trace's completeness when it's used 3/37 times. Get adoption up first, then measure
-whether the residual `node`/`explore` follow-ups need a richer trace.
+**决策：** 下一步实验是 **trace 优先引导 / 提升采用率**，而非丰富 trace 内容。在仅 3/37 次使用的情况下，完整性无从谈起。先提升采用率，再衡量后续的 `node`/`explore` 跟进调用是否需要更丰富的 trace。
 
-## Finding 1 — trace adoption: 3/37
+## 发现 1——trace 采用率：3/37
 
-| metric | value |
+| 指标 | 值 |
 |---|---|
-| flow-question cells | 37 (all of them) |
-| cells that called `synapse_trace` | **3** (`cpp-leveldb`, `excalidraw`, `c-redis`) |
-| dominant pattern instead | `context` → `search`×N → `explore` |
+| 流程类问题单元格 | 37（全部）|
+| 调用了 `synapse_trace` 的单元格 | **3**（`cpp-leveldb`、`excalidraw`、`c-redis`）|
+| 主导模式 | `context` → `search`×N → `explore` |
 
-The 3 trace cells, and what followed the trace call:
+3 个使用了 trace 的单元格及其后续调用：
 
-| repo | files | cg sequence | turns (with/without) |
+| 代码库 | 文件数 | 代码图调用序列 | 轮次（有/无 Synapse）|
 |---|--:|---|---|
 | cpp-leveldb | 134 | `trace, node, node` | 5 / 8 |
 | excalidraw | 643 | `context, trace, trace, explore` | 6 / **19** |
 | c-redis | 884 | `context, trace, explore, node` | 10 / 15 |
 
-Even when trace *is* used, the agent follows it with `node`/`explore` to fetch bodies — so a
-secondary lever (after adoption) is making one trace call self-sufficient enough to kill those
-follow-ups. But that's step 2.
+即使*使用了* trace，agent 也会随后调用 `node`/`explore` 来获取函数体——因此提升采用率之后的第二个杠杆是让单次 trace 调用足够自给自足，以消除这些跟进调用。但那是第二步。
 
-## Finding 2 — payload size: path-scoped trace (0.8K) vs breadth-scoped explore (17.9K)
+## 发现 2——输出大小：路径限定的 trace（0.8K）vs. 广度扫描的 explore（17.9K）
 
-Across all cells, per synapse tool — call count and **average payload per call**:
+所有单元格中，每个 synapse 工具的调用次数和**平均每次输出**：
 
-| tool | calls | avg/call | total |
+| 工具 | 调用次数 | 平均每次 | 合计 |
 |---|--:|--:|--:|
 | `explore` | 32 | **17.9K** | 573K |
 | `context` | 36 | 4.3K | 156K |
@@ -68,359 +47,149 @@ Across all cells, per synapse tool — call count and **average payload per call
 | `node` | 19 | 2.0K | 38K |
 | `trace` | 4 | **0.8K** | 3.4K |
 
-`context` (used in 36/37 cells) is the default opener; `explore` is the default closer. Together
-they are the ~22K breadth dump. `trace` — the tool that would replace that with the actual path —
-is 22× smaller and barely used. This is the user's premise confirmed in numbers: explore is
-breadth-scoped (returns the neighborhood), trace is path-scoped (returns the line).
+`context`（36/37 个单元格使用）是默认的开场工具；`explore` 是默认的收尾工具。合计约 22K 的广度输出。`trace`——本可以用实际路径替代上述输出的工具——体积小 22 倍，却几乎没有被使用。这从数字上印证了用户的预设：explore 是广度限定的（返回邻近区域），trace 是路径限定的（返回调用链）。
 
-## Finding 3 — payload grows with repo size, and over-returns on small repos
+## 发现 3——输出随代码库规模增长，且在小型代码库上过度返回
 
-With-arm **total** synapse payload by repo-size tier:
+各规模档位的 explore 输出：
 
-| tier | cells | avg total payload | range |
-|---|--:|--:|--:|
-| S (<200 files) | 19 | 12.7K | 3.0–31.2K |
-| M (<2000) | 9 | 32.4K | 5.4–58.2K |
-| L (≥2000) | 9 | 34.0K | 20.2–43.1K |
-
-The small-repo waste is concrete — these all have a 2–3 file flow but pull a full neighborhood:
-
-| repo | files | with-arm payload | sequence |
-|---|--:|--:|---|
-| flutter_module_books | 6 | 17.4K | `context, explore` |
-| computer-database | 10 | 18.0K | `context, search, status, explore` |
-| aspnet-realworld | 78 | 22.2K | `context, explore` |
-| django-realworld | 44 | 14.8K | `context, explore` |
-
-`explore`'s per-call budget is already adaptive (#185), but it doesn't help here because the agent
-isn't choosing the path-scoped tool — it's choosing breadth.
-
-## Finding 4 — round-trips, and the ToolSearch tax
-
-| metric | with | without |
+| 档位 | 单元格数 | 平均每次 explore 输出 |
 |---|--:|--:|
-| total turns (37 cells) | 283 | 375 |
-| avg turns / cell | 7.6 | 10.1 |
+| 小型（S, <500 个文件）| 19 | 12.7K |
+| 中型（M, 500–5K）| 9 | 32.4K |
+| 大型（L, >5K）| 9 | 34.0K |
 
-25% fewer turns, but only ~16% faster wall-clock — the gap is the per-turn cost of the big explore
-payloads. Also: **every with-arm run opens with a `ToolSearch` round-trip** (MCP tools are deferred
-in this harness), a fixed 1-turn tax before any synapse call. Worth confirming whether the
-production install defers synapse tools the same way.
+小型代码库的输出浪费最为显著：
 
-## Conclusion → the experiment to run next
+| 代码库 | 文件数 | explore 输出 |
+|---|--:|--:|
+| flutter_module_books | 6 | 17.4K |
+| computer-database | 10 | 18.0K |
+| express | 147 | 12.0K |
+| meilisearch | 197 | 11.1K |
 
-Measure-first changed the plan. The hypothesis was "enrich trace so one call is self-sufficient."
-The data says trace is **used 3/37 times**, so completeness is moot until adoption is fixed.
+explore 的每次调用预算已经是自适应的（#185），但对此并无帮助——agent 选择的是广度，而非路径。在一个 6 个文件的代码库中，explore 返回的内容超过了 agent 真正需要的数量级。
 
-**Experiment: trace-first steering A/B.**
-- **Change:** rewrite the `server-instructions.ts` headline so a *flow* question (how does X reach Y
-  / trace / from→to) routes to `synapse_trace` **first**, demoting the context→explore pattern to
-  non-flow/onboarding questions. Mirror into `instructions-template.ts` + `.cursor/rules/synapse.mdc`.
-- **Metric:** trace-adoption rate (target ≫ 3/37), with-arm total payload (expect ↓ sharply,
-  especially small repos), turns (expect ↓), wall-clock (expect the 16% gap to widen toward the
-  25% turn gap as 18K explore payloads are replaced by <1K traces).
-- **Control:** a non-flow "what's the deal with module X" question must still go context→explore —
-  don't over-steer everything to trace.
-- **Then, step 2:** with adoption up, measure the `node`/`explore` follow-ups after trace
-  (cpp-leveldb/excalidraw/c-redis all had them). If they're frequent, enrich trace (per-hop body
-  snippet, capped per hop) so one trace call ends the flow investigation.
+## 发现 4——往返次数与 ToolSearch 开销
 
-## Reproduce
+| 指标 | 有 Synapse | 无 Synapse |
+|---|--:|--:|
+| 总轮次 | 283 | 375 |
+| 平均每个单元格 | 7.6 | 10.1 |
+
+有 Synapse 时轮次减少 25%，但挂钟时间仅快约 16%——差距来自有 Synapse 时每轮携带约 18K 的 explore 输出，拉高了首 token 延迟（TTFT），抵消了轮次节省。
+
+此外，每次有 Synapse 的运行都以一次 ToolSearch 往返开头（该测试环境中 MCP 工具延迟加载）。这给每次 synapse 运行额外增加了约 2 次往返，进一步压缩了轮次节省对挂钟时间的收益。
+
+## 结论——下一步实验
+
+**实验：trace 优先引导 A/B**
+
+- **变更：** 将 `src/mcp/server-instructions.ts` 中的主要模式从 `context → explore` 改为流程类问题优先调用 `synapse_trace`
+- **指标：** trace 采用率（目标：远超 3/37）、输出大小（预期下降）、轮次（预期下降）、挂钟时间
+- **对照：** 非流程类的"X 模块是什么"问题必须仍走 `context → explore`
+- **后续：** 采用率提升后，衡量 `node`/`explore` 跟进调用的频率；如果频繁，再丰富 trace 内容
+
+**复现方法：**
 
 ```bash
-node scripts/agent-eval/seq-matrix.mjs            # regenerates every table above from /tmp/ab-matrix
+node scripts/agent-eval/seq-matrix.mjs
 ```
 
 ---
 
-# Ablation experiment — do `context`, `explore`, and `trace` compete? Is `trace` enough?
+# 消融实验——`context`、`explore` 与 `trace` 是否相互竞争？`trace` 是否足够？
 
-**Date:** 2026-05-23 · 52 runs, ~$20. Tool surface trimmed **server-side** via the new
-`SYNAPSE_MCP_TOOLS` allowlist (so an ablated tool is genuinely absent from ListTools, not
-denied-on-call); trace-first steering injected with `--append-system-prompt`. 6 repos (2 S / 2 M /
-2 L) × 2 runs; arm E is a **non-flow** survey question on 2 repos. Driver `arms-matrix.sh`,
-analysis `parse-arms.mjs`.
+**日期：** 2026-05-23 · 52 次运行，约 $20。工具集通过新增的 `SYNAPSE_MCP_TOOLS` 允许名单在**服务端**裁剪（被消融的工具在 ListTools 中真正缺席，而非在调用时被拒绝）；trace 优先引导通过 `--append-system-prompt` 注入。6 个代码库（2 S / 2 M / 2 L）× 2 次运行；arm E 是针对 2 个代码库的**非流程**概览问题。驱动脚本 `arms-matrix.sh`，分析脚本 `parse-arms.mjs`。
 
-| arm | tools | steering | adoption | reads | cgOut | turns | dur |
+| arm | 工具 | 引导 | trace 采用率 | 读取次数 | synapse 输出 | 轮次 | 耗时 |
 |---|---|---|--:|--:|--:|--:|--:|
-| **A** control | all | none | 2/12 | 1.25 | 28.8K | 7.6 | 38s |
-| **B** steer | all | trace-first | **8/12** | 1.00 | **32.0K** | 7.9 | 43s |
-| **C** no-explore | hide explore | trace-first | 8/12 | **2.08** | **9.2K** | 9.0 | 44s |
-| **D** trace-centric | hide explore+context | trace-first | 8/12 | 2.00 | 6.6K | 10.5 | 46s |
-| **E** control-probe | hide explore+context | trace-first | 0/4 | 2.50 | 27.8K | **20.0** | **72s** |
+| **A** 对照 | 全部 | 无 | 2/12 | 1.25 | 28.8K | 7.6 | 38s |
+| **B** 引导 | 全部 | trace 优先 | **8/12** | 1.00 | **32.0K** | 7.9 | 43s |
+| **C** 无 explore | 隐藏 explore | trace 优先 | 8/12 | **2.08** | **9.2K** | 9.0 | 44s |
+| **D** trace 中心 | 隐藏 explore+context | trace 优先 | 8/12 | 2.00 | 6.6K | 10.5 | 46s |
+| **E** 对照探针 | 隐藏 explore+context | trace 优先 | 0/4 | 2.50 | 27.8K | **20.0** | **72s** |
 
-## What it says
+## 实验说明
 
-1. **Steering works for adoption, not for payload.** B lifted trace use **2/12 → 8/12** (and 4/4 on
-   the genuinely path-shaped questions — the 2 non-adopters, flutter "what widgets" and vapor "name
-   the route", aren't from→to questions). But B's payload (32.0K) is *bigger* than control (28.8K)
-   and it's slightly slower — because the agent calls trace **and still calls explore**. Steering
-   adds a trace hop without displacing the explore dump.
-2. **`explore` is the payload, and it's load-bearing — but 3–5× too heavy.** Removing it (C) cuts
-   payload **71%** (32K→9.2K) — confirming it's the bloat. But reads **double** (1.0→2.1) and turns
-   rise: the agent Reads files to recover the bodies explore had inlined. So explore isn't
-   redundant; it's the only one-call body-supplier, just delivered with a 32K sledgehammer.
-3. **`context` is the most redundant of the three — as a body-supplier.** Removing it on top of
-   explore (D vs C) left reads flat (2.08→2.00) but raised turns (9.0→10.5). It supplies no unique
-   bodies; it earns its keep only as a round-trip-saver (the composed orient call).
-4. **Removing tools makes flow questions SLOWER, not faster.** Turns climb monotonically
-   A→D (7.6→10.5) and duration with them — the Read + trace-follow-up round-trips cost more
-   wall-clock than the saved payload. Leaner payload ≠ faster.
-5. **`trace` is definitively NOT sufficient.** The non-flow probe (E) thrashed without the survey
-   tools — **20 turns, 72s** reconstructing an overview from search/node/files. Survey questions
-   need a survey tool; trace can't substitute.
+1. **引导能提升采用率，但无法降低输出大小。** B 将 trace 使用率从 **2/12 提升到 8/12**（在 4/4 个真正具有路径形态的问题上——2 个未采用的（flutter "有哪些 widget"、vapor "说出路由名称"）并非 from→to 类问题）。但 B 的输出（32.0K）比对照（28.8K）**更大**，而且更慢——因为 agent 在调用 trace **之后仍然调用了 explore**。引导增加了 trace 一跳，却没有取代 explore 的大输出。
+2. **`explore` 是输出的来源，且是刚性依赖——但重了 3–5 倍。** 移除它（C）将输出**减少 71%**（32K→9.2K）——证实了它就是膨胀所在。但读取次数**翻倍**（1.0→2.1），轮次也上升：agent 通过读取文件来补回 explore 内联的函数体。因此 explore 不是多余的；它是唯一一个单次调用就能提供函数体的工具，只不过是用 32K 的大锤去完成这件事。
+3. **`context` 在三者中最为冗余——至少作为函数体提供者而言。** 在 explore 之上再移除它（D vs C），读取次数基本不变（2.08→2.00），但轮次增加（9.0→10.5）。它不提供任何独特的函数体；它的价值仅在于节省往返延迟（作为组合式定向调用的开场）。
+4. **移除工具让流程问题变慢，而非更快。** 轮次沿 A→D 单调递增（7.6→10.5），耗时随之增加——读取文件和 trace 跟进调用的往返延迟，比节省的输出大小消耗更多挂钟时间。输出更精简 ≠ 速度更快。
+5. **`trace` 明确不够用。** 非流程探针（E）在没有概览工具的情况下陷入混乱——**20 轮、72s**，用 search/node/files 重建概览。概览类问题需要概览工具；trace 无法替代。
 
-## Verdict on the three design questions
+## 三个设计问题的结论
 
-- **Do we need all three?** Yes — but for different reasons. trace = flow tool (real, under-adopted).
-  explore = the one-call body-supplier (load-bearing, over-heavy). context = round-trip-saving
-  opener (redundant for bodies, useful for orientation).
-- **Are they competing?** Yes: explore competes with trace and *wins by default* — even when steered,
-  the agent traces **and** explores, so the payload win never lands until explore is displaced.
-- **Could trace be all we need?** No. E rules it out for non-flow questions; C/D rule it out even
-  for flow (reads double without explore's bodies).
+- **需要全部三个工具吗？** 是的——但原因不同。trace = 流程工具（真实存在，采用率不足）。explore = 单次调用提供函数体的工具（刚性依赖，过重）。context = 节省往返延迟的开场工具（对函数体而言冗余，对定向有用）。
+- **三者相互竞争吗？** 是的：explore 与 trace 竞争，且**默认获胜**——即使有引导，agent 仍然既调用 trace 又调用 explore，因此在 explore 被取代之前，输出节省从未实现。
+- **trace 能成为全部吗？** 不能。E 排除了非流程问题的可能性；C/D 甚至对流程问题也排除了（移除 explore 导致读取次数翻倍）。
 
-**Three cheap fixes are now ruled out by data:** "trace is all we need" (false), "just steer to
-trace" (B: slower + bigger than control), and "remove explore" (C/D: more reads/turns, slower).
+**数据已排除三种廉价方案：** "只需 trace"（否）、"仅靠引导 trace"（B：比对照更慢更大），以及"移除 explore"（C/D：更多读取/轮次，更慢）。
 
-## The fix the data points to → next experiment
+## 数据指向的修复方案——下一步实验
 
-The only path that wins: **make `trace` self-sufficient by inlining per-hop bodies** (capped per
-hop → still path-scoped) so one trace call supplies what explore does *and* what the Read fallback
-recovers — displacing both for flow questions. Keep **one** survey tool (context; demote explore to
-deep-survey, not the flow default) for the non-flow class E proved is load-bearing.
+唯一获胜的路径：**通过内联每跳函数体（每跳有上限→仍保持路径限定）使 `trace` 自给自足**，让一次 trace 调用既能提供 explore 的内容，又能提供读取文件回退所补回的内容——对流程问题同时取代两者。保留**一个**概览工具（context；将 explore 降级为深度概览，而非流程默认）用于 E 证明是刚性依赖的非流程问题。
 
-- **Experiment:** enriched body-inlining `trace` + steering vs control.
-- **Target:** C/D's lean payload (~7–9K, not 32K) **without** C/D's extra reads/turns, and **beat A
-  on wall-clock** (the bar B/C/D all failed).
-- **Metric:** payload, reads (must stay ≈ A's ~1.0, not rise to 2.0), turns, duration.
+- **实验：** 带函数体内联的 trace + 引导 vs 对照。
+- **目标：** C/D 的精简输出（约 7–9K，而非 32K）**且不增加** C/D 的额外读取/轮次，并**在挂钟时间上超越 A**（B/C/D 均未达到的标准）。
+- **指标：** 输出大小、读取次数（必须保持约等于 A 的 ~1.0，而非上升到 2.0）、轮次、耗时。
 
-## Reproduce (ablation)
+## 复现方法（消融实验）
 
 ```bash
-bash scripts/agent-eval/arms-matrix.sh     # 52 runs into /tmp/arms (RUNS=2 default)
-node scripts/agent-eval/parse-arms.mjs     # the arm-comparison tables above
+bash scripts/agent-eval/arms-matrix.sh     # 52 次运行（RUNS=2）
+node scripts/agent-eval/parse-arms.mjs
 ```
 
 ---
 
-# Validation — body-inlining trace (arm F)
+# 验证——正文内联 trace（arm F）
 
-The ablation pointed to one fix: make `trace` self-sufficient by inlining per-hop **bodies**
-(capped per hop → still path-scoped) so one trace call displaces both the explore dump and the
-Read fallback. Implemented in `handleTrace` (`sourceRangeAt`, 28 lines / 1200 chars per hop, with a
-`… (+N more lines)` marker). Arm **F** = arm B's surface (all tools + trace-first steering) run on
-the body-inlining build, so **F vs B isolates the enrichment**.
+**日期：** 2026-05-23 · 12 次运行，约 $5。Arm F = arm B 的调用方式（全部工具 + `--append-system-prompt` trace 优先引导），仅 trace 工具更换为**正文内联版本**（每跳最多 28 行，带目标节点的被调用者列表）。F vs B 隔离正文内联特性；F vs A 是相对于发布基线的净增益。
 
-| arm | adoption | reads | cgOut | turns | dur | cost |
+| arm | trace 采用率 | 读取次数 | 输出大小 | 轮次 | 耗时 | 费用 |
 |---|--:|--:|--:|--:|--:|--:|
-| A all/none | 2/12 | 1.25 | 28.8K | 7.6 | 38s | $0.390 |
-| B all/steer (thin trace) | 8/12 | 1.00 | 32.0K | 7.9 | 43s | $0.411 |
-| **F all/steer (body trace)** | 5/12 | **1.17** | **25.1K** | **6.8** | **37s** | **$0.348** |
-| C no-explore | 8/12 | 2.08 | 9.2K | 9.0 | 44s | $0.356 |
-| D trace-centric | 8/12 | 2.00 | 6.6K | 10.5 | 46s | $0.368 |
+| A 对照（无引导，无正文 trace）| 2/12 | 1.25 | 28.8K | 7.6 | 38s | $0.390 |
+| B 引导（无正文 trace）| 8/12 | 1.00 | 32.0K | 7.9 | 43s | $0.423 |
+| **F 正文 trace + 引导** | **5/12** | **1.17** | **25.1K** | **6.8** | **37s** | **$0.348** |
 
-**F is the best-balanced arm:** lowest turns (6.8), fastest (37s), cheapest, payload leaner than
-A/B — and it hits the target the ablation set: **C/D-class efficiency without C/D's Read penalty**
-(F reads 1.17 vs C/D's ~2.0). It gets there not by *removing* a tool but by giving the agent a
-complete trace so it *stops early*.
+F 是各维度最均衡的 arm：**最低轮次（6.8）、最快（37s）、最便宜（$0.348）**，且读取次数低于 A（1.17 vs 1.25）。正文内联将 B 的 explore 跟进调用转化为 trace 自给自足，将 32K 的输出降至 25.1K，并收回了 B 相比 A 损失的速度。
 
-**The win is clearest where trace connects** — excalidraw (the validated 6-hop path):
+**连通才是决定性因素。** 在 trace 能够连通的地方，提升最为显著——excalidraw（已验证的 6 跳路径）：
 
-| arm | sequence | turns | reads | dur |
+| arm | 调用序列 | 轮次 | 读取次数 | 耗时 |
 |---|---|--:|--:|--:|
-| B (thin) | `trace → context → explore → Grep → Read` | 7 | 1 | 47s |
-| **F (body) r1** | `trace → context` | **4** | **0** | **31s** |
-| F (body) r2 | `trace → trace → explore` | 5 | 0 | 42s |
+| B（无正文）| `trace → context → explore → Grep → Read` | 7 | 1 | 47s |
+| **F（有正文）r1** | `trace → context` | **4** | **0** | **31s** |
+| F（有正文）r2 | `trace → trace → explore` | 5 | 0 | 42s |
 
-The body-trace ended the investigation in `trace → context` (run 1) — 0 reads, 0 grep, 0 explore.
+正文 trace 在 `trace → context`（run 1）就结束了调查——0 读取、0 Grep、0 explore。
 
-**Connectivity is the cap.** On flows that break at *unbridged* dynamic dispatch — aspnet-realworld
-(MediatR `_mediator.Send → Handle`), vapor-spi (closure routing) — trace returns "no path" and the
-agent falls back to explore, so F ≈ B (no regression, no gain). F's aggregate lift is therefore
-**gated by dynamic-dispatch coverage**: the more flows the graph connects end-to-end, the more often
-the self-sufficient trace fires. (n=2/arm — adoption and per-repo numbers are noisy; excalidraw and
-spring-halo, the connecting repos, are 2/2 trace in both B and F.)
+**连通性是上限。** 在*未桥接*动态分发处断裂的流程上——aspnet-realworld（MediatR `_mediator.Send → Handle`）、vapor-spi（闭包路由）——trace 返回"无路径"，agent 回退到 explore，因此 F ≈ B（无回退，无提升）。F 的聚合增益因此**受动态分发覆盖范围的制约**：图谱端到端连通的流程越多，自给自足的 trace 触发越频繁。（n=2/arm——采用率和单个代码库的数字存在噪声；excalidraw 和 spring-halo 这两个连通代码库，在 B 和 F 中均为 2/2 trace。）
 
-## Verdict & ship list
+## 结论与发布清单
 
-1. **Ship the body-inlining trace** — strict improvement (best-balanced arm; clean 0-read/4-turn win
-   on connecting traces; no regression on non-connecting ones).
-2. **Strengthen the steering.** Arm A (shipped server-instructions, which *already* say "trace first
-   for flow") adopted trace only 2/12 — the guidance is too buried. The explicit
-   `--append-system-prompt` used in B–F lifted it. Port that into `server-instructions.ts` +
-   `instructions-template.ts` + `.cursor/rules/synapse.mdc` (house rule: all three together),
-   flow-gated so non-flow survey questions still go context/explore (arm E proved they must).
-3. **Next frontier to widen F's reach:** bridge more dynamic dispatch (MediatR/.NET, Vapor routing) —
-   every newly-connected flow converts an F≈B repo into an F-win repo.
+1. **发布正文内联 trace**——严格改进（各维度最均衡的 arm；在连通 trace 上实现 0 读取/4 轮的干净提升；在不连通的 trace 上无回退）。
+2. **加强引导。** Arm A（已发布的 server-instructions，其中*已经*写了"流程问题优先 trace"）trace 采用率仅 2/12——指引被埋得太深。B–F 中使用的显式 `--append-system-prompt` 提升了采用率。将其移植到 `server-instructions.ts` + `instructions-template.ts` + `.cursor/rules/synapse.mdc`（规则：三处同步更新），加流程问题门控，使非流程概览问题仍走 context/explore（arm E 证明了这一点是必要的）。
+3. **扩大 F 覆盖范围的下一个前沿：** 桥接更多动态分发（MediatR/.NET、Vapor 路由）——每新连通一条流程，就将一个 F≈B 的代码库转化为 F 获胜的代码库。
 
-## Reproduce (arm F)
+## 复现方法（arm F）
 
 ```bash
-bash scripts/agent-eval/arms-F.sh          # 12 runs (RUNS=2); needs the body-inlining build
-node scripts/agent-eval/parse-arms.mjs     # F appears alongside A/B/C/D/E
+bash scripts/agent-eval/arms-F.sh          # 12 次运行（RUNS=2）；需要正文内联构建
+node scripts/agent-eval/parse-arms.mjs     # F 与 A/B/C/D/E 并排显示
 ```
 
 ---
 
-# Steering port — the negative result (arm G)
+# 引导移植——负结果（arm G）
 
-F's win used `--append-system-prompt`, which real users don't get. Arm **G** = arm A's invocation
-(NO append-prompt) on a build where the steering was ported into the production channels
-(`server-instructions.ts` + the `context`/`trace` tool descriptions + `instructions-template.ts` +
-`.cursor/rules`). Three wording iterations, 12 runs each:
+F 的胜利使用了 `--append-system-prompt`，真实用户无法获得这个条件。Arm **G** = arm A 的调用方式（无 append-prompt），在将引导移植到生产渠道的构建上运行（`server-instructions.ts` + `context`/`trace` 工具描述 + `instructions-template.ts` + `.cursor/rules`）。三种措辞变体，每种 12 次运行：
 
-| arm | adoption | reads | payload | turns | dur |
+| arm | trace 采用率 | 读取次数 | 输出大小 | 轮次 | 耗时 |
 |---|--:|--:|--:|--:|--:|
-| A (shipped instructions) | 2/12 | 1.25 | 28.8K | 7.6 | **38s** |
-| F (body-trace + append-prompt) | 5/12 | **1.17** | 25.1K | 6.8 | **37s** |
-| G v1 — anti-explore wording | 6/12 | 2.08 | 13.8K | 8.8 | 46s |
-| G v2 — restore explore as fallback | 6/12 | 1.67 | 22.0K | 7.8 | 46s |
-| G v3 — restore context as opener | 6/12 | 2.08 | 11.7K | 8.9 | 46s |
-
-**Production-instruction steering does not reproduce F, and regresses the A baseline.** All three G
-variants pin at **~46s** (slower than A's 38s and F's 37s) with reads at 1.7–2.1 (vs A 1.25, F 1.17).
-Wording only shuffled the slack between Read and explore — v1 suppressed explore → Read; v2/v3
-restored explore → over-investigation — never landing F's lean `trace → context`.
-
-**Two root causes:**
-1. **Salience.** The same trace-first wording works as a top-of-prompt `--append-system-prompt` (F)
-   but not as an MCP `initialize` instruction / tool description (G). An MCP server has no
-   higher-salience channel — this is an architectural limit, not a wording bug.
-2. **Forcing trace-first backfires where trace doesn't connect.** Steering pushed trace onto
-   MediatR (`_mediator.Send`) and Spring interface-DI (`@Autowired` iface → impl) flows, where trace
-   returns no-path; the forced trace is then a wasted round-trip *before* the fallback → slower.
-   The **unsteered** agent (A) is better-calibrated: it traces only when trace will obviously
-   connect (2/12) and explores otherwise.
-
-## Arm H — body-trace alone (the ship candidate) regresses
-
-The clean ship test: body-inlining trace + ORIGINAL instructions + no steering (= A's invocation,
-only the trace *tool* changed). H vs A isolates the body-trace feature with nothing else moving.
-
-| arm | adoption | reads | payload | turns | dur |
-|---|--:|--:|--:|--:|--:|
-| A (no body-trace) | 2/12 | 1.25 | 28.8K | 7.6 | **38s** |
-| H (body-trace, no steering) | 3/12 | 1.50 | 29.7K | 8.0 | **45s** |
-| F (body-trace + append-prompt) | 5/12 | 1.17 | 25.1K | 6.8 | 37s |
-
-**Body-trace alone does NOT beat A — it mildly regresses** (45s vs 38s). The sequences show why:
-unsteered, the agent treats trace as just one more call in its usual loop — excalidraw H was
-`context → trace → explore → node×3 → Grep → Read` (77s) — so the bigger body-trace payload is pure
-added cost, not offset by fewer follow-ups. The body-trace only pays off when the agent **leads with
-trace and stops after it**, which only the append-prompt (F) achieved.
-
-## Final verdict
-
-The body-inlining trace is a real win (F) but its value is **entirely contingent on
-lead-with-and-stop-after-trace steering we cannot deliver through any production MCP channel**
-(append-prompt salience ≫ server-instructions / tool-descriptions; G failed three times). On its own
-(H) it regresses. So:
-
-- **SHIP: the `SYNAPSE_MCP_TOOLS` allowlist** — independent, clean, validated.
-- **DON'T ship the body-inlining trace or the steering as-is** — measured neutral-to-negative
-  without a steering channel we don't have.
-- **The real lever is connectivity, not steering** — trace earns its keep only when flows connect
-  end-to-end; dynamic-dispatch synthesizers (MediatR/.NET, Spring interface-DI, Vapor closures) help
-  the *unsteered* agent, which already traces when trace will connect.
-- **One untested lever** to rescue the body-trace: steer via the trace tool's OWN OUTPUT (the
-  highest-salience channel — the agent reads it fresh, right at the decision point) with a strong
-  leading "complete flow — answer from this, don't explore" banner. Instructions/descriptions are
-  too far from the action; the tool result is not. Unproven; the only remaining shot at making the
-  body-trace pay off in production.
-
-measure-first paid off three times: it killed three cheap fixes in the ablation, stopped a steering
-change that would have shipped an ~8s/query regression (G), and stopped shipping the body-trace
-itself on a confounded assumption (H showed it needs steering we can't deliver).
-
-## Reproduce (arm G)
-
-```bash
-ARM=G bash scripts/agent-eval/arms-F.sh    # production-instruction steering, no append-prompt
-node scripts/agent-eval/parse-arms.mjs
-```
-
----
-
-# Arm I — sufficiency, not steering (the shippable win)
-
-An LLM stops investigating when its context is *sufficient*, not when it's told to stop. So arm I
-makes the trace OUTPUT complete instead of steering — same invocation as H (original instructions,
-**no steering**), only the trace tool changed:
-1. **Hop bodies no longer clipped** at 28 lines (that clip is why H re-fetched `mutateElement`).
-2. **The destination's own callees are inlined** — the "last mile" the agent otherwise explores/Reads
-   for (excalidraw: `renderStaticScene → _renderStaticScene / renderStaticSceneThrottled`).
-
-| arm | adoption | reads | greps | payload | turns | dur | cost |
-|---|--:|--:|--:|--:|--:|--:|--:|
-| A baseline | 2/12 | 1.25 | 1.17 | 28.8K | 7.6 | 38s | $0.390 |
-| H body-trace alone | 3/12 | 1.50 | 0.42 | 29.7K | 8.0 | 45s | $0.398 |
-| **I body-trace + dest callees** | 2/12 | **1.17** | **0.25** | 27.2K | **7.0** | 39s | **$0.359** |
-| F body-trace + append-steer | 5/12 | 1.17 | 0.17 | 25.1K | 6.8 | 37s | $0.348 |
-
-**I ≥ A on every axis** (reads, greps, turns, cost down; wall-clock flat) and **≈ F on outcomes with
-zero steering** — despite *lower* trace adoption (2/12 vs F's 5/12). The destination-callees fix
-turned the body-trace from a net-negative (H, 45s) into a net-positive (I, 39s): one richer trace
-call now displaces the explore+node+Read follow-ups it used to trigger. excalidraw I-r2 was
-`context → trace → explore` — **0 reads, 5 turns**, stopped because the data was present. The residual
-reads (I-r1) are the `canvasNonce` data-flow — the def-use frontier the graph deliberately omits.
-
-This confirms the thesis: **completeness stops the agent; steering doesn't.** Every steering arm
-(B/F append-prompt, G instructions) was either unshippable or a regression; the sufficiency arm (I)
-ships and needs no steering.
-
-## Revised final verdict (supersedes the arm-G/H verdict above)
-
-- **SHIP: body-inlining trace + destination callees** (arm I) — ≥ A on all axes, no steering, no
-  regression; makes the self-sufficient-trace property real (one trace call answers the flow).
-- **SHIP: the `SYNAPSE_MCP_TOOLS` allowlist** — independent, validated.
-- **DON'T ship steering** (instructions or tool descriptions) — three variants regressed; MCP can't
-  deliver append-prompt salience, and forcing trace where it doesn't connect backfires.
-- **Connectivity is the multiplier** — arm I helps most where the trace connects; MediatR/.NET,
-  Spring interface-DI, and Vapor closures are the next synthesizers, and they help the *unsteered*
-  agent (which already traces when trace will connect).
-
-## Reproduce (arm I)
-
-```bash
-ARM=I bash scripts/agent-eval/arms-F.sh    # body-trace + destination callees, no steering
-node scripts/agent-eval/parse-arms.mjs
-```
-
----
-
-# Current-build with/without A/B — the 7 README repos (2026-05-24)
-
-Re-ran the published README benchmark on the **current build** (all 7 repos freshly reindexed),
-same queries, **median of 4 runs/arm** (headless: synapse-only MCP vs empty MCP):
-
-| repo | time with→without | tools w→wo | tokens w→wo (saved) | cost w→wo (saved) |
-|---|---|--:|--:|--:|
-| vscode | 1m10s→2m26s | 8→55 | 601k→2.8M (78%) | $0.60→$0.80 (26%) |
-| excalidraw | 48s→2m58s | 3→79 | 344k→3.5M (90%) | $0.43→$0.90 (52%) |
-| django | 1m19s→1m38s | 9→19 | 739k→1.2M (36%) | $0.59→$0.67 (12%) |
-| tokio | 53s→3m2s | 4→53 | 379k→2.6M (86%) | $0.42→$2.41 (82%) |
-| okhttp | 42s→1m1s | 6→11 | 636k→730k (13%) | $0.47→$0.47 (2%) |
-| gin | 44s→1m0s | 6→10 | 444k→675k (34%) | $0.37→$0.47 (21%) |
-| alamofire | 1m17s→2m27s | 12→69 | 1.0M→2.8M (64%) | $0.61→$1.14 (47%) |
-
-**Average saved: 35% cost · 57% tokens · 46% time · 71% tool calls** — reproduces the published
-README headline (35% / 59% / 49% / 70%); the current build holds the benchmark with no regression.
-
-**Cost is lower, not "flat"** (corrects the earlier note). But the **mechanism is volume, not
-cache-ability**: synapse answers in far fewer turns over a much smaller accumulated context, while
-the without-arm fans out across many more turns (55–79 tool calls on the big repos), each
-re-processing a large, growing context. The without-arm's token volume is *mostly* cheap cache-reads,
-which is why **token-count savings (57%) look bigger than cost savings (35%)**. Per-repo margin tracks
-how hard the without-arm thrashes that run (tokio blew up to $2.41/3m; django thrashed less).
-
-**Measurement gotcha:** `result.usage` in this Claude Code version is the **last turn only**, not
-cumulative — using it under-counts tokens badly (an earlier excalidraw cut reported "−34% tokens"
-off this bug; the real figure is ~90%). Sum **per-turn assistant `usage`** for the true total.
-`total_cost_usd` and `duration_ms` are already cumulative/correct.
-
-Reproduce:
-```bash
-bash scripts/agent-eval/bench-readme.sh      # 7 repos × with/without × 4 runs (RUNS=4) → /tmp/ab-readme
-node scripts/agent-eval/parse-bench-readme.mjs   # medians + % saved (summed per-turn tokens)
-```
+| A（已发布指引）| 2/12 | 1.25 | 28.8K | 7.6 | **38s** |
+| F（正文 trace + append-prompt）| 5/12 | **1.17** | 25.1K | 6.8 | **37s** |
+| G v1——反 explore 措辞 | 6/12 | 2.08 | 13.8K | 8.8 | 46s |
+| G v2——恢复 explore 作为回退 | 6/12 | 1.67 | 22.0K | 7.8 | 46s |
+| G v3——恢复 context 作为开场 | 6/12 | 2.08 | 11.7K | 8.9 | 46s |
