@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Installer Tests
  *
  * Tests for installer config-writer fixes:
@@ -20,7 +20,7 @@ import {
 } from '../src/installer/config-writer';
 
 function createTempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-installer-test-'));
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'synapse-installer-test-'));
 }
 
 function cleanupTempDir(dir: string): void {
@@ -54,7 +54,7 @@ describe('Installer Config Writer', () => {
 
       const content = JSON.parse(fs.readFileSync(mcpJson, 'utf-8'));
       expect(content.mcpServers).toBeDefined();
-      expect(content.mcpServers.codegraph).toBeDefined();
+      expect(content.mcpServers.synapse).toBeDefined();
     });
 
     it('should handle corrupted JSON by creating backup', () => {
@@ -79,14 +79,14 @@ describe('Installer Config Writer', () => {
       const backup = fs.readFileSync(mcpJson + '.backup', 'utf-8');
       expect(backup).toContain('this is not valid json');
 
-      // New file should be valid JSON with codegraph config
+      // New file should be valid JSON with synapse config
       const content = JSON.parse(fs.readFileSync(mcpJson, 'utf-8'));
-      expect(content.mcpServers.codegraph).toBeDefined();
+      expect(content.mcpServers.synapse).toBeDefined();
 
       warnSpy.mockRestore();
     });
 
-    it('should preserve existing valid config when adding codegraph', () => {
+    it('should preserve existing valid config when adding synapse', () => {
       const mcpJson = path.join(tempDir, '.mcp.json');
       fs.writeFileSync(mcpJson, JSON.stringify({
         mcpServers: { other: { command: 'other-tool' } },
@@ -96,7 +96,7 @@ describe('Installer Config Writer', () => {
       writeMcpConfig('local');
 
       const content = JSON.parse(fs.readFileSync(mcpJson, 'utf-8'));
-      expect(content.mcpServers.codegraph).toBeDefined();
+      expect(content.mcpServers.synapse).toBeDefined();
       expect(content.mcpServers.other).toBeDefined();
       expect(content.customField).toBe('preserved');
     });

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Resolved package version, computed once at module load.
  *
  * The version string is the rendezvous datum between cooperating daemon and
@@ -33,4 +33,4 @@ function readPackageVersion(): string {
   return '0.0.0-unknown';
 }
 
-export const CodeGraphPackageVersion = readPackageVersion();
+export const SynapsePackageVersion = readPackageVersion();

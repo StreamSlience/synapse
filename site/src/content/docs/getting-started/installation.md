@@ -1,30 +1,30 @@
----
+﻿---
 title: Installation
-description: Install CodeGraph and configure your AI coding agents.
+description: Install Synapse and configure your AI coding agents.
 ---
 
 ## 1. Run the installer
 
 ```bash
-npx @colbymchenry/codegraph
+npx @colbymchenry/synapse
 ```
 
 The installer will:
 
 - Ask which agent(s) to configure — auto-detecting installed ones from **Claude Code**, **Cursor**, **Codex CLI**, **opencode**, **Hermes Agent**, **Gemini CLI**, **Antigravity IDE**, and **Kiro**.
-- Prompt to install `codegraph` on your `PATH` (so agents can launch the MCP server).
+- Prompt to install `synapse` on your `PATH` (so agents can launch the MCP server).
 - Ask whether configs apply to all your projects or just this one.
-- Write each chosen agent's MCP server config plus an instructions file (e.g. `CLAUDE.md`, `.cursor/rules/codegraph.mdc`, `~/.codex/AGENTS.md`).
+- Write each chosen agent's MCP server config plus an instructions file (e.g. `CLAUDE.md`, `.cursor/rules/synapse.mdc`, `~/.codex/AGENTS.md`).
 - Set up auto-allow permissions when Claude Code is one of the targets.
 - Initialize your current project (local installs only).
 
 ## Non-interactive (scripting / CI)
 
 ```bash
-codegraph install --yes                              # auto-detect agents, install global
-codegraph install --target=cursor,claude --yes       # explicit target list
-codegraph install --target=auto --location=local     # detected agents, project-local
-codegraph install --print-config codex               # print snippet, no file writes
+synapse install --yes                              # auto-detect agents, install global
+synapse install --target=cursor,claude --yes       # explicit target list
+synapse install --target=auto --location=local     # detected agents, project-local
+synapse install --print-config codex               # print snippet, no file writes
 ```
 
 | Flag | Values | Default |
@@ -43,10 +43,10 @@ Restart your agent (Claude Code / Cursor / Codex CLI / opencode / Hermes Agent /
 
 ```bash
 cd your-project
-codegraph init -i
+synapse init -i
 ```
 
-This builds the per-project knowledge graph index and wires up any project-local agent surfaces, so a single global `codegraph install` works in every project you open.
+This builds the per-project knowledge graph index and wires up any project-local agent surfaces, so a single global `synapse install` works in every project you open.
 
 ## Supported platforms
 
@@ -60,10 +60,10 @@ Every release ships a self-contained build (bundled Node runtime — nothing to 
 
 ## Uninstall
 
-Changed your mind? One command removes CodeGraph from every agent it configured:
+Changed your mind? One command removes Synapse from every agent it configured:
 
 ```bash
-codegraph uninstall
+synapse uninstall
 ```
 
-This reverses the installer — stripping CodeGraph's MCP server config, instructions, and permissions from each configured agent. Your project indexes (`.codegraph/`) are left untouched; remove those per-project with `codegraph uninit`. Use `--target` to remove from specific agents, or `--yes` to run non-interactively.
+This reverses the installer — stripping Synapse's MCP server config, instructions, and permissions from each configured agent. Your project indexes (`.synapse/`) are left untouched; remove those per-project with `synapse uninit`. Use `--target` to remove from specific agents, or `--yes` to run non-interactively.

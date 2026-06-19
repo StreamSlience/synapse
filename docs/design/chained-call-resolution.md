@@ -1,4 +1,4 @@
-# Design + status: chained static-factory / fluent call resolution
+﻿# Design + status: chained static-factory / fluent call resolution
 
 **Status:** SHIPPED for **13 languages** (C++, C, PHP, Java, Kotlin, C#, Swift, Rust,
 Go, Scala, Dart, Objective-C, Pascal/Delphi) + a conformance pass. **TypeScript and Luau
@@ -78,7 +78,7 @@ walking `context.getSupertypes(...)`.
 | **TypeScript** | — | `.` | typeorm +0/−6 · nest **+0/−164** | **Evaluated, NOT shipped** — gradual typing; see below. |
 | **Luau** | — | `:` / `.` | Fusion +0/−0 · matter +0/−0 | **Evaluated, NOT shipped** — gradually typed; additive-safe (missing-edge gap, no regression) but real Luau rarely annotates factory returns, so +0 on both benchmarks. Works for `Foo.create(): Bar` then `:doIt()` (synthetic). |
 
-`EXTRACTION_VERSION` is now **18** (C++→…→Pascal chains→paren-less calls→free-routine attribution). Re-index with `codegraph index -f`
+`EXTRACTION_VERSION` is now **18** (C++→…→Pascal chains→paren-less calls→free-routine attribution). Re-index with `synapse index -f`
 to pick up the newer extractor on an existing graph.
 
 ## Why TypeScript was skipped

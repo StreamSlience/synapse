@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Java Framework Resolver
  *
  * Handles Spring Boot and general Java patterns.
@@ -338,7 +338,7 @@ function extractSpringConfig(
       // SECURITY (#383): store the KEY only, never the value. Config files
       // routinely hold secrets (DB passwords, API keys, JDBC URLs with embedded
       // credentials), and surfacing the value here pushes it into agent context
-      // unbidden (it lands in codegraph_node/explore output via the docstring).
+      // unbidden (it lands in synapse_node/explore output via the docstring).
       // The key is all `@Value`/`@ConfigurationProperties` resolution needs; an
       // agent that genuinely needs a value can read the file directly.
       updatedAt: now,

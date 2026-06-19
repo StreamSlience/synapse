@@ -1,4 +1,4 @@
-/**
+﻿/**
  * End-to-end pipeline integration tests
  *
  * Exercises the full happy path that unit tests cover in isolation:
@@ -19,9 +19,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import CodeGraph from '../../src/index';
+import Synapse from '../../src/index';
 
-function createTempDir(prefix = 'codegraph-int-'): string {
+function createTempDir(prefix = 'synapse-int-'): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
@@ -87,7 +87,7 @@ describe('Integration: full pipeline', () => {
     generateSyntheticProject(tempDir, MODULE_COUNT);
 
     // ── init ──────────────────────────────────────────────────────
-    const cg = await CodeGraph.init(tempDir, {
+    const cg = await Synapse.init(tempDir, {
       config: { include: ['**/*.ts'], exclude: [] },
     });
 
@@ -195,7 +195,7 @@ describe('Integration: full pipeline', () => {
       `export function broken(\n  this is { not valid typescript at all\n`
     );
 
-    const cg = await CodeGraph.init(tempDir, {
+    const cg = await Synapse.init(tempDir, {
       config: { include: ['**/*.ts'], exclude: [] },
     });
 
@@ -219,7 +219,7 @@ describe('Integration: full pipeline', () => {
   it('handles repeated sync calls when nothing has changed', async () => {
     generateSyntheticProject(tempDir, 10);
 
-    const cg = await CodeGraph.init(tempDir, {
+    const cg = await Synapse.init(tempDir, {
       config: { include: ['**/*.ts'], exclude: [] },
     });
 
@@ -250,7 +250,7 @@ describe('Integration: full pipeline', () => {
     // test pins the counter to the true DB totals across all phases.
     generateSyntheticProject(tempDir, 30);
 
-    const cg = await CodeGraph.init(tempDir, {
+    const cg = await Synapse.init(tempDir, {
       config: { include: ['**/*.ts'], exclude: [] },
     });
 

@@ -1,12 +1,12 @@
----
+﻿---
 name: add-lang
-description: Add tree-sitter language support to codegraph end-to-end — wire the grammar + extractor, write tests, then benchmark extraction quality and retrieval value on 3 popular real-world repos. Use when the user runs /add-lang <language> or asks to add/support a new language (e.g. Lua, Elixir, Zig, OCaml) in codegraph.
+description: Add tree-sitter language support to synapse end-to-end — wire the grammar + extractor, write tests, then benchmark extraction quality and retrieval value on 3 popular real-world repos. Use when the user runs /add-lang <language> or asks to add/support a new language (e.g. Lua, Elixir, Zig, OCaml) in synapse.
 ---
 
-# Add a language to CodeGraph
+# Add a language to Synapse
 
-Wire a new tree-sitter language into codegraph's extraction pipeline, prove it
-extracts real symbols on popular repos, and prove it beats no-codegraph for an
+Wire a new tree-sitter language into synapse's extraction pipeline, prove it
+extracts real symbols on popular repos, and prove it beats no-synapse for an
 agent. Runs **fully autonomously** — pick repos, benchmark, update docs, then
 report. **Never commit, push, publish, or tag** (house rule); leave all changes
 for the user to review.
@@ -16,7 +16,7 @@ The argument is the language token used throughout the `Language` union, e.g.
 single-token form everywhere (`csharp`, not `c#`).
 
 ## Prerequisites
-- Run from the codegraph repo root. `node`, `git`, `gh`, and a logged-in
+- Run from the synapse repo root. `node`, `git`, `gh`, and a logged-in
   `claude` CLI (the benchmark spawns real `claude -p` runs).
 - The benchmark uses the local dev build — Step 8 builds + links it on PATH.
 
@@ -96,7 +96,7 @@ These are exact, fragile wiring — match the existing style precisely:
 1. **`src/types.ts`** — TWO edits:
    - add `'<lang>',` to the `LANGUAGES` const (before `'unknown'`);
    - add `'**/*.<ext>',` to `DEFAULT_CONFIG.include`. **Don't skip this** — it's
-     the file-scan allowlist; without the glob, `codegraph init` finds **0
+     the file-scan allowlist; without the glob, `synapse init` finds **0
      files** even though detection/extraction are wired.
 2. **`src/extraction/grammars.ts`** — three maps:
    - `WASM_GRAMMAR_FILES`: `<lang>: 'tree-sitter-<lang>.wasm',`
@@ -131,7 +131,7 @@ npm run build            # tsc + copy-assets (copies any vendored *.wasm into di
 ```
 Index a small sample repo and check extraction:
 ```bash
-( cd <sample-repo> && codegraph init -i )
+( cd <sample-repo> && synapse init -i )
 node scripts/add-lang/verify-extraction.mjs <sample-repo> <lang>
 ```
 `verify-extraction.mjs` fails (exit 1) if the language isn't detected or only
@@ -168,16 +168,16 @@ needs tracing across files). Add a `"<Language>"` block to
 
 ### Step 8 — Benchmark all 3 (extraction + A/B)
 
-Make the dev build the codegraph on PATH **once**, then loop:
+Make the dev build the synapse on PATH **once**, then loop:
 ```bash
 npm run build && ./scripts/local-install.sh
 scripts/add-lang/bench.sh <lang> <name> <url> "<question>" headless   # ×3
 ```
-`bench.sh` clones (shared `/tmp/codegraph-corpus`), wipes + indexes, runs
+`bench.sh` clones (shared `/tmp/synapse-corpus`), wipes + indexes, runs
 `verify-extraction.mjs`, then the with/without retrieval A/B via
 `scripts/agent-eval/run-all.sh` (skips the paid A/B if extraction is broken).
 Read each `parse-run.mjs` summary printed by `run-all.sh`: tool calls, file
-`Read`s, Grep/Bash, codegraph-tool calls, duration, and **cost** — for both the
+`Read`s, Grep/Bash, synapse-tool calls, duration, and **cost** — for both the
 `with` and `without` arms. After the loop, restore the dev link if needed:
 `./scripts/local-install.sh`.
 
@@ -188,7 +188,7 @@ Read each `parse-run.mjs` summary printed by `run-all.sh`: tool calls, file
   `| <Lang> | \`.ext\` | Full support (classes, methods, …) |`.
 - **CHANGELOG.md**: add an `## [Unreleased]` section at the top (above the
   latest version) with `### Added` → a user-perspective bullet, e.g.
-  *"CodeGraph now indexes **<Lang>** (`.ext`) — functions, classes, imports, and
+  *"Synapse now indexes **<Lang>** (`.ext`) — functions, classes, imports, and
   call edges."* If `## [Unreleased]` already exists, append under it. (It's
   folded into the next versioned block at release time.)
 
@@ -199,7 +199,7 @@ Summarize for review:
   CHANGELOG + corpus.json (+ any vendored `.wasm`).
 - **Extraction** per repo: files / nodes / edges / `verify-extraction` result.
 - **A/B** per repo: `with` vs `without` (tool calls, file Reads, cost) and a
-  one-line verdict — did codegraph reduce effort, and did both arms reach a
+  one-line verdict — did synapse reduce effort, and did both arms reach a
   correct answer?
 - **Gaps / follow-ups** (node types not yet mapped, resolution edges missing,
   framework routes, etc.).
@@ -209,7 +209,7 @@ releases go through the GitHub Actions Release workflow.
 
 ## Notes
 - The A/B spawns real **paid** `claude -p` runs (opus, `--max-budget-usd`),
-  2 arms × 3 repos. The corpus dir `/tmp/codegraph-corpus` is shared with
+  2 arms × 3 repos. The corpus dir `/tmp/synapse-corpus` is shared with
   `/agent-eval`, so clones are reused across runs.
 - Any new `*.wasm` must live in `src/extraction/wasm/` — `copy-assets` (run by
   `npm run build`) ships it; otherwise it won't be in `dist/`.

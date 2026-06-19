@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 # Drive the tool-surface ablation across the chosen repos × arms (A–E).
 # Arms A–D ask the canonical FLOW question; arm E asks a NON-flow survey
 # question (the control probe — should degrade without explore+context).
@@ -6,7 +6,7 @@
 set -uo pipefail
 HARNESS="$(cd "$(dirname "$0")" && pwd)"
 RUNS="${RUNS:-2}"
-C="${CORPUS:-/tmp/codegraph-corpus}"
+C="${CORPUS:-/tmp/synapse-corpus}"
 NFQ='What are the main modules/components of this codebase and what does each one do? Give an overview of how it is organized.'
 
 # repo-path|flow-question  (2 small, 2 medium, 2 large — spans the size range)

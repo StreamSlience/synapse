@@ -1,4 +1,4 @@
----
+﻿---
 title: Indexing a Project
 description: Full index, incremental sync, and the file watcher.
 ---
@@ -7,24 +7,24 @@ description: Full index, incremental sync, and the file watcher.
 
 ```bash
 cd your-project
-codegraph init -i      # initialize + full index
+synapse init -i      # initialize + full index
 ```
 
-`init` creates `.codegraph/`; `-i`/`--index` builds the index immediately. To initialize without indexing, drop the flag and run `codegraph index` later.
+`init` creates `.synapse/`; `-i`/`--index` builds the index immediately. To initialize without indexing, drop the flag and run `synapse index` later.
 
 ## Full vs. incremental
 
 ```bash
-codegraph index           # full index of the whole project
-codegraph index --force   # re-index from scratch
-codegraph sync            # incremental — only changed files
+synapse index           # full index of the whole project
+synapse index --force   # re-index from scratch
+synapse sync            # incremental — only changed files
 ```
 
 `sync` is fast because it only reparses what changed. Use it after a branch switch or a batch of edits.
 
 ## Stay fresh automatically
 
-**You don't need to run `codegraph sync` by hand during an agent session.** When your agent (Claude Code, Cursor, Codex, opencode, Hermes, Gemini, Antigravity, Kiro) launches `codegraph serve --mcp`, three layers cooperate to keep the index in step with your code — and to never give the agent a quiet wrong answer in the small window between an edit and the next sync.
+**You don't need to run `synapse sync` by hand during an agent session.** When your agent (Claude Code, Cursor, Codex, opencode, Hermes, Gemini, Antigravity, Kiro) launches `synapse serve --mcp`, three layers cooperate to keep the index in step with your code — and to never give the agent a quiet wrong answer in the small window between an edit and the next sync.
 
 ### 1. File watcher with debounced auto-sync (always on)
 
@@ -38,15 +38,15 @@ agent writes src/Widget.ts
   → next agent query sees it
 ```
 
-**Tunable**: `CODEGRAPH_WATCH_DEBOUNCE_MS` overrides the default 2000ms, clamped to `[100ms, 60s]`. Useful when a build step or formatter writes many files in a tight burst — bump it to `5000` or `10000` so the watcher coalesces them into one sync.
+**Tunable**: `SYNAPSE_WATCH_DEBOUNCE_MS` overrides the default 2000ms, clamped to `[100ms, 60s]`. Useful when a build step or formatter writes many files in a tight burst — bump it to `5000` or `10000` so the watcher coalesces them into one sync.
 
 ### 2. Per-file staleness banner — covers the debounce window
 
-The watcher debounce introduces a small window (typically 2s) where a freshly-edited file is on disk but not yet in the index. CodeGraph closes that window with a per-file staleness banner: if any MCP tool response would reference a file that's currently pending re-index, the response prepends a `⚠️` banner naming the stale file:
+The watcher debounce introduces a small window (typically 2s) where a freshly-edited file is on disk but not yet in the index. Synapse closes that window with a per-file staleness banner: if any MCP tool response would reference a file that's currently pending re-index, the response prepends a `⚠️` banner naming the stale file:
 
 ```
 ⚠️ Some files referenced below were edited since the last index sync —
-their codegraph entries may be stale:
+their synapse entries may be stale:
   - src/Widget.ts (edited 800ms ago, pending sync)
 For accurate content of those specific files, Read them directly.
 The rest of this response is fresh.
@@ -61,15 +61,15 @@ Pending files **not** referenced by the response surface as a small footer inste
 
 ### 3. Connect-time catch-up — covers gaps when the MCP server wasn't running
 
-When your editor / agent (re)connects to the MCP server, codegraph runs a fast filesystem-based reconciliation (a `(size, mtime)` stat pre-filter, then a content hash on the rest) before answering the first query. So files changed while no MCP server was running — a `git pull` from the terminal, an edit from another editor, an agent that finished and exited — are caught up automatically on the next session's first tool call.
+When your editor / agent (re)connects to the MCP server, synapse runs a fast filesystem-based reconciliation (a `(size, mtime)` stat pre-filter, then a content hash on the rest) before answering the first query. So files changed while no MCP server was running — a `git pull` from the terminal, an edit from another editor, an agent that finished and exited — are caught up automatically on the next session's first tool call.
 
 ### Verify what the watcher sees
 
-`codegraph_status` exposes the pending set first-class — useful for an agent asking "is the index caught up?" in one call:
+`synapse_status` exposes the pending set first-class — useful for an agent asking "is the index caught up?" in one call:
 
 ```
-codegraph_status →
-  ## CodeGraph Status
+synapse_status →
+  ## Synapse Status
   …
   ### Pending sync:
   - src/Widget.ts (edited 1200ms ago)
@@ -77,25 +77,25 @@ codegraph_status →
 
 If `### Pending sync:` isn't in the response, nothing is in flight.
 
-### When manual `codegraph sync` makes sense
+### When manual `synapse sync` makes sense
 
 Almost never. The edge cases:
 
-- **The watcher is disabled.** Sandboxes that block local fs watchers, or you've set `CODEGRAPH_NO_DAEMON=1` to opt out of the shared daemon. In those cases `codegraph sync` is the manual fallback.
-- **Pre-flight before a CI run.** If you're scripting against the index outside an agent session, a single `codegraph sync` at the start of the script guarantees the index reflects the current working tree.
+- **The watcher is disabled.** Sandboxes that block local fs watchers, or you've set `SYNAPSE_NO_DAEMON=1` to opt out of the shared daemon. In those cases `synapse sync` is the manual fallback.
+- **Pre-flight before a CI run.** If you're scripting against the index outside an agent session, a single `synapse sync` at the start of the script guarantees the index reflects the current working tree.
 
 Otherwise: just use it. The watcher + banner + connect-sync covers the AI-assisted workflow end-to-end. If you're seeing files genuinely missed after the debounce window has passed, that's a bug — please file an issue with a reproduction.
 
-> See the v0.9.5 release notes for the [staleness banner (#403)](https://github.com/colbymchenry/codegraph/releases/tag/v0.9.5) and the connect-time catch-up (#414); both shipped together.
+> See the v0.9.5 release notes for the [staleness banner (#403)](https://github.com/colbymchenry/synapse/releases/tag/v0.9.5) and the connect-time catch-up (#414); both shipped together.
 
 ## Check status
 
 ```bash
-codegraph status
+synapse status
 ```
 
-Reports node/edge/file counts, the active SQLite backend, and the journal mode. In an agent session, the MCP-side `codegraph_status` additionally surfaces the `### Pending sync:` block described above.
+Reports node/edge/file counts, the active SQLite backend, and the journal mode. In an agent session, the MCP-side `synapse_status` additionally surfaces the `### Pending sync:` block described above.
 
 ## What gets indexed
 
-Every file whose extension maps to a [supported language](/codegraph/reference/languages/), minus dependency/build directories excluded by default (`node_modules`, `vendor`, `dist`, …), anything your `.gitignore` excludes, and files over 1 MB. See [Configuration](/codegraph/getting-started/configuration/).
+Every file whose extension maps to a [supported language](/synapse/reference/languages/), minus dependency/build directories excluded by default (`node_modules`, `vendor`, `dist`, …), anything your `.gitignore` excludes, and files over 1 MB. See [Configuration](/synapse/getting-started/configuration/).

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Claude Code target. Writes:
  *
  *   - MCP server entry to `~/.claude.json` (global = user scope, loads
@@ -28,7 +28,7 @@ import {
   WriteResult,
 } from './types';
 import {
-  getCodeGraphPermissions,
+  getSynapsePermissions,
   getMcpServerConfig,
   jsonDeepEqual,
   readJsonFile,
@@ -37,8 +37,8 @@ import {
   upsertInstructionsEntry,
 } from './shared';
 import {
-  CODEGRAPH_SECTION_END,
-  CODEGRAPH_SECTION_START,
+  SYNAPSE_SECTION_END,
+  SYNAPSE_SECTION_START,
 } from '../instructions-template';
 
 function configDir(loc: Location): string {
@@ -57,7 +57,7 @@ function mcpJsonPath(loc: Location): string {
 /**
  * Where pre-#207 installers wrote the local MCP entry. Claude Code
  * never reads a project-level `./.claude.json`, so we migrate the
- * codegraph entry out of it on install and strip it on uninstall.
+ * synapse entry out of it on install and strip it on uninstall.
  * Only the project-local path is legacy — global `~/.claude.json` is
  * the correct user-scope location and is left untouched.
  */
@@ -83,7 +83,7 @@ class ClaudeCodeTarget implements AgentTarget {
   detect(loc: Location): DetectionResult {
     const mcpPath = mcpJsonPath(loc);
     const config = readJsonFile(mcpPath);
-    const alreadyConfigured = !!config.mcpServers?.codegraph;
+    const alreadyConfigured = !!config.mcpServers?.synapse;
     // For "installed" we infer from the existence of either the dir
     // (global) or the project marker file (local). Cheap and avoids
     // shelling out to `claude --version`.
@@ -113,7 +113,7 @@ class ClaudeCodeTarget implements AgentTarget {
     }
 
     // 2b. Strip stale auto-sync hooks left by a pre-0.8 install. Those
-    // versions wrote `codegraph mark-dirty` / `sync-if-dirty` hooks to
+    // versions wrote `synapse mark-dirty` / `sync-if-dirty` hooks to
     // settings.json; both subcommands are gone from the CLI, so the
     // Stop hook now fails every turn with "unknown command
     // 'sync-if-dirty'". Cleaning up on install makes an upgrade
@@ -121,10 +121,10 @@ class ClaudeCodeTarget implements AgentTarget {
     const hookCleanup = cleanupLegacyHooks(loc);
     if (hookCleanup.action === 'removed') files.push(hookCleanup);
 
-    // 3. CLAUDE.md instructions — the short marker-fenced CodeGraph
+    // 3. CLAUDE.md instructions — the short marker-fenced Synapse
     // block (#704). The MCP initialize instructions reach only the main
     // agent; CLAUDE.md is what Task-tool subagents (and non-MCP
-    // harnesses) actually see, so the block carries the codegraph
+    // harnesses) actually see, so the block carries the synapse
     // pointers there. Upsert self-heals a stale pre-#529 long block.
     files.push(upsertInstructionsEntry(instructionsPath(loc)));
 
@@ -137,8 +137,8 @@ class ClaudeCodeTarget implements AgentTarget {
     // 1. MCP server entry
     const mcpPath = mcpJsonPath(loc);
     const config = readJsonFile(mcpPath);
-    if (config.mcpServers?.codegraph) {
-      delete config.mcpServers.codegraph;
+    if (config.mcpServers?.synapse) {
+      delete config.mcpServers.synapse;
       if (Object.keys(config.mcpServers).length === 0) {
         delete config.mcpServers;
       }
@@ -148,7 +148,7 @@ class ClaudeCodeTarget implements AgentTarget {
       files.push({ path: mcpPath, action: 'not-found' });
     }
 
-    // 1b. Also strip the codegraph entry from a legacy ./.claude.json
+    // 1b. Also strip the synapse entry from a legacy ./.claude.json
     // so uninstall fully reverses a pre-#207 local install.
     if (loc === 'local') {
       const migrated = cleanupLegacyLocalMcp();
@@ -161,7 +161,7 @@ class ClaudeCodeTarget implements AgentTarget {
     if (Array.isArray(settings.permissions?.allow)) {
       const before = settings.permissions.allow.length;
       settings.permissions.allow = settings.permissions.allow.filter(
-        (p: string) => !p.startsWith('mcp__codegraph__'),
+        (p: string) => !p.startsWith('mcp__synapse__'),
       );
       if (settings.permissions.allow.length !== before) {
         if (settings.permissions.allow.length === 0) {
@@ -187,7 +187,7 @@ class ClaudeCodeTarget implements AgentTarget {
     const hookCleanup = cleanupLegacyHooks(loc);
     if (hookCleanup.action === 'removed') files.push(hookCleanup);
 
-    // 3. Instructions — strip the legacy CodeGraph block if present.
+    // 3. Instructions — strip the legacy Synapse block if present.
     files.push(removeInstructionsEntry(loc));
 
     return { files };
@@ -195,7 +195,7 @@ class ClaudeCodeTarget implements AgentTarget {
 
   printConfig(loc: Location): string {
     const target = mcpJsonPath(loc);
-    const snippet = JSON.stringify({ mcpServers: { codegraph: getMcpServerConfig() } }, null, 2);
+    const snippet = JSON.stringify({ mcpServers: { synapse: getMcpServerConfig() } }, null, 2);
     return `# Add to ${target}\n\n${snippet}\n`;
   }
 
@@ -214,7 +214,7 @@ class ClaudeCodeTarget implements AgentTarget {
 export function writeMcpEntry(loc: Location): WriteResult['files'][number] {
   const file = mcpJsonPath(loc);
   const existing = readJsonFile(file);
-  const before = existing.mcpServers?.codegraph;
+  const before = existing.mcpServers?.synapse;
   const after = getMcpServerConfig();
 
   if (jsonDeepEqual(before, after)) {
@@ -224,21 +224,21 @@ export function writeMcpEntry(loc: Location): WriteResult['files'][number] {
   // 'created' here means: the file itself did not exist before this
   // write. A pre-existing MCP JSON file (`~/.claude.json` globally,
   // `./.mcp.json` locally) containing other MCP servers (no
-  // `codegraph` key) is 'updated', not 'created' — we're adding an
+  // `synapse` key) is 'updated', not 'created' — we're adding an
   // entry to a file that was already there. Codex uses a different
   // idiom (empty-content => 'created') because its config.toml is
   // ours alone to manage.
   const action: 'created' | 'updated' = before ? 'updated' : (fs.existsSync(file) ? 'updated' : 'created');
   if (!existing.mcpServers) existing.mcpServers = {};
-  existing.mcpServers.codegraph = after;
+  existing.mcpServers.synapse = after;
   writeJsonFile(file, existing);
   return { path: file, action };
 }
 
 /**
- * Strip the codegraph entry from a legacy project-local
+ * Strip the synapse entry from a legacy project-local
  * `./.claude.json` (written by pre-#207 installers, which Claude Code
- * never read). Surgical: only our `codegraph` key is removed; sibling
+ * never read). Surgical: only our `synapse` key is removed; sibling
  * MCP servers and any unrelated keys are preserved, and the file is
  * deleted only when removal leaves it completely empty. Returns the
  * file action for reporting, or `null` when there's nothing to migrate.
@@ -247,8 +247,8 @@ function cleanupLegacyLocalMcp(): WriteResult['files'][number] | null {
   const file = legacyLocalMcpPath();
   if (!fs.existsSync(file)) return null;
   const config = readJsonFile(file);
-  if (!config.mcpServers?.codegraph) return null;
-  delete config.mcpServers.codegraph;
+  if (!config.mcpServers?.synapse) return null;
+  delete config.mcpServers.synapse;
   if (Object.keys(config.mcpServers).length === 0) delete config.mcpServers;
   if (Object.keys(config).length === 0) {
     try { fs.unlinkSync(file); } catch { /* ignore */ }
@@ -261,33 +261,33 @@ function cleanupLegacyLocalMcp(): WriteResult['files'][number] | null {
 /**
  * True when a Claude Code hook `command` is one of the auto-sync hooks
  * a pre-0.8 install wrote. Those installers added
- * `PostToolUse(Edit|Write) → codegraph mark-dirty` and
- * `Stop → codegraph sync-if-dirty` (local builds used the
- * `npx @colbymchenry/codegraph …` form, which still contains the
- * `codegraph <subcommand>` substring). Both subcommands were later
+ * `PostToolUse(Edit|Write) → synapse mark-dirty` and
+ * `Stop → synapse sync-if-dirty` (local builds used the
+ * `npx @colbymchenry/synapse …` form, which still contains the
+ * `synapse <subcommand>` substring). Both subcommands were later
  * removed from the CLI, so the Stop hook fails every turn with
- * "unknown command 'sync-if-dirty'". Matching on the codegraph-scoped
+ * "unknown command 'sync-if-dirty'". Matching on the synapse-scoped
  * subcommand keeps unrelated user hooks (e.g. GitKraken's
  * `gk ai hook run`) untouched.
  */
-function isLegacyCodegraphHookCommand(command: unknown): boolean {
+function isLegacySynapseHookCommand(command: unknown): boolean {
   if (typeof command !== 'string') return false;
   return (
-    command.includes('codegraph mark-dirty') ||
-    command.includes('codegraph sync-if-dirty')
+    command.includes('synapse mark-dirty') ||
+    command.includes('synapse sync-if-dirty')
   );
 }
 
 /**
- * Remove stale codegraph auto-sync hooks from Claude `settings.json`.
+ * Remove stale synapse auto-sync hooks from Claude `settings.json`.
  *
  * Surgical at the individual-command level: only entries matching
- * `isLegacyCodegraphHookCommand` are dropped, so a sibling hook sharing
+ * `isLegacySynapseHookCommand` are dropped, so a sibling hook sharing
  * a matcher group (or the Stop event) with ours survives. We prune a
  * matcher group only once its `hooks` array is empty, an event only
  * once it has no groups left, and `hooks` itself only once every event
  * is gone — and none of that runs unless we actually removed a
- * codegraph command, so a settings.json with no legacy hooks is left
+ * synapse command, so a settings.json with no legacy hooks is left
  * byte-for-byte untouched and reported `unchanged`.
  *
  * Exported so it can be unit-tested directly and reused by both
@@ -312,7 +312,7 @@ export function cleanupLegacyHooks(loc: Location): WriteResult['files'][number] 
       if (!group || !Array.isArray(group.hooks)) continue;
       const before = group.hooks.length;
       group.hooks = group.hooks.filter(
-        (h: any) => !isLegacyCodegraphHookCommand(h?.command),
+        (h: any) => !isLegacySynapseHookCommand(h?.command),
       );
       if (group.hooks.length !== before) removedAny = true;
     }
@@ -322,7 +322,7 @@ export function cleanupLegacyHooks(loc: Location): WriteResult['files'][number] 
 
   // Pass 2: prune empty matcher groups, then events with no groups
   // left, then an empty top-level `hooks`. Guarded by `removedAny` so
-  // we never restructure a settings.json that had no codegraph hooks.
+  // we never restructure a settings.json that had no synapse hooks.
   for (const event of Object.keys(hooks)) {
     const groups = hooks[event];
     if (!Array.isArray(groups)) continue;
@@ -345,7 +345,7 @@ export function writePermissionsEntry(loc: Location): WriteResult['files'][numbe
   if (!settings.permissions) settings.permissions = {};
   if (!Array.isArray(settings.permissions.allow)) settings.permissions.allow = [];
 
-  const want = getCodeGraphPermissions();
+  const want = getSynapsePermissions();
   const before = [...settings.permissions.allow];
   for (const perm of want) {
     if (!settings.permissions.allow.includes(perm)) {
@@ -360,8 +360,8 @@ export function writePermissionsEntry(loc: Location): WriteResult['files'][numbe
 }
 
 /**
- * Strip the marker-delimited CodeGraph block from CLAUDE.md if a prior
- * install wrote one. Codegraph no longer maintains an instructions file
+ * Strip the marker-delimited Synapse block from CLAUDE.md if a prior
+ * install wrote one. Synapse no longer maintains an instructions file
  * (issue #529) — the MCP server's `initialize` instructions are the
  * single source of truth — so both install (self-heal on upgrade) and
  * uninstall call this. `removeMarkedSection` returns `not-found`/`kept`
@@ -370,7 +370,7 @@ export function writePermissionsEntry(loc: Location): WriteResult['files'][numbe
  */
 export function removeInstructionsEntry(loc: Location): WriteResult['files'][number] {
   const file = instructionsPath(loc);
-  const action = removeMarkedSection(file, CODEGRAPH_SECTION_START, CODEGRAPH_SECTION_END);
+  const action = removeMarkedSection(file, SYNAPSE_SECTION_START, SYNAPSE_SECTION_END);
   return { path: file, action };
 }
 

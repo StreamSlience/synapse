@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+﻿import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { CodeGraph } from '../src';
+import { Synapse } from '../src';
 
 /**
  * End-to-end synthesizer test for the gin middleware chain.
@@ -79,7 +79,7 @@ func setup() {
 `
     );
 
-    const cg = await CodeGraph.init(dir, { silent: true });
+    const cg = await Synapse.init(dir, { silent: true });
     await cg.indexAll();
 
     const db = (cg as any).db.db;

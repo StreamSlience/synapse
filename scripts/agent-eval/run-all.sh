@@ -1,11 +1,11 @@
-#!/usr/bin/env bash
-# With/without A/B (and optional interactive) eval for a codegraph version on a
+﻿#!/usr/bin/env bash
+# With/without A/B (and optional interactive) eval for a synapse version on a
 # repo. Codegraph is the ONLY variable: both arms launch claude with
-# --strict-mcp-config — with = codegraph-only MCP (pointed at $CG_BIN),
+# --strict-mcp-config — with = synapse-only MCP (pointed at $CG_BIN),
 # without = empty MCP. Built-in Read/Grep/Bash stay available in both arms.
 #
 # Usage: run-all.sh <repo-path> "<question>" [headless|tmux|all]
-# Env:   CG_BIN          codegraph binary (default: command -v codegraph)
+# Env:   CG_BIN          synapse binary (default: command -v synapse)
 #        AGENT_EVAL_OUT  output dir (default: /tmp/agent-eval)
 #        MODEL / EFFORT  claude model/effort (default: sonnet / high — the
 #                        standing A/B policy; see CLAUDE.md, don't raise)
@@ -14,22 +14,22 @@ set -uo pipefail
 REPO="${1:?usage: run-all.sh <repo-path> \"<question>\" [headless|tmux|all]}"
 Q="${2:?question required}"
 MODE="${3:-headless}"
-CG_BIN="${CG_BIN:-$(command -v codegraph)}"
+CG_BIN="${CG_BIN:-$(command -v synapse)}"
 OUT="${AGENT_EVAL_OUT:-/tmp/agent-eval}"
 HARNESS="$(cd "$(dirname "$0")" && pwd)"
 mkdir -p "$OUT"
 
-[ -n "$CG_BIN" ] || { echo "no codegraph binary on PATH (set CG_BIN)"; exit 1; }
-[ -d "$REPO/.codegraph" ] || { echo "no .codegraph index at $REPO — index it first"; exit 1; }
+[ -n "$CG_BIN" ] || { echo "no synapse binary on PATH (set CG_BIN)"; exit 1; }
+[ -d "$REPO/.synapse" ] || { echo "no .synapse index at $REPO — index it first"; exit 1; }
 case "$MODE" in headless|tmux|all) ;; *) echo "mode must be headless|tmux|all (got '$MODE')"; exit 1;; esac
 
 # MCP config files (path form avoids inline-JSON quoting through tmux).
-cat > "$OUT/mcp-codegraph.json" <<JSON
-{"mcpServers":{"codegraph":{"command":"$CG_BIN","args":["serve","--mcp","--path","$REPO"]}}}
+cat > "$OUT/mcp-synapse.json" <<JSON
+{"mcpServers":{"synapse":{"command":"$CG_BIN","args":["serve","--mcp","--path","$REPO"]}}}
 JSON
 echo '{"mcpServers":{}}' > "$OUT/mcp-empty.json"
 
-echo "###### codegraph: $CG_BIN"
+echo "###### synapse: $CG_BIN"
 echo "###### repo:      $REPO"
 echo "###### question:  $Q"
 echo
@@ -52,13 +52,13 @@ headless() {
 }
 
 if [ "$MODE" = headless ] || [ "$MODE" = all ]; then
-  headless "headless-with"    "$OUT/mcp-codegraph.json"
+  headless "headless-with"    "$OUT/mcp-synapse.json"
   headless "headless-without" "$OUT/mcp-empty.json"
 fi
 
 if [ "$MODE" = tmux ] || [ "$MODE" = all ]; then
   echo "############################## INTERACTIVE [with] ##############################"
-  CLAUDE_EXTRA_ARGS="--model ${MODEL:-sonnet} --effort ${EFFORT:-high} --strict-mcp-config --mcp-config $OUT/mcp-codegraph.json" \
+  CLAUDE_EXTRA_ARGS="--model ${MODEL:-sonnet} --effort ${EFFORT:-high} --strict-mcp-config --mcp-config $OUT/mcp-synapse.json" \
     bash "$HARNESS/itrun.sh" "$REPO" "int-with" "$Q" 2>&1 || echo "[itrun WITH failed]"
   echo
   echo "############################## INTERACTIVE [without] ##############################"

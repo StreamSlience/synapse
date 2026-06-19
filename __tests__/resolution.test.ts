@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Resolution Module Tests
  *
  * Tests for Phase 3: Reference Resolution
@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { CodeGraph } from '../src';
+import { Synapse } from '../src';
 import { Node, UnresolvedReference } from '../src/types';
 import { ReferenceResolver, createResolver, ResolutionContext } from '../src/resolution';
 import { matchReference } from '../src/resolution/name-matcher';
@@ -20,11 +20,11 @@ import { DatabaseConnection } from '../src/db';
 
 describe('Resolution Module', () => {
   let tempDir: string;
-  let cg: CodeGraph;
+  let cg: Synapse;
 
   beforeEach(() => {
     // Create temp directory
-    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-resolution-test-'));
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'synapse-resolution-test-'));
   });
 
   afterEach(() => {
@@ -653,7 +653,7 @@ from ..services import auth_service
   });
 
   describe('Integration Tests', () => {
-    it('should create resolver from CodeGraph instance', async () => {
+    it('should create resolver from Synapse instance', async () => {
       // Create a simple TypeScript project
       fs.writeFileSync(
         path.join(tempDir, 'package.json'),
@@ -687,7 +687,7 @@ function processDate(input: string): string {
       );
 
       // Initialize and index
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
 
       // Check that resolver detected React framework
       const frameworks = cg.getDetectedFrameworks();
@@ -720,7 +720,7 @@ function main(): void {
 }`
       );
 
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
 
       // Run reference resolution
       const result = cg.resolveReferences();
@@ -749,7 +749,7 @@ def bootstrap():
 `
       );
 
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       cg.resolveReferences();
 
       const bootstrap = cg
@@ -783,7 +783,7 @@ def bootstrap():
         `import { Foo } from './helpers';\nexport function run() { return Foo.bar(41); }\n`
       );
 
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       cg.resolveReferences();
 
       const bar = cg.getNodesByKind('method').find((n) => n.name === 'bar');
@@ -847,7 +847,7 @@ func UsePkga() {
 `
       );
 
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
 
       const usePkga = cg.getNodesByKind('function').filter((n) => n.name ==='UsePkga')[0];
       expect(usePkga).toBeDefined();
@@ -892,7 +892,7 @@ func UseAliased() {
 `
       );
 
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
 
       const useAliased = cg.getNodesByKind('function').filter((n) => n.name ==='UseAliased')[0];
       expect(useAliased).toBeDefined();
@@ -934,7 +934,7 @@ def external_caller():
 `
       );
 
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
 
       const caller = cg.getNodesByKind('function').filter((n) => n.name === 'caller')[0];
       expect(caller).toBeDefined();
@@ -988,7 +988,7 @@ def external_caller():
         'package other\n\ntype Box struct{ w int }\n'
       );
 
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
 
       const methodsOf = (typeName: string, file: string): string[] => {
         const node = cg
@@ -1020,7 +1020,7 @@ def external_caller():
       // so the camelCase receiver↔type word overlap pulls the call to
       // `RecorderHandle::stop` instead of the look-alike class.
       fs.mkdirSync(path.join(tempDir, 'voice'));
-      fs.mkdirSync(path.join(tempDir, 'codegraph'));
+      fs.mkdirSync(path.join(tempDir, 'synapse'));
 
       fs.writeFileSync(
         path.join(tempDir, 'voice', 'recorder.ts'),
@@ -1039,7 +1039,7 @@ export async function finaliseRecording(recorder: RecorderHandle) {
 `
       );
       fs.writeFileSync(
-        path.join(tempDir, 'codegraph', 'stdio-client.ts'),
+        path.join(tempDir, 'synapse', 'stdio-client.ts'),
         `export class StdioMcpClient {
   private stopped = false;
   async stop(): Promise<void> { this.stopped = true; }
@@ -1047,7 +1047,7 @@ export async function finaliseRecording(recorder: RecorderHandle) {
 `
       );
 
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
 
       const handleStop = cg
         .getNodesByKind('method')
@@ -1114,7 +1114,7 @@ public class Handler {
 `
       );
 
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
 
       const use = cg
         .getNodesByKind('method')
@@ -1159,7 +1159,7 @@ public class DataExporter
 `
       );
 
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
 
       const sessionDto = cg
         .getNodesByKind('class')
@@ -1207,7 +1207,7 @@ public sealed class OrderService(IRepo repo, [FromKeyedServices("primary")] ICac
 `
       );
 
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
 
       const svc = cg.getNodesByKind('class').find((n) => n.name === 'OrderService');
       expect(svc).toBeDefined();
@@ -1235,7 +1235,7 @@ func main() {
 `
       );
 
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
 
       const mainFn = cg.getNodesByKind('function').filter((n) => n.name ==='main')[0];
       const calls = cg.getOutgoingEdges(mainFn!.id).filter((e) => e.kind === 'calls');
@@ -1338,7 +1338,7 @@ func main() {
         })
       );
 
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       cg.resolveReferences();
 
       // The two pickMe nodes live in different files. The aliased
@@ -1370,7 +1370,7 @@ func main() {
         `import { aFn } from './a';\nexport function bFn(): void { aFn(); }\n`
       );
 
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       // No tsconfig present — index should still complete and the
       // relative-import-based call edge should be created.
       const aFn = cg.getNodesByKind('function').find((n) => n.name === 'aFn');
@@ -1403,7 +1403,7 @@ func main() {
         `import { signIn } from './all';\nexport function go(): void { signIn(); }\n`
       );
 
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       cg.resolveReferences();
 
       const signInNode = cg
@@ -1432,7 +1432,7 @@ func main() {
         `import { login } from './index';\nexport function go(): void { login(); }\n`
       );
 
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       cg.resolveReferences();
 
       const signInNode = cg
@@ -1467,7 +1467,7 @@ func main() {
         `<script lang="ts">\n  import { Foo } from './lib';\n</script>\n\n<Foo />\n`
       );
 
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       cg.resolveReferences();
 
       const fooNode = cg
@@ -1499,7 +1499,7 @@ func main() {
         `---\nimport PostCard from '../components/PostCard.astro';\n---\n<PostCard date={new Date()} />\n`
       );
 
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       cg.resolveReferences();
 
       // Hop 1: page → component (template tag through the frontmatter import)
@@ -1543,7 +1543,7 @@ func main() {
         `import { helper } from './';\nexport function go2(): void { helper(); }\n`
       );
 
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       cg.resolveReferences();
 
       const helperNode = cg
@@ -1583,7 +1583,7 @@ func main() {
         `<script lang="ts">\n  import { Thing } from '@scope/ui/widgets';\n</script>\n\n<Thing />\n`
       );
 
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       cg.resolveReferences();
 
       const buttonNode = cg
@@ -1614,7 +1614,7 @@ func main() {
         `<script lang="ts">\nimport { run } from './';\nexport default { mounted() { run(); } };\n</script>\n<template><div/></template>\n`
       );
 
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       cg.resolveReferences();
 
       const runNode = cg
@@ -1645,7 +1645,7 @@ func main() {
         `<script setup lang="ts">\nimport { Thing } from './lib';\n</script>\n<template>\n  <Thing />\n</template>\n`
       );
 
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       cg.resolveReferences();
 
       const widgetNode = cg
@@ -1876,7 +1876,7 @@ func main() {
 
     it('should discover include directories from compile_commands.json', () => {
       // Create a temp project with compile_commands.json
-      const tempProject = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-cpp-test-'));
+      const tempProject = fs.mkdtempSync(path.join(os.tmpdir(), 'synapse-cpp-test-'));
       try {
         const compileDb = [
           {
@@ -1907,7 +1907,7 @@ func main() {
     });
 
     it('should fall back to heuristic include dirs when no compile_commands.json', () => {
-      const tempProject = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-cpp-test-'));
+      const tempProject = fs.mkdtempSync(path.join(os.tmpdir(), 'synapse-cpp-test-'));
       try {
         // Create include/ and src/ directories with headers
         fs.mkdirSync(path.join(tempProject, 'include'), { recursive: true });
@@ -1937,7 +1937,7 @@ func main() {
     // "exclude objc dirs" refactor breaks loudly and reviewers see the
     // trade-off explicitly.
     it('heuristic claims any top-level dir containing .h files, including Obj-C', () => {
-      const tempProject = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-cpp-test-'));
+      const tempProject = fs.mkdtempSync(path.join(os.tmpdir(), 'synapse-cpp-test-'));
       try {
         // C++ side: an `cppmod` dir with a .hpp (C++-only extension)
         fs.mkdirSync(path.join(tempProject, 'cppmod'), { recursive: true });
@@ -1963,7 +1963,7 @@ func main() {
     // edge). This pins the include-dir resolution path so the headline PR
     // feature can't silently regress to a no-op in the indexing flow.
     it('connects #include to the real header file via include-dir scan (end-to-end)', async () => {
-      const tempProject = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-cpp-e2e-'));
+      const tempProject = fs.mkdtempSync(path.join(os.tmpdir(), 'synapse-cpp-e2e-'));
       try {
         fs.mkdirSync(path.join(tempProject, 'include'), { recursive: true });
         fs.mkdirSync(path.join(tempProject, 'src'), { recursive: true });
@@ -1977,7 +1977,7 @@ func main() {
         );
 
         clearCppIncludeDirCache();
-        cg = await CodeGraph.init(tempProject, { index: true });
+        cg = await Synapse.init(tempProject, { index: true });
 
         // Sanity: file nodes exist for the header and the cpp.
         const allFiles = cg.getStats();
@@ -1986,7 +1986,7 @@ func main() {
         // The `#include "utils.h"` edge should target the real
         // `include/utils.h` file node — not a floating `import` node
         // living inside main.cpp.
-        const db = DatabaseConnection.open(path.join(tempProject, '.codegraph', 'codegraph.db'));
+        const db = DatabaseConnection.open(path.join(tempProject, '.synapse', 'synapse.db'));
         const rows = db.getDb().prepare(`
           select dst.kind as dstKind, dst.file_path as dstPath
           from edges e
@@ -2033,7 +2033,7 @@ func main() {
     });
 
     it('resolves require_once to a file→file imports edge (#660)', async () => {
-      const tempProject = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-php-e2e-'));
+      const tempProject = fs.mkdtempSync(path.join(os.tmpdir(), 'synapse-php-e2e-'));
       try {
         fs.mkdirSync(path.join(tempProject, 'src'), { recursive: true });
         fs.writeFileSync(
@@ -2045,12 +2045,12 @@ func main() {
           `<?php\nrequire_once("lib.php");\necho greet();\n`
         );
 
-        cg = await CodeGraph.init(tempProject, { index: true });
+        cg = await Synapse.init(tempProject, { index: true });
 
         // reporter's repro: page.php's `require_once("lib.php")` must resolve
         // to the real src/lib.php file node — a file→file `imports` edge, so
         // callers(lib.php) now includes page.php.
-        const db = DatabaseConnection.open(path.join(tempProject, '.codegraph', 'codegraph.db'));
+        const db = DatabaseConnection.open(path.join(tempProject, '.synapse', 'synapse.db'));
         const rows = db.getDb().prepare(`
           select dst.kind as dstKind, dst.file_path as dstPath
           from edges e
@@ -2070,7 +2070,7 @@ func main() {
     });
 
     it('resolves a subdirectory include path to the correct file (#660)', async () => {
-      const tempProject = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-php-subdir-'));
+      const tempProject = fs.mkdtempSync(path.join(os.tmpdir(), 'synapse-php-subdir-'));
       try {
         fs.mkdirSync(path.join(tempProject, 'inc'), { recursive: true });
         fs.writeFileSync(
@@ -2082,9 +2082,9 @@ func main() {
           `<?php\nrequire "inc/db.php";\nquery();\n`
         );
 
-        cg = await CodeGraph.init(tempProject, { index: true });
+        cg = await Synapse.init(tempProject, { index: true });
 
-        const db = DatabaseConnection.open(path.join(tempProject, '.codegraph', 'codegraph.db'));
+        const db = DatabaseConnection.open(path.join(tempProject, '.synapse', 'synapse.db'));
         const rows = db.getDb().prepare(`
           select dst.kind as dstKind, dst.file_path as dstPath
           from edges e
@@ -2104,7 +2104,7 @@ func main() {
     });
 
     it('does not mis-connect an unresolvable include to a same-named file elsewhere (#660)', async () => {
-      const tempProject = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-php-misresolve-'));
+      const tempProject = fs.mkdtempSync(path.join(os.tmpdir(), 'synapse-php-misresolve-'));
       try {
         // app/page.php's `require "inc/db.php"` resolves relative to app/, where
         // inc/db.php does NOT exist. A same-named lib/inc/db.php exists elsewhere
@@ -2121,9 +2121,9 @@ func main() {
           `<?php\nrequire "inc/db.php";\n`
         );
 
-        cg = await CodeGraph.init(tempProject, { index: true });
+        cg = await Synapse.init(tempProject, { index: true });
 
-        const db = DatabaseConnection.open(path.join(tempProject, '.codegraph', 'codegraph.db'));
+        const db = DatabaseConnection.open(path.join(tempProject, '.synapse', 'synapse.db'));
         const rows = db.getDb().prepare(`
           select dst.kind as dstKind, dst.file_path as dstPath
           from edges e
@@ -2148,7 +2148,7 @@ func main() {
       for (const [name, content] of Object.entries(files)) {
         fs.writeFileSync(path.join(tempDir, name), content);
       }
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
     }
 
     function callerNamesOf(qualifiedName: string): string[] {
@@ -2272,7 +2272,7 @@ void wrong() { WidgetFactory::create().onlyOther(); }
         path.join(tempDir, 'DispatchOrder.php'),
         `<?php\nclass DispatchOrder {\n    public function handle(): void {\n        ApiClient::for('cred')->createOrder([]);\n    }\n}\n`
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       // The chained call's edge attaches to the factory result's method.
       expect(callerNamesOf('ApiClient::createOrder')).toContain('handle');
     });
@@ -2282,7 +2282,7 @@ void wrong() { WidgetFactory::create().onlyOther(); }
         path.join(tempDir, 'lib.php'),
         `<?php\nclass ApiClient { public static function for(string $c): self { return new self; } }\nclass Other { public function onlyOther(): void {} }\nclass Caller { public function go(): void { ApiClient::for('x')->onlyOther(); } }\n`
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       // ApiClient has no onlyOther — must not mis-attach to the same-named Other::onlyOther.
       expect(callerNamesOf('Other::onlyOther')).toEqual([]);
     });
@@ -2314,7 +2314,7 @@ class Caller {
 }
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       expect(callerNamesOf('Foo::bar')).toEqual(['run']);
       expect(callerNamesOf('Aaa::bar')).toEqual([]);
     });
@@ -2334,7 +2334,7 @@ class Caller {
 }
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       expect(callerNamesOf('Foo::build')).toEqual(['run']);
     });
 
@@ -2350,7 +2350,7 @@ class Caller {
 }
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       // Foo has no onlyOther() — must not mis-attach to the same-named Other::onlyOther.
       expect(callerNamesOf('Other::onlyOther')).toEqual([]);
     });
@@ -2385,7 +2385,7 @@ class Caller {
 }
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       expect(callerNamesOf('Foo::bar')).toEqual(['run']);
       expect(callerNamesOf('Aaa::bar')).toEqual([]);
     });
@@ -2405,7 +2405,7 @@ class Caller {
 }
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       expect(callerNamesOf('Foo::build')).toEqual(['run']);
     });
 
@@ -2423,7 +2423,7 @@ class Caller {
 }
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       // Foo has no onlyOther() — must not mis-attach to the same-named Other::onlyOther.
       expect(callerNamesOf('Other::onlyOther')).toEqual([]);
     });
@@ -2455,7 +2455,7 @@ class Caller {
 }
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       expect(callerNamesOf('Foo::Bar')).toEqual(['Run']);
       expect(callerNamesOf('Aaa::Bar')).toEqual([]);
     });
@@ -2473,7 +2473,7 @@ class Caller {
 }
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       expect(callerNamesOf('Foo::Build')).toEqual(['Run']);
     });
 
@@ -2489,7 +2489,7 @@ class Caller {
 }
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       // Foo has no OnlyOther() — must not mis-attach to the same-named Other::OnlyOther.
       expect(callerNamesOf('Other::OnlyOther')).toEqual([]);
     });
@@ -2520,7 +2520,7 @@ class Foo {
 func runCaller() { Foo.make().draw() }
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       expect(callerNamesOf('Foo::draw')).toEqual(['runCaller']);
       expect(callerNamesOf('Aaa::draw')).toEqual([]);
     });
@@ -2540,7 +2540,7 @@ func runCaller() {
 }
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       expect(callerNamesOf('Foo::draw')).toEqual(['runCaller']);
       expect(callerNamesOf('Foo::render')).toEqual(['runCaller']);
     });
@@ -2555,7 +2555,7 @@ class Other { func onlyOther() {} }
 func runCaller() { Foo.make().onlyOther() }
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       // Foo has no onlyOther() — must not mis-attach to the same-named Other::onlyOther.
       expect(callerNamesOf('Other::onlyOther')).toEqual([]);
     });
@@ -2587,7 +2587,7 @@ class Caller {
 }
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       expect(callerNamesOf('Base::draw')).toEqual(['run']);
       expect(callerNamesOf('Decoy::draw')).toEqual([]);
     });
@@ -2604,7 +2604,7 @@ class Caller {
 }
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       expect(callerNamesOf('Drawable::draw')).toEqual(['run']);
       expect(callerNamesOf('Decoy::draw')).toEqual([]);
     });
@@ -2621,7 +2621,7 @@ class Caller {
 }
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       // Neither Widget nor Base has onlyOther() — must not attach to Other::onlyOther.
       expect(callerNamesOf('Other::onlyOther')).toEqual([]);
     });
@@ -2656,7 +2656,7 @@ fn caller() {
 }
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       expect(callerNamesOf('Foo::bar')).toEqual(['caller']);
       expect(callerNamesOf('Aaa::bar')).toEqual([]);
     });
@@ -2673,7 +2673,7 @@ impl Foo {
 fn caller() { Foo::with(Config).build(); }
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       expect(callerNamesOf('Foo::build')).toEqual(['caller']);
     });
 
@@ -2689,7 +2689,7 @@ impl Drawable for Foo {}
 fn caller() { Foo::new().draw(); }
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       expect(callerNamesOf('Drawable::draw')).toEqual(['caller']);
       expect(callerNamesOf('Decoy::draw')).toEqual([]);
     });
@@ -2704,7 +2704,7 @@ impl Other { fn only_other(&self) {} }
 fn caller() { Foo::new().only_other(); }
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       // Foo has no only_other() — must not mis-attach to the same-named Other::only_other.
       expect(callerNamesOf('Other::only_other')).toEqual([]);
     });
@@ -2734,7 +2734,7 @@ func (f *Foo) Bar() {}
 func caller() { New().Bar() }
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       expect(callerNamesOf('Foo::Bar')).toEqual(['caller']);
       expect(callerNamesOf('Aaa::Bar')).toEqual([]);
     });
@@ -2750,7 +2750,7 @@ func (f *Foo) Build() {}
 func caller() { With(Config{}).Build() }
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       expect(callerNamesOf('Foo::Build')).toEqual(['caller']);
     });
 
@@ -2767,7 +2767,7 @@ func NewWidget() *Widget { return &Widget{} }
 func caller() { NewWidget().Embedded() }
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       expect(callerNamesOf('Base::Embedded')).toEqual(['caller']);
       expect(callerNamesOf('Decoy::Embedded')).toEqual([]);
     });
@@ -2783,7 +2783,7 @@ func (o *Other) OnlyOther() {}
 func caller() { New().OnlyOther() }
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       // Foo has no OnlyOther() — must not mis-attach to the same-named Other::OnlyOther.
       expect(callerNamesOf('Other::OnlyOther')).toEqual([]);
     });
@@ -2807,7 +2807,7 @@ var engine = func() *Server { return &Server{} }
 func caller() { engine().ServeHTTP() }
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       // Recall: the variable-inner chain still finds the method by bare name.
       expect(callerNamesOf('Server::ServeHTTP')).toEqual(['caller']);
       // No runaway: a single call site yields a single edge, not millions.
@@ -2850,7 +2850,7 @@ object Main {
 }
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       expect(callerNamesOf('Bar::doIt')).toEqual(['run']);
       expect(callerNamesOf('Decoy::doIt')).toEqual([]);
     });
@@ -2869,7 +2869,7 @@ object Main {
 }
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       expect(callerNamesOf('Point::dist')).toEqual(['run']);
       expect(callerNamesOf('Other::dist')).toEqual([]);
     });
@@ -2892,7 +2892,7 @@ object Main {
 }
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       expect(callerNamesOf('Base::shared')).toEqual(['run']);
       expect(callerNamesOf('Decoy::shared')).toEqual([]);
     });
@@ -2913,7 +2913,7 @@ object Main {
 }
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       // Bar has no onlyOther() — must not mis-attach to the same-named Other::onlyOther.
       expect(callerNamesOf('Other::onlyOther')).toEqual([]);
     });
@@ -2948,7 +2948,7 @@ void run() {
 }
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       expect(callerNamesOf('Bar::doIt')).toEqual(['run']);
       expect(callerNamesOf('Decoy::doIt')).toEqual([]);
     });
@@ -2969,7 +2969,7 @@ void run() {
 }
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       // The factory constructor `Foo.create` is now a node whose return type is Foo,
       // so `ship` resolves on Foo, not the same-named Decoy.
       expect(callerNamesOf('Foo::ship')).toEqual(['run']);
@@ -2990,7 +2990,7 @@ void run() {
 }
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       expect(callerNamesOf('Bar::doIt')).toEqual(['run']);
       expect(callerNamesOf('Decoy::doIt')).toEqual([]);
     });
@@ -3012,7 +3012,7 @@ void run() {
 }
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       expect(callerNamesOf('Base::render')).toEqual(['run']);
       expect(callerNamesOf('Decoy::render')).toEqual([]);
     });
@@ -3033,7 +3033,7 @@ void run() {
 }
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       // Bar has no onlyOther() — must not mis-attach to the same-named Other::onlyOther.
       expect(callerNamesOf('Other::onlyOther')).toEqual([]);
     });
@@ -3057,7 +3057,7 @@ class Action extends Base {
 }
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       // reduce must be a node and its body call must resolve to Action::compute.
       expect(callerNamesOf('Action::compute')).toEqual(['reduce']);
     });
@@ -3077,7 +3077,7 @@ void run() {
 }
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       // No Foo::Foo phantom method node.
       expect(cg.getNodesByKind('method').some((n) => n.qualifiedName === 'Widget::Widget')).toBe(false);
       // The construction resolves to the class as an `instantiates` edge.
@@ -3123,7 +3123,7 @@ void run() {
 @end
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       expect(callerNamesOf('Bar::doIt')).toEqual(['run']);
       expect(callerNamesOf('Decoy::doIt')).toEqual([]);
     });
@@ -3156,7 +3156,7 @@ void run() {
 @end
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       expect(callerNamesOf('Base::render')).toEqual(['run']);
       expect(callerNamesOf('Decoy::render')).toEqual([]);
     });
@@ -3183,7 +3183,7 @@ void run() {
 @end
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       // Bar has no onlyOther — must not mis-attach to the same-named Other::onlyOther.
       expect(callerNamesOf('Other::onlyOther')).toEqual([]);
     });
@@ -3218,7 +3218,7 @@ void run() {
 @end
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       expect(callerNamesOf('Cache::clearAll')).toEqual(['run']);
       expect(callerNamesOf('Decoy::clearAll')).toEqual([]);
     });
@@ -3266,7 +3266,7 @@ end;
 end.
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       expect(isCalled('TBar::DoIt')).toBe(true);
       expect(isCalled('TDecoy::DoIt')).toBe(false);
     });
@@ -3295,7 +3295,7 @@ end;
 end.
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       // A constructor returns its own class (no `: TBar` annotation), so Configure
       // resolves on TFoo, not the same-named decoy.
       expect(isCalled('TFoo::Configure')).toBe(true);
@@ -3324,7 +3324,7 @@ end;
 end.
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       expect(isCalled('TFoo::DoIt')).toBe(true);
       expect(isCalled('TDecoy::DoIt')).toBe(false);
     });
@@ -3353,7 +3353,7 @@ end;
 end.
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       // TBar has no OnlyOther — must not mis-attach to the same-named TOther::OnlyOther.
       expect(isCalled('TOther::OnlyOther')).toBe(false);
     });
@@ -3379,7 +3379,7 @@ end;
 end.
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       expect(isCalled('TFoo::DoThing')).toBe(true);
       expect(isCalled('TFoo::Reset')).toBe(true);
     });
@@ -3410,7 +3410,7 @@ end;
 end.
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       expect(isCalled('TBar::DoIt')).toBe(true);
       expect(isCalled('TDecoy::DoIt')).toBe(false);
     });
@@ -3438,7 +3438,7 @@ end;
 end.
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       // A property read/write is a bare dot in assignment position, not a statement,
       // so it must not be mis-extracted as a call to the property's getter/setter.
       expect(isCalled('TFoo::GetValue')).toBe(false);
@@ -3463,7 +3463,7 @@ procedure TFoo.DoStuff; var t: TTgt; begin t.Hit; end;
 procedure Helper; var t: TTgt; begin t.Hit; end;
 `
       );
-      cg = await CodeGraph.init(tempDir, { index: true });
+      cg = await Synapse.init(tempDir, { index: true });
       // `Helper` is implementation-only (no interface decl, not a method), but its
       // body's call must attribute to `Helper`, not the file/module — alongside the
       // method `DoStuff`.

@@ -1,9 +1,9 @@
----
+﻿---
 title: How It Works
 description: The extraction, storage, resolution, and auto-sync pipeline.
 ---
 
-CodeGraph turns source code into a queryable graph in four stages.
+Synapse turns source code into a queryable graph in four stages.
 
 ```
 files → Extraction (tree-sitter) → DB (nodes/edges/files)
@@ -21,11 +21,11 @@ files → Extraction (tree-sitter) → DB (nodes/edges/files)
 
 ## 2. Storage
 
-Everything goes into a local SQLite database (`.codegraph/codegraph.db`) with FTS5 full-text search. CodeGraph uses native `better-sqlite3` when available and transparently falls back to a WASM backend; `codegraph status` shows which is live.
+Everything goes into a local SQLite database (`.synapse/synapse.db`) with FTS5 full-text search. Synapse uses native `better-sqlite3` when available and transparently falls back to a WASM backend; `synapse status` shows which is live.
 
 ## 3. Resolution
 
-After extraction, references are resolved: function calls → definitions, imports → source files, class inheritance, and framework-specific patterns. Some dynamic-dispatch boundaries (callbacks, observers, React re-render, JSX children) are bridged by synthesizers so flows connect end-to-end. See [Resolution & Frameworks](/codegraph/core-concepts/resolution/).
+After extraction, references are resolved: function calls → definitions, imports → source files, class inheritance, and framework-specific patterns. Some dynamic-dispatch boundaries (callbacks, observers, React re-render, JSX children) are bridged by synthesizers so flows connect end-to-end. See [Resolution & Frameworks](/synapse/core-concepts/resolution/).
 
 ## 4. Auto-sync
 
