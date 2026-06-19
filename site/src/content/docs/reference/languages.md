@@ -1,30 +1,30 @@
-﻿---
-title: Languages
-description: Every language Synapse parses, and the extensions it recognizes.
+---
+title: 语言支持
+description: Synapse 能解析的所有语言及其识别的文件扩展名。
 ---
 
-Language support is automatic from the file extension — there's nothing to configure.
+语言支持根据文件扩展名自动识别，无需任何配置。
 
-| Language | Extensions | Status |
+| 语言 | 扩展名 | 状态 |
 |---|---|---|
-| TypeScript | `.ts`, `.tsx` | Full support |
-| JavaScript | `.js`, `.jsx`, `.mjs` | Full support |
-| Python | `.py` | Full support |
-| Go | `.go` | Full support |
-| Rust | `.rs` | Full support |
-| Java | `.java` | Full support |
-| C# | `.cs` | Full support |
-| PHP | `.php` | Full support |
-| Ruby | `.rb` | Full support |
-| C | `.c`, `.h` | Full support |
-| C++ | `.cpp`, `.hpp`, `.cc` | Full support |
-| Swift | `.swift` | Full support |
-| Kotlin | `.kt`, `.kts` | Full support |
-| Scala | `.scala`, `.sc` | Full support (classes, traits, methods, type aliases, Scala 3 enums) |
-| Dart | `.dart` | Full support |
-| Svelte | `.svelte` | Full support (script extraction, Svelte 5 runes, SvelteKit routes) |
-| Vue | `.vue` | Full support (script + script-setup, Nuxt page/API/middleware routes) |
-| Liquid | `.liquid` | Full support |
-| Pascal / Delphi | `.pas`, `.dpr`, `.dpk`, `.lpr` | Full support (classes, records, interfaces, enums, DFM/FMX forms) |
-| Lua | `.lua` | Full support (functions, methods, locals, `require` imports, call edges) |
-| Luau | `.luau` | Full support (Lua, plus typed signatures, `type` aliases, Roblox `require`) |
+| TypeScript | `.ts`, `.tsx` | 完整支持 |
+| JavaScript | `.js`, `.jsx`, `.mjs` | 完整支持 |
+| Python | `.py` | 完整支持 |
+| Go | `.go` | 完整支持 |
+| Rust | `.rs` | 完整支持 |
+| Java | `.java` | 完整支持 |
+| C# | `.cs` | 完整支持 |
+| PHP | `.php` | 完整支持 |
+| Ruby | `.rb` | 完整支持 |
+| C | `.c`, `.h` | 完整支持 |
+| C++ | `.cpp`, `.hpp`, `.cc` | 完整支持 |
+| Swift | `.swift` | 完整支持 |
+| Kotlin | `.kt`, `.kts` | 完整支持 |
+| Scala | `.scala`, `.sc` | 完整支持（类、trait、方法、类型别名、Scala 3 枚举） |
+| Dart | `.dart` | 完整支持 |
+| Svelte | `.svelte` | 完整支持（脚本提取、Svelte 5 runes、SvelteKit 路由） |
+| Vue | `.vue` | 完整支持（script + script-setup、Nuxt 页面/API/中间件路由） |
+| Liquid | `.liquid` | 完整支持 |
+| Pascal / Delphi | `.pas`, `.dpr`, `.dpk`, `.lpr` | 完整支持（类、record、接口、枚举、DFM/FMX 窗体） |
+| Lua | `.lua` | 完整支持（函数、方法、局部变量、`require` 导入、调用边） |
+| Luau | `.luau` | 完整支持（Lua 全部特性，加上类型签名、`type` 别名、Roblox `require`） |

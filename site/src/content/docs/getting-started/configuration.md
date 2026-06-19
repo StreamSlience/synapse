@@ -1,22 +1,22 @@
-﻿---
-title: Configuration
-description: Synapse is zero-config — there are no config files.
+---
+title: 配置
+description: Synapse 无需任何配置——没有配置文件。
 ---
 
-There isn't any — Synapse is **zero-config**, with **no config file** to write or keep in sync. Language support is automatic from the file extension; there's nothing to wire up per language.
+不需要任何配置——Synapse 是**零配置**的，**没有配置文件**需要编写或同步维护。语言支持根据文件扩展名自动识别，无需对每种语言做任何设置。
 
-## What it skips out of the box
+## 默认跳过的内容
 
-- **Dependency, build, and cache directories** — `node_modules`, `vendor`, `dist`, `build`, `target`, `.venv`, `Pods`, `.next`, and the like across every [supported stack](/synapse/reference/languages/) — so the graph is your code, not third-party noise. This holds even with no `.gitignore`.
-- **Anything in your `.gitignore`** — honored in git repos via git, and in non-git projects by reading `.gitignore` directly (root and nested).
-- **Files larger than 1 MB** — generated bundles, minified JS, vendored blobs.
+- **依赖、构建和缓存目录** — `node_modules`、`vendor`、`dist`、`build`、`target`、`.venv`、`Pods`、`.next` 以及各[支持技术栈](/synapse/reference/languages/)中的类似目录——这样图谱里只有你自己的代码，而非第三方内容。即使没有 `.gitignore`，这一规则同样生效。
+- **`.gitignore` 中的任何内容** — 在 git 仓库中通过 git 读取，在非 git 项目中直接读取 `.gitignore`（包括根目录和嵌套目录）。
+- **大于 1 MB 的文件** — 生成的打包文件、压缩后的 JS、vendored 二进制文件。
 
-## Excluding or including more
+## 排除或包含更多内容
 
-To keep something else out, add it to `.gitignore`. To pull a default-excluded directory back **in** (e.g. you really want a vendored dependency indexed), add a negation — `!vendor/`.
+如果想排除某些内容，将其添加到 `.gitignore` 即可。如果想把默认排除的目录重新**纳入**索引（比如你确实想索引某个 vendored 依赖），可以添加取反规则——`!vendor/`。
 
-The defaults apply uniformly, so committing a dependency or build directory doesn't force it into the graph — the `.gitignore` negation is the explicit opt-in.
+默认规则统一适用，因此提交一个依赖或构建目录并不会将其强制纳入图谱——`.gitignore` 取反规则是显式的选择加入方式。
 
-## Where data lives
+## 数据存储位置
 
-Per-project data lives in a `.synapse/` directory at your project root, containing the SQLite database (`synapse.db`). Nothing leaves your machine.
+每个项目的数据存放在项目根目录的 `.synapse/` 目录中，其中包含 SQLite 数据库（`synapse.db`）。数据不会离开你的机器。

@@ -1,27 +1,27 @@
-﻿---
-title: Affected Tests in CI
-description: Run only the tests a change actually touches.
+---
+title: CI 中的受影响测试
+description: 只运行被变更实际影响的测试。
 ---
 
-`synapse affected` traces import dependencies transitively to find which test files are affected by a set of changed source files — so CI can run only the relevant tests.
+`synapse affected` 通过传递性地追踪导入依赖，找出受一组变更源文件影响的测试文件——让 CI 只运行相关测试。
 
 ```bash
-synapse affected src/utils.ts src/api.ts          # pass files as arguments
-git diff --name-only | synapse affected --stdin    # pipe from git diff
-synapse affected src/auth.ts --filter "e2e/*"      # custom test-file pattern
+synapse affected src/utils.ts src/api.ts          # 直接传入文件
+git diff --name-only | synapse affected --stdin    # 从 git diff 管道输入
+synapse affected src/auth.ts --filter "e2e/*"      # 自定义测试文件匹配模式
 ```
 
-## Options
+## 选项
 
-| Option | Description | Default |
+| 选项 | 说明 | 默认值 |
 |---|---|---|
-| `--stdin` | Read the file list from stdin | `false` |
-| `-d, --depth <n>` | Max dependency traversal depth | `5` |
-| `-f, --filter <glob>` | Custom glob to identify test files | auto-detect |
-| `-j, --json` | Output as JSON | `false` |
-| `-q, --quiet` | Output file paths only | `false` |
+| `--stdin` | 从标准输入读取文件列表 | `false` |
+| `-d, --depth <n>` | 最大依赖遍历深度 | `5` |
+| `-f, --filter <glob>` | 用于识别测试文件的自定义 glob | 自动检测 |
+| `-j, --json` | 以 JSON 格式输出 | `false` |
+| `-q, --quiet` | 仅输出文件路径 | `false` |
 
-## CI / hook example
+## CI / hook 示例
 
 ```bash
 #!/usr/bin/env bash

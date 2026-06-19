@@ -1,11 +1,11 @@
-﻿---
-title: Integrations
-description: Supported agents, and manual MCP setup.
+---
+title: 集成
+description: 支持的 agent 及手动配置 MCP 的方式。
 ---
 
-The interactive installer auto-detects and configures each supported agent — wiring up the MCP server and writing its instructions file.
+交互式安装器会自动检测并配置每个受支持的 agent——接入 MCP 服务器并写入其说明文件。
 
-## Supported agents
+## 支持的 agent
 
 - **Claude Code**
 - **Cursor**
@@ -16,17 +16,17 @@ The interactive installer auto-detects and configures each supported agent — w
 - **Antigravity IDE**
 - **Kiro**
 
-Run `npx @colbymchenry/synapse` and pick your agent(s); see [Installation](/synapse/getting-started/installation/) for the non-interactive flags.
+运行 `npx @colbymchenry/synapse` 并选择你的 agent；非交互模式的标志请参见[安装](/synapse/getting-started/installation/)。
 
-## Manual setup
+## 手动配置
 
-If you'd rather wire it up yourself, install globally:
+如果想自行配置，先全局安装：
 
 ```bash
 npm install -g @colbymchenry/synapse
 ```
 
-Add the MCP server to `~/.claude.json`:
+将 MCP 服务器添加到 `~/.claude.json`：
 
 ```json
 {
@@ -40,7 +40,7 @@ Add the MCP server to `~/.claude.json`:
 }
 ```
 
-Optionally auto-allow the read-only tools in `~/.claude/settings.json`:
+可选：在 `~/.claude/settings.json` 中自动授权只读工具：
 
 ```json
 {
@@ -59,5 +59,5 @@ Optionally auto-allow the read-only tools in `~/.claude/settings.json`:
 ```
 
 :::tip
-Cursor launches MCP subprocesses with the wrong working directory. The installer handles this for you by injecting a `--path` argument; if you wire Cursor up by hand, pass the project path explicitly.
+Cursor 启动 MCP 子进程时会使用错误的工作目录。安装器会通过注入 `--path` 参数来处理这个问题；如果手动配置 Cursor，需要显式传入项目路径。
 :::

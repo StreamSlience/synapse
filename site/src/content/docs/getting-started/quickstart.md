@@ -1,11 +1,11 @@
-﻿---
-title: Get Started
-description: Get up and running with Synapse in seconds.
+---
+title: 快速上手
+description: 几秒内启动并运行 Synapse。
 ---
 
-Get up and running with Synapse in seconds.
+几秒内启动并运行 Synapse。
 
-## No Node.js required — one command grabs the right build for your OS
+## 无需 Node.js——一条命令即可获取适合你操作系统的版本
 
 ```bash
 # macOS / Linux
@@ -15,22 +15,22 @@ curl -fsSL https://raw.githubusercontent.com/colbymchenry/synapse/main/install.s
 irm https://raw.githubusercontent.com/colbymchenry/synapse/main/install.ps1 | iex
 ```
 
-## Already have Node? Use npm instead (works on any version)
+## 已有 Node？改用 npm（支持任何版本）
 
 ```bash
-npx @colbymchenry/synapse        # zero-install, or:
+npx @colbymchenry/synapse        # 零安装，或：
 npm i -g @colbymchenry/synapse
 ```
 
-Synapse bundles its own runtime — nothing to compile, no native build, works the same everywhere. The interactive installer auto-configures your agent(s) — Claude Code, Cursor, Codex CLI, opencode, Hermes Agent, Gemini CLI, Antigravity IDE, Kiro.
+Synapse 内置自己的运行时——无需编译，无需原生构建，在任何地方运行效果一致。交互式安装器会自动配置你的 agent——Claude Code、Cursor、Codex CLI、opencode、Hermes Agent、Gemini CLI、Antigravity IDE、Kiro。
 
-## Initialize Projects
+## 初始化项目
 
 ```bash
 cd your-project
 synapse init -i
 ```
 
-That's it — your agent will use Synapse tools automatically when a `.synapse/` directory exists.
+就这些——只要存在 `.synapse/` 目录，你的 agent 就会自动使用 Synapse 工具。
 
-Next: build [Your First Graph](/synapse/getting-started/your-first-graph/), or see the full [Installation](/synapse/getting-started/installation/) options.
+下一步：构建[你的第一个图谱](/synapse/getting-started/your-first-graph/)，或查看完整的[安装](/synapse/getting-started/installation/)选项。

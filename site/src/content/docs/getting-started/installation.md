@@ -1,69 +1,69 @@
-﻿---
-title: Installation
-description: Install Synapse and configure your AI coding agents.
+---
+title: 安装
+description: 安装 Synapse 并配置你的 AI 编程 agent。
 ---
 
-## 1. Run the installer
+## 1. 运行安装器
 
 ```bash
 npx @colbymchenry/synapse
 ```
 
-The installer will:
+安装器会：
 
-- Ask which agent(s) to configure — auto-detecting installed ones from **Claude Code**, **Cursor**, **Codex CLI**, **opencode**, **Hermes Agent**, **Gemini CLI**, **Antigravity IDE**, and **Kiro**.
-- Prompt to install `synapse` on your `PATH` (so agents can launch the MCP server).
-- Ask whether configs apply to all your projects or just this one.
-- Write each chosen agent's MCP server config plus an instructions file (e.g. `CLAUDE.md`, `.cursor/rules/synapse.mdc`, `~/.codex/AGENTS.md`).
-- Set up auto-allow permissions when Claude Code is one of the targets.
-- Initialize your current project (local installs only).
+- 询问要配置哪些 agent——自动检测已安装的 **Claude Code**、**Cursor**、**Codex CLI**、**opencode**、**Hermes Agent**、**Gemini CLI**、**Antigravity IDE** 和 **Kiro**。
+- 提示是否将 `synapse` 安装到 `PATH`（以便 agent 能启动 MCP 服务器）。
+- 询问配置是应用于所有项目还是仅限当前项目。
+- 为每个选中的 agent 写入 MCP 服务器配置和说明文件（如 `CLAUDE.md`、`.cursor/rules/synapse.mdc`、`~/.codex/AGENTS.md`）。
+- 当 Claude Code 是目标之一时，设置自动授权权限。
+- 初始化当前项目（仅限本地安装）。
 
-## Non-interactive (scripting / CI)
+## 非交互模式（脚本 / CI）
 
 ```bash
-synapse install --yes                              # auto-detect agents, install global
-synapse install --target=cursor,claude --yes       # explicit target list
-synapse install --target=auto --location=local     # detected agents, project-local
-synapse install --print-config codex               # print snippet, no file writes
+synapse install --yes                              # 自动检测 agent，全局安装
+synapse install --target=cursor,claude --yes       # 指定目标列表
+synapse install --target=auto --location=local     # 检测到的 agent，项目本地安装
+synapse install --print-config codex               # 打印配置片段，不写入文件
 ```
 
-| Flag | Values | Default |
+| 标志 | 可选值 | 默认值 |
 |---|---|---|
-| `--target` | `auto`, `all`, `none`, or csv (`claude,cursor,…`) | prompt |
-| `--location` | `global`, `local` | prompt |
-| `--yes` | (boolean) | prompt every step |
-| `--no-permissions` | (boolean) skip Claude auto-allow list | permissions on |
-| `--print-config <id>` | dump snippet for one agent and exit | — |
+| `--target` | `auto`、`all`、`none` 或逗号分隔列表（`claude,cursor,…`） | 交互提示 |
+| `--location` | `global`、`local` | 交互提示 |
+| `--yes` | （布尔值） | 逐步提示 |
+| `--no-permissions` | （布尔值）跳过 Claude 自动授权列表 | 权限开启 |
+| `--print-config <id>` | 输出指定 agent 的配置片段并退出 | — |
 
-## 2. Restart your agent
+## 2. 重启你的 agent
 
-Restart your agent (Claude Code / Cursor / Codex CLI / opencode / Hermes Agent / Gemini CLI / Antigravity IDE / Kiro) for the MCP server to load.
+重启你的 agent（Claude Code / Cursor / Codex CLI / opencode / Hermes Agent / Gemini CLI / Antigravity IDE / Kiro），以使 MCP 服务器生效。
 
-## 3. Initialize projects
+## 3. 初始化项目
 
 ```bash
 cd your-project
 synapse init -i
 ```
 
-This builds the per-project knowledge graph index and wires up any project-local agent surfaces, so a single global `synapse install` works in every project you open.
+此步骤会构建每个项目的知识图谱索引，并接入项目本地的 agent 配置，因此一次全局 `synapse install` 即可在你打开的每个项目中生效。
 
-## Supported platforms
+## 支持的平台
 
-Every release ships a self-contained build (bundled Node runtime — nothing to compile) for all three desktop OSes, on both x64 and arm64:
+每个版本都为全部三种桌面操作系统、x64 和 arm64 两种架构提供自包含构建（内置 Node runtime，无需编译）：
 
-| Platform | Architectures | Install |
+| 平台 | 架构 | 安装方式 |
 |---|---|---|
-| Windows | x64, arm64 | PowerShell installer or npm |
-| macOS | x64, arm64 | shell installer or npm |
-| Linux | x64, arm64 | shell installer or npm |
+| Windows | x64, arm64 | PowerShell 安装器或 npm |
+| macOS | x64, arm64 | Shell 安装器或 npm |
+| Linux | x64, arm64 | Shell 安装器或 npm |
 
-## Uninstall
+## 卸载
 
-Changed your mind? One command removes Synapse from every agent it configured:
+改变主意了？一条命令即可从所有已配置的 agent 中移除 Synapse：
 
 ```bash
 synapse uninstall
 ```
 
-This reverses the installer — stripping Synapse's MCP server config, instructions, and permissions from each configured agent. Your project indexes (`.synapse/`) are left untouched; remove those per-project with `synapse uninit`. Use `--target` to remove from specific agents, or `--yes` to run non-interactively.
+此操作会逆向安装过程——从每个已配置的 agent 中移除 Synapse 的 MCP 服务器配置、说明文件和权限设置。项目索引（`.synapse/`）不会被删除；如需移除，请在各项目中执行 `synapse uninit`。使用 `--target` 可指定从特定 agent 中移除，`--yes` 可非交互方式运行。

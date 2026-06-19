@@ -1,25 +1,25 @@
-﻿---
-title: Framework Routes
-description: Synapse links URL patterns to the handlers that serve them.
+---
+title: 框架路由
+description: Synapse 将 URL 模式与对应的处理函数关联起来。
 ---
 
-Synapse detects web-framework routing files and emits `route` nodes linked by `references` edges to their handler classes or functions. Querying the callers of a view or controller then surfaces the URL pattern that binds it.
+Synapse 能检测 Web 框架的路由文件，并生成 `route` 节点，通过 `references` 边与对应的处理类或函数关联。查询某个视图或控制器的调用者时，就能直接看到绑定它的 URL 模式。
 
-| Framework | Shapes recognized |
+| 框架 | 可识别的形式 |
 |---|---|
-| **Django** | `path()`, `re_path()`, `url()`, `include()` in `urls.py` (CBV `.as_view()`, dotted paths) |
-| **Flask** | `@app.route('/path', methods=[…])`, blueprint routes |
-| **FastAPI** | `@app.get(…)`, `@router.post(…)`, all standard methods |
-| **Express** | `app.get(…)`, `router.post(…)` with middleware chains |
-| **NestJS** | `@Controller` + `@Get/@Post/…`, GraphQL resolvers, message/event patterns, WebSocket subscriptions |
-| **Laravel** | `Route::get()`, `Route::resource()`, `Controller@action`, tuple syntax |
-| **Drupal** | `*.routing.yml` routes; `hook_*` implementations in `.module`/`.theme`/`.install`/`.inc` |
-| **Rails** | `get '/x', to: 'users#index'`, hash-rocket syntax |
-| **Spring** | `@GetMapping`, `@PostMapping`, `@RequestMapping` on methods |
-| **Gin / chi / gorilla / mux** | `r.GET(…)`, `router.HandleFunc(…)` |
+| **Django** | `urls.py` 中的 `path()`、`re_path()`、`url()`、`include()`（CBV 的 `.as_view()`、点分路径） |
+| **Flask** | `@app.route('/path', methods=[…])`、Blueprint 路由 |
+| **FastAPI** | `@app.get(…)`、`@router.post(…)` 等所有标准方法 |
+| **Express** | `app.get(…)`、`router.post(…)` 及中间件链 |
+| **NestJS** | `@Controller` + `@Get/@Post/…`、GraphQL 解析器、消息/事件模式、WebSocket 订阅 |
+| **Laravel** | `Route::get()`、`Route::resource()`、`Controller@action`、元组语法 |
+| **Drupal** | `*.routing.yml` 路由；`.module`/`.theme`/`.install`/`.inc` 中的 `hook_*` 实现 |
+| **Rails** | `get '/x', to: 'users#index'`、hash-rocket 语法 |
+| **Spring** | 方法上的 `@GetMapping`、`@PostMapping`、`@RequestMapping` |
+| **Gin / chi / gorilla / mux** | `r.GET(…)`、`router.HandleFunc(…)` |
 | **Axum / actix / Rocket** | `.route("/x", get(handler))` |
-| **ASP.NET** | `[HttpGet("/x")]` attributes on action methods |
+| **ASP.NET** | action 方法上的 `[HttpGet("/x")]` 特性 |
 | **Vapor** | `app.get("x", use: handler)` |
-| **React Router** / **SvelteKit** | Route component nodes |
+| **React Router** / **SvelteKit** | 路由组件节点 |
 
-Route resolution is automatic — there's nothing to configure. If a framework file is recognized, its routes appear in the graph after the next index or sync.
+路由解析是自动完成的，无需任何配置。只要框架文件被识别，其路由就会在下次索引或同步后出现在图谱中。

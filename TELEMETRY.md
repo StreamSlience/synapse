@@ -1,87 +1,55 @@
-﻿# Telemetry
+# 遥测
 
-Synapse collects a small set of **anonymous usage statistics** — which commands and
-tools get used, which languages get indexed, which agents drive usage — so we can tell
-which of the 20+ languages and 8 agent integrations deserve the most work. This page is
-the complete list of what is collected. If a field isn't on this page, it isn't collected;
-the ingest endpoint enforces this list as an allowlist and is itself
-[public, auditable code](telemetry-worker/) in this repository.
+Synapse 收集少量**匿名使用统计数据**——哪些命令和工具被使用、哪些语言被索引、哪些 agent 在驱动使用——以便我们了解 20+ 种语言和 8 个 agent 集成中哪些最值得投入。本页面是收集内容的完整列表。如果某个字段不在本页面上，就不会被收集；数据接收端点将本列表作为许可名单强制执行，其本身也是本仓库中[公开可审计的代码](telemetry-worker/)。
 
-## Turning it off
+## 关闭遥测
 
-Any of these works, permanently:
+以下任意一种方式均可永久关闭：
 
 ```bash
-synapse telemetry off        # stores your choice (and deletes any unsent data)
+synapse telemetry off        # 保存你的选择（并删除所有未发送的数据）
 ```
 
 ```bash
-export SYNAPSE_TELEMETRY=0   # per-shell / per-CI override
-export DO_NOT_TRACK=1          # the cross-tool standard — always honored
+export SYNAPSE_TELEMETRY=0   # 每个 shell / CI 的覆盖设置
+export DO_NOT_TRACK=1          # 跨工具标准——始终生效
 ```
 
-`synapse telemetry status` shows the current state, what decided it, and your machine ID.
-The interactive installer (`synapse install`) asks up front with a visible default-on
-toggle and never re-asks. If you never saw the installer (e.g. `npx` straight into `init`),
-a one-line notice is printed to stderr before the first time anything is sent.
+`synapse telemetry status` 显示当前状态、决定它的原因以及你的机器 ID。交互式安装器（`synapse install`）会在开始时显示一个默认开启的开关进行询问，且不会重复询问。如果你从未使用过安装器（例如直接用 `npx` 运行 `init`），在第一次发送任何数据之前，会向 stderr 打印一行通知。
 
-Off means off: when disabled, Synapse records nothing, opens no connection to the
-telemetry endpoint, and sends no "opted out" ping.
+关闭就是关闭：禁用后，Synapse 不记录任何内容，不打开任何到遥测端点的连接，也不发送"已退出"的 ping。
 
-## What is collected
+## 收集内容
 
-Every payload carries this envelope:
+每条数据都携带以下信封：
 
-| field | example | notes |
+| 字段 | 示例 | 说明 |
 |---|---|---|
-| `machine_id` | `b3a8c1…` | random UUID minted on first send — derived from nothing |
+| `machine_id` | `b3a8c1…` | 首次发送时生成的随机 UUID——不从任何信息派生 |
 | `synapse_version` | `0.9.9` | |
-| `os` / `arch` | `darwin` / `arm64` | platform identifiers only |
-| `node_major` | `22` | major version only |
-| `ci` | `false` | whether the `CI` env var was set |
-| `schema_version` | `1` | bumped when this page changes |
+| `os` / `arch` | `darwin` / `arm64` | 仅平台标识符 |
+| `node_major` | `22` | 仅主版本号 |
+| `ci` | `false` | 是否设置了 `CI` 环境变量 |
+| `schema_version` | `1` | 本页面变更时递增 |
 
-And one of four events:
+以及以下四种事件之一：
 
-- **`install`** — when `synapse install` configures agents: which agents
-  (`["claude","cursor",…]`), global vs project-local, and whether it was a fresh install,
-  an upgrade, or a re-run.
-- **`index`** — when a full index completes: the **language names** present (e.g.
-  `["typescript","go"]`), the file count as a **coarse bucket** (`<100`, `100-1k`,
-  `1k-10k`, `10k+`), the duration as a bucket (`<10s`, `10-60s`, `1-5m`, `5m+`), and the
-  SQLite backend (`native`/`wasm`).
-- **`usage_rollup`** — one line per day per tool: the tool or CLI command **name** (e.g.
-  `synapse_explore`, `init`), how many times it ran, how many errored, and — for MCP
-  tools — the connecting agent's name and version from the MCP handshake (e.g.
-  `Claude Code 2.1`).
-- **`uninstall`** — when `synapse uninstall`/`uninit` runs: which agents were removed.
+- **`install`** — 当 `synapse install` 配置 agent 时：配置了哪些 agent（`["claude","cursor",…]`）、全局还是项目本地，以及是全新安装、升级还是重新运行。
+- **`index`** — 当全量索引完成时：存在的**语言名称**（如 `["typescript","go"]`）、文件数量的**粗粒度分段**（`<100`、`100-1k`、`1k-10k`、`10k+`）、耗时分段（`<10s`、`10-60s`、`1-5m`、`5m+`），以及 SQLite 后端（`native`/`wasm`）。
+- **`usage_rollup`** — 每天每个工具一行：工具或 CLI 命令**名称**（如 `synapse_explore`、`init`）、运行次数、出错次数，以及——对于 MCP 工具——从 MCP 握手获取的连接 agent 名称和版本（如 `Claude Code 2.1`）。
+- **`uninstall`** — 当 `synapse uninstall`/`uninit` 运行时：移除了哪些 agent。
 
-Usage is **aggregated locally into daily totals** before anything is sent — there is no
-per-call event stream, and nothing is sent in real time.
+使用数据在发送前会**在本地聚合为每日总计**——没有逐次调用的事件流，也不会实时发送任何内容。
 
-## What is never collected
+## 永不收集的内容
 
-- **No source code.** No file paths, file names, directory names, repository names or
-  URLs, symbol names, search queries, or anything else derived from the contents of an
-  indexed project.
-- **No IP addresses.** The ingest endpoint never reads, logs, or forwards the client IP,
-  and IP discarding is enabled at the analytics backend on top of that. No geolocation.
-- **No fingerprinting.** The machine ID is a random UUID stored in
-  `~/.synapse/telemetry.json` — delete that file (or run `synapse telemetry off`,
-  then `on`) and the old ID is gone forever, with no way to reconnect it.
-- **No personal data.** No usernames, hostnames, emails, or environment variables.
+- **无源代码。** 无文件路径、文件名、目录名、仓库名或 URL、符号名、搜索查询，以及任何其他派生自已索引项目内容的信息。
+- **无 IP 地址。** 数据接收端点从不读取、记录或转发客户端 IP，此外在分析后端层面也启用了 IP 丢弃。无地理位置信息。
+- **无指纹识别。** 机器 ID 是存储在 `~/.synapse/telemetry.json` 中的随机 UUID——删除该文件（或运行 `synapse telemetry off` 再 `on`），旧 ID 将永久消失，且无法重新关联。
+- **无个人数据。** 无用户名、主机名、电子邮件或环境变量。
 
-## How it travels
+## 数据传输方式
 
-Events POST to `telemetry.getsynapse.com` — a first-party endpoint whose complete
-source lives in [`telemetry-worker/`](telemetry-worker/) in this repository. It validates
-every event and property against the allowlist above (anything else is dropped), strips
-IPs, rate-limits, and forwards to a managed analytics store (PostHog, US region) as
-anonymous events. Sends are fire-and-forget with a short timeout: offline or air-gapped
-machines buffer a bounded local file (256 KB cap) and never retry-loop, log errors, or
-slow a command down. Telemetry never adds latency to MCP tool calls — recording is an
-in-memory counter.
+事件以 POST 方式发送到 `telemetry.getsynapse.com`——这是一个第一方端点，完整源码位于本仓库的 [`telemetry-worker/`](telemetry-worker/) 目录下。它将每个事件和属性与上述许可名单进行验证（其他内容会被丢弃），剥离 IP，进行限速，并将匿名事件转发到托管的分析存储（PostHog，美国区域）。发送采用"发后不管"模式并设有短超时：离线或隔离网络的机器会将数据缓冲到本地文件（256 KB 上限），且从不重试循环、记录错误或拖慢命令执行。遥测永远不会给 MCP 工具调用增加延迟——记录仅是内存中的计数器。
 
-The engineering contract behind all of this — including the rule that schema changes must
-update this page, the client, and the public endpoint in one PR — is in
-[`docs/design/telemetry.md`](docs/design/telemetry.md).
+这一切背后的工程契约——包括 schema 变更必须在同一个 PR 中同步更新本页面、客户端和公开端点的规则——记录在 [`docs/design/telemetry.md`](docs/design/telemetry.md) 中。

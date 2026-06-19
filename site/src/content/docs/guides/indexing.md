@@ -1,48 +1,48 @@
-﻿---
-title: Indexing a Project
-description: Full index, incremental sync, and the file watcher.
+---
+title: 索引项目
+description: 全量索引、增量同步和文件监听器。
 ---
 
-## Initialize and index
+## 初始化与索引
 
 ```bash
 cd your-project
-synapse init -i      # initialize + full index
+synapse init -i      # 初始化 + 全量索引
 ```
 
-`init` creates `.synapse/`; `-i`/`--index` builds the index immediately. To initialize without indexing, drop the flag and run `synapse index` later.
+`init` 会创建 `.synapse/` 目录；`-i`/`--index` 会立即构建索引。如需先初始化后再索引，可省略该标志，稍后运行 `synapse index`。
 
-## Full vs. incremental
+## 全量 vs. 增量
 
 ```bash
-synapse index           # full index of the whole project
-synapse index --force   # re-index from scratch
-synapse sync            # incremental — only changed files
+synapse index           # 全量索引整个项目
+synapse index --force   # 从头开始重新索引
+synapse sync            # 增量——只处理变更的文件
 ```
 
-`sync` is fast because it only reparses what changed. Use it after a branch switch or a batch of edits.
+`sync` 速度快，因为它只重新解析发生变更的文件。在切换分支或批量编辑后使用。
 
-## Stay fresh automatically
+## 自动保持最新
 
-**You don't need to run `synapse sync` by hand during an agent session.** When your agent (Claude Code, Cursor, Codex, opencode, Hermes, Gemini, Antigravity, Kiro) launches `synapse serve --mcp`, three layers cooperate to keep the index in step with your code — and to never give the agent a quiet wrong answer in the small window between an edit and the next sync.
+**在 agent 会话期间，无需手动运行 `synapse sync`。** 当 agent（Claude Code、Cursor、Codex、opencode、Hermes、Gemini、Antigravity、Kiro）启动 `synapse serve --mcp` 时，三个机制协同工作，确保索引与代码同步——并确保在编辑与下次同步之间的短暂窗口内，agent 不会静默地获取到错误答案。
 
-### 1. File watcher with debounced auto-sync (always on)
+### 1. 带防抖的自动同步文件监听器（始终启用）
 
-`serve --mcp` spins up a native file watcher (FSEvents on macOS, inotify on Linux, ReadDirectoryChangesW on Windows) over the project root. Every source-file create / modify / delete is captured. A debounce timer collapses bursts of edits into a single sync.
+`serve --mcp` 会启动一个原生文件监听器（macOS 上是 FSEvents，Linux 上是 inotify，Windows 上是 ReadDirectoryChangesW）来监听项目根目录。每次源文件的创建、修改或删除都会被捕获。防抖计时器会将短时间内的大量编辑合并为一次同步。
 
 ```
-agent writes src/Widget.ts
-  → watcher fires (event delivery: typically <100ms)
-  → 2000ms debounce
-  → sync runs; Widget.ts's nodes + edges are in the index
-  → next agent query sees it
+agent 写入 src/Widget.ts
+  → 监听器触发（事件送达通常 <100ms）
+  → 2000ms 防抖
+  → 同步执行；Widget.ts 的节点和边进入索引
+  → 下一次 agent 查询即可看到更新
 ```
 
-**Tunable**: `SYNAPSE_WATCH_DEBOUNCE_MS` overrides the default 2000ms, clamped to `[100ms, 60s]`. Useful when a build step or formatter writes many files in a tight burst — bump it to `5000` or `10000` so the watcher coalesces them into one sync.
+**可调节**：`SYNAPSE_WATCH_DEBOUNCE_MS` 可覆盖默认的 2000ms，范围限制在 `[100ms, 60s]`。当构建步骤或格式化工具在短时间内写入大量文件时，可将其调大到 `5000` 或 `10000`，让监听器将多次变更合并为一次同步。
 
-### 2. Per-file staleness banner — covers the debounce window
+### 2. 逐文件过期提示——覆盖防抖窗口
 
-The watcher debounce introduces a small window (typically 2s) where a freshly-edited file is on disk but not yet in the index. Synapse closes that window with a per-file staleness banner: if any MCP tool response would reference a file that's currently pending re-index, the response prepends a `⚠️` banner naming the stale file:
+监听器的防抖会引入一个短暂窗口（通常 2 秒），此时文件已在磁盘上修改但尚未被索引。Synapse 通过逐文件过期提示来覆盖这个窗口：如果某个 MCP 工具响应会引用当前正等待重新索引的文件，响应前会加上一个 `⚠️` 提示，列出过期的文件名：
 
 ```
 ⚠️ Some files referenced below were edited since the last index sync —
@@ -55,17 +55,17 @@ The rest of this response is fresh.
 …
 ```
 
-Agents read this and follow up with a direct `Read` on the named file — validated end-to-end with Claude Code, where the agent literally says "Reading the file directly for the live content" before opening it. So even during the 2-second debounce window, the agent never gets a silent wrong answer.
+agent 读到这条提示后，会对指定文件直接执行 `Read`——在 Claude Code 上已端到端验证，agent 会明确说"直接读取文件以获取最新内容"然后打开该文件。因此即使在 2 秒的防抖窗口内，agent 也不会静默地获取到错误答案。
 
-Pending files **not** referenced by the response surface as a small footer instead (`(Note: N file(s) elsewhere in this project are pending index sync but were not referenced above: …)`). Either way, the signal is explicit.
+响应中**未**引用的等待中文件会以一个小尾注方式显示（`(Note: N file(s) elsewhere in this project are pending index sync but were not referenced above: …)`）。无论哪种方式，信号都是显式的。
 
-### 3. Connect-time catch-up — covers gaps when the MCP server wasn't running
+### 3. 连接时补偿同步——覆盖 MCP 服务器未运行期间的变更
 
-When your editor / agent (re)connects to the MCP server, synapse runs a fast filesystem-based reconciliation (a `(size, mtime)` stat pre-filter, then a content hash on the rest) before answering the first query. So files changed while no MCP server was running — a `git pull` from the terminal, an edit from another editor, an agent that finished and exited — are caught up automatically on the next session's first tool call.
+当编辑器 / agent（重新）连接到 MCP 服务器时，Synapse 会在响应第一个查询之前执行一次快速的文件系统核对（先用 `(size, mtime)` 进行预过滤，再对其余文件做内容哈希对比）。因此，在没有 MCP 服务器运行期间发生的文件变更——终端中的 `git pull`、其他编辑器的修改、已退出的 agent 所做的改动——都会在下次会话的第一次工具调用时自动补偿同步。
 
-### Verify what the watcher sees
+### 验证监听器看到的内容
 
-`synapse_status` exposes the pending set first-class — useful for an agent asking "is the index caught up?" in one call:
+`synapse_status` 将等待中的文件集作为一等公民暴露出来——让 agent 通过一次调用就能判断"索引是否已同步"：
 
 ```
 synapse_status →
@@ -75,27 +75,27 @@ synapse_status →
   - src/Widget.ts (edited 1200ms ago)
 ```
 
-If `### Pending sync:` isn't in the response, nothing is in flight.
+如果响应中没有 `### Pending sync:`，则说明没有任何待处理的同步。
 
-### When manual `synapse sync` makes sense
+### 何时需要手动运行 `synapse sync`
 
-Almost never. The edge cases:
+几乎不需要。边缘情况如下：
 
-- **The watcher is disabled.** Sandboxes that block local fs watchers, or you've set `SYNAPSE_NO_DAEMON=1` to opt out of the shared daemon. In those cases `synapse sync` is the manual fallback.
-- **Pre-flight before a CI run.** If you're scripting against the index outside an agent session, a single `synapse sync` at the start of the script guarantees the index reflects the current working tree.
+- **监听器被禁用。** 沙箱环境限制了本地文件监听器，或者你设置了 `SYNAPSE_NO_DAEMON=1` 以退出共享守护进程模式。此时 `synapse sync` 是手动替代方案。
+- **CI 运行前的预检。** 如果你在 agent 会话之外通过脚本使用索引，在脚本开头执行一次 `synapse sync` 可确保索引反映当前工作树的状态。
 
-Otherwise: just use it. The watcher + banner + connect-sync covers the AI-assisted workflow end-to-end. If you're seeing files genuinely missed after the debounce window has passed, that's a bug — please file an issue with a reproduction.
+除此之外：直接使用即可。监听器 + 过期提示 + 连接同步已端到端覆盖了 AI 辅助工作流。如果你发现文件在防抖窗口过后仍未被同步，那是一个 bug——请提交附有复现步骤的 issue。
 
-> See the v0.9.5 release notes for the [staleness banner (#403)](https://github.com/colbymchenry/synapse/releases/tag/v0.9.5) and the connect-time catch-up (#414); both shipped together.
+> 参见 v0.9.5 版本发布说明中的[过期提示 (#403)](https://github.com/colbymchenry/synapse/releases/tag/v0.9.5)和连接时补偿同步 (#414)；两者同时发布。
 
-## Check status
+## 检查状态
 
 ```bash
 synapse status
 ```
 
-Reports node/edge/file counts, the active SQLite backend, and the journal mode. In an agent session, the MCP-side `synapse_status` additionally surfaces the `### Pending sync:` block described above.
+报告节点/边/文件数量、当前 SQLite 后端和日志模式。在 agent 会话中，MCP 端的 `synapse_status` 还会额外显示上文描述的 `### Pending sync:` 块。
 
-## What gets indexed
+## 哪些内容会被索引
 
-Every file whose extension maps to a [supported language](/synapse/reference/languages/), minus dependency/build directories excluded by default (`node_modules`, `vendor`, `dist`, …), anything your `.gitignore` excludes, and files over 1 MB. See [Configuration](/synapse/getting-started/configuration/).
+扩展名映射到[支持语言](/synapse/reference/languages/)的所有文件，减去默认排除的依赖/构建目录（`node_modules`、`vendor`、`dist` 等）、`.gitignore` 排除的内容，以及超过 1 MB 的文件。参见[配置](/synapse/getting-started/configuration/)。

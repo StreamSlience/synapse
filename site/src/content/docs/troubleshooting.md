@@ -1,27 +1,27 @@
-﻿---
-title: Troubleshooting
-description: Fixes for the most common Synapse issues.
+---
+title: 故障排查
+description: 最常见 Synapse 问题的解决方法。
 ---
 
 ## "Synapse not initialized"
 
-Run `synapse init` in your project directory first.
+先在项目目录中运行 `synapse init`。
 
-## Indexing is slow
+## 索引速度慢
 
-Check that `node_modules` and other large directories are excluded (they are, if gitignored). Use `--quiet` to reduce output overhead.
+检查 `node_modules` 和其他大目录是否已被排除（如果已加入 `.gitignore`，则会自动排除）。使用 `--quiet` 可减少输出开销。
 
-## MCP hits `database is locked`
+## MCP 报 `database is locked`
 
-Current builds shouldn't: Synapse bundles its own Node runtime and uses Node's built-in `node:sqlite` in WAL mode, where concurrent reads never block on a writer. If you still see it:
+当前版本不应出现此问题：Synapse 内置了自己的 Node 运行时，使用 Node 原生的 `node:sqlite` 并以 WAL 模式运行，并发读取不会被写入阻塞。如果仍然遇到，请检查：
 
-- **You're on an old (pre-0.9) install.** Reinstall to get the bundled runtime — `curl -fsSL https://raw.githubusercontent.com/colbymchenry/synapse/main/install.sh | sh` (macOS/Linux), `irm https://raw.githubusercontent.com/colbymchenry/synapse/main/install.ps1 | iex` (Windows), or `npm i -g @colbymchenry/synapse@latest`.
-- **`synapse status` shows `Journal:` other than `wal`** — WAL couldn't be enabled on this filesystem (common on network shares and WSL2 `/mnt`), so reads can block on writes. Move the project (with its `.synapse/` folder) onto a local disk.
+- **你使用的是旧版（0.9 之前）安装。** 重新安装以获取内置运行时——`curl -fsSL https://raw.githubusercontent.com/colbymchenry/synapse/main/install.sh | sh`（macOS/Linux），`irm https://raw.githubusercontent.com/colbymchenry/synapse/main/install.ps1 | iex`（Windows），或 `npm i -g @colbymchenry/synapse@latest`。
+- **`synapse status` 显示 `Journal:` 不是 `wal`**——说明当前文件系统无法启用 WAL（常见于网络共享和 WSL2 的 `/mnt`），读取可能被写入阻塞。将项目（连同 `.synapse/` 目录）移至本地磁盘。
 
-## MCP server not connecting
+## MCP 服务器无法连接
 
-Ensure the project is initialized/indexed, verify the path in your MCP config, and check that `synapse serve --mcp` works from the command line.
+确认项目已初始化/索引，检查 MCP 配置中的路径是否正确，并验证 `synapse serve --mcp` 能否在命令行正常运行。
 
-## Missing symbols
+## 符号缺失
 
-The MCP server auto-syncs on save (wait a couple of seconds). Run `synapse sync` manually if needed. Check that the file's language is [supported](/synapse/reference/languages/) and isn't excluded by `.gitignore`.
+MCP 服务器会在保存后自动同步（等待几秒钟）。如有需要，可手动运行 `synapse sync`。检查该文件的语言是否[受支持](/synapse/reference/languages/)，以及是否被 `.gitignore` 排除。

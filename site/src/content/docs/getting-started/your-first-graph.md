@@ -1,44 +1,44 @@
-﻿---
-title: Your First Graph
-description: Build an index and run your first queries against it.
+---
+title: 构建你的第一个图谱
+description: 构建索引并运行第一批查询。
 ---
 
-Once Synapse is installed, building and exploring a graph takes three commands.
+安装好 Synapse 后，构建和探索一个图谱只需三条命令。
 
-## Index a project
+## 索引项目
 
 ```bash
 cd your-project
-synapse init -i      # initialize + index in one step
+synapse init -i      # 初始化 + 一步完成索引
 ```
 
-`init` creates the `.synapse/` directory; `-i` (or `--index`) immediately builds the full index. For an existing project you can re-index any time:
+`init` 会创建 `.synapse/` 目录；`-i`（或 `--index`）会立即构建完整索引。对于已有项目，可以随时重新索引：
 
 ```bash
-synapse index          # full index
-synapse sync           # incremental update of changed files
+synapse index          # 全量索引
+synapse sync           # 仅更新有变动的文件（增量）
 ```
 
-## Check it worked
+## 验证是否成功
 
 ```bash
 synapse status
 ```
 
-This reports the node/edge/file counts, the active SQLite backend, and the journal mode — a quick health check that the index is ready.
+此命令会报告节点/边/文件数量、当前使用的 SQLite 后端和日志模式——可以快速确认索引已就绪。
 
-## Run a query
+## 运行查询
 
 ```bash
-synapse query UserService          # find symbols by name
-synapse callers handleRequest      # what calls a function
-synapse callees handleRequest      # what a function calls
-synapse impact AuthMiddleware      # what a change would affect
-synapse context "fix the login flow"   # build task-focused context
+synapse query UserService          # 按名称查找符号
+synapse callers handleRequest      # 谁调用了某个函数
+synapse callees handleRequest      # 某个函数调用了谁
+synapse impact AuthMiddleware      # 修改某符号会影响哪些代码
+synapse context "fix the login flow"   # 构建以任务为中心的上下文
 ```
 
-Each accepts `--json` for machine-readable output. See the full [CLI reference](/synapse/reference/cli/).
+所有命令都支持 `--json` 标志以输出机器可读格式。参见完整的 [CLI 参考](/synapse/reference/cli/)。
 
-## Hand it to your agent
+## 交给你的 agent
 
-With a `.synapse/` directory present and an agent configured (see [Installation](/synapse/getting-started/installation/)), your agent uses the [MCP tools](/synapse/reference/mcp-server/) automatically — no extra step.
+只要存在 `.synapse/` 目录且 agent 已完成配置（参见[安装](/synapse/getting-started/installation/)），你的 agent 就会自动使用 [MCP 工具](/synapse/reference/mcp-server/)——无需额外操作。

@@ -1,25 +1,25 @@
-﻿---
-title: Next Steps
-description: Where to go once Synapse is installed and indexing.
+---
+title: 后续步骤
+description: 安装并完成索引后，接下来该做什么。
 ---
 
-You've got Synapse installed and a graph built. Here's where to go next.
+Synapse 已安装完毕，图谱也已构建好。以下是接下来可以探索的方向。
 
-## Understand the model
+## 深入理解原理
 
-- [How It Works](/synapse/core-concepts/how-it-works/) — the extraction → storage → resolution → sync pipeline.
-- [The Knowledge Graph](/synapse/core-concepts/knowledge-graph/) — the node and edge kinds the graph is built from.
-- [Resolution & Frameworks](/synapse/core-concepts/resolution/) — how references and framework routes get connected.
+- [工作原理](/synapse/core-concepts/how-it-works/) — 提取 → 存储 → 解析 → 同步的完整流水线。
+- [知识图谱](/synapse/core-concepts/knowledge-graph/) — 图谱由哪些节点类型和边类型构成。
+- [解析与框架](/synapse/core-concepts/resolution/) — 引用如何被解析，框架路由如何被连接。
 
-## Put it to work
+## 付诸实践
 
-- [Indexing a Project](/synapse/guides/indexing/) — full index, incremental sync, and the file watcher.
-- [Framework Routes](/synapse/guides/framework-routes/) — link URL patterns to their handlers.
-- [Affected Tests in CI](/synapse/guides/affected-tests/) — run only the tests a change touches.
+- [索引项目](/synapse/guides/indexing/) — 全量索引、增量同步和文件监听器。
+- [框架路由](/synapse/guides/framework-routes/) — 将 URL 模式与对应的处理函数关联起来。
+- [CI 中的受影响测试](/synapse/guides/affected-tests/) — 只运行被变更影响的测试。
 
-## Reference
+## 参考文档
 
-- [MCP Server](/synapse/reference/mcp-server/) — the tools agents call.
-- [CLI](/synapse/reference/cli/) — every command and flag.
-- [API](/synapse/reference/api/) — use Synapse as a TypeScript library.
-- [Integrations](/synapse/reference/integrations/) — supported agents and manual setup.
+- [MCP 服务器](/synapse/reference/mcp-server/) — agent 调用的工具。
+- [CLI](/synapse/reference/cli/) — 所有命令和标志。
+- [API](/synapse/reference/api/) — 将 Synapse 作为 TypeScript 库使用。
+- [集成](/synapse/reference/integrations/) — 支持的 agent 及手动配置方式。
