@@ -1,285 +1,238 @@
-﻿# Design + status: adaptive `synapse_explore` sizing (sibling skeletonization)
+# 设计与状态：自适应 `synapse_explore` 输出规模（兄弟节点骨架化）
 
-**Status:** Implemented & validated, **default-on**, on branch
-`feat/adaptive-explore-sizing` (initial commit `d6d059f`; **refined 2026-05-29**
-after a real-agent A/B exposed a read-back regression — see
-"Refinement" below). Escape hatch: `SYNAPSE_ADAPTIVE_EXPLORE=0`.
-**Motivation:** make `synapse_explore` size its output to the *answer* rather
-than always filling the budget cap — so a "sibling-heavy" flow (many
-interchangeable implementations of one interface) stops costing *more* than
-plain grep/read, without starving "diffuse" flows that genuinely need broad
-source.
+**状态：** 已实现并验证，**默认开启**，位于分支
+`feat/adaptive-explore-sizing`（初始提交 `d6d059f`；**2026-05-29 精化**，
+经过真实智能体 A/B 测试发现了读回归问题——详见下方"精化"章节）。
+逃生舱：`SYNAPSE_ADAPTIVE_EXPLORE=0`。
+**动机：** 让 `synapse_explore` 的输出规模与*答案*匹配，而非总是填满预算上限——
+这样一个"兄弟节点密集"的流程（同一接口的多个可互换实现）就不会比直接
+grep/read 代价更高，同时也不会让真正需要大量源码的"扩散型"流程陷入饥荒。
 
-> **Refinement (2026-05-29) — the read-back regression.** The first cut gated
-> only on *off-spine + polymorphic-sibling*. A real-agent A/B (not the
-> deterministic probe) showed that this skeletonized two files the agent then
-> **Read back**, defeating the point: OkHttp's `RealCall` (it implements the
-> 9-impl `Lockable` *mixin*, so it tripped the sibling signal even though it's
-> the orchestrator) and Django's `compiler.py` (it *defines* `SQLCompiler` and
-> co-locates its subclasses). Two conditions fixed it — a file skeletonizes only
-> if it is **not spared**, where **spared = the agent NAMED a callable in it**
-> (`getResponseWithInterceptorChain`, `SQLCompiler.execute_sql` → keep it full)
-> **UNLESS the file DEFINES a ≥3-impl supertype** (a base+subclasses "family"
-> file is huge and Read-anyway, so skeletonizing it *frees explore budget* for
-> the sibling files the agent would otherwise Read). Result: OkHttp **3%
-> costlier → ~10% cheaper** (RealCall full, 0 read-backs); Django **10% costlier
-> → ~10% cheaper** (compiler.py skeleton frees ~6.5 KB of the 28 KB budget; half
-> the runs answer with 0 reads). The supertype signal was initially used as a
-> *spare* — that was backwards and regressed Django to 9% costlier by starving
-> its budget; it is now an *override* of the named-callable spare. The
-> single-condition history below is kept for context.
-
-> **Further refinement (2026-05-29) — per-symbol focused view + named-cluster
-> survival.** Whole-file skeleton/spare was still too coarse on a real Django
-> A/B: the agent Read back `compiler.py` (collapsed → its `execute_sql`/`as_sql`
-> bodies elided) and `query.py` (a non-sibling god-file whose `_fetch_all` cluster
-> got trimmed). Four changes took both repos from ~9–10% to **~14–17% cheaper**
-> with **median 0 reads**:
-> 1. **Uniqueness-aware spare** — only a (near-)UNIQUE named callable spares a
->    file. `as_sql` has **110 defs** across every Compiler/Expression subclass;
->    naming it must not keep every backend variant full (it was flooding Django's
->    budget). `getResponseWithInterceptorChain` (1 def) still spares RealCall.
-> 2. **Per-symbol focused view** — a collapsed family file shows the **full body**
->    of on-spine / unique-named / canonical-base-supertype methods and only
->    **signatures** for the rest. So `SQLCompiler.execute_sql`/`as_sql` survive
->    while the 80 other symbols + redundant subclasses collapse → no Read-back.
-> 3. **Test-file exclusion on all tiers** — a test file (`custom_lookups/tests.py`)
->    was eating 2.3 KB of Django's 28 KB budget; tests rarely answer an
->    architecture question. (Previously only the <500-file tiers excluded them.)
-> 4. **Named-cluster survival in non-sibling files** — inject agent-named method
->    defs into a file's clusters even when the gather missed them, rank them at
->    importance 9, and cap cluster selection at `min(per-file, remaining-total)`
->    so high-importance named clusters survive instead of being source-order
->    trimmed (Django's `_fetch_all`, L2237, the last of four big files emitted).
-> Controls held: OkHttp 14% cheaper / 0 RealCall read-backs; Excalidraw 31%
-> cheaper / 0 reads (god-file clustering unaffected — its big file is emitted
-> first, so the budget cap never binds it). OkHttp's interceptors stay a pure
-> signature skeleton (no named callable in them, don't define a supertype).
+> **精化（2026-05-29）——读回归问题。** 第一版仅对*脊外 + 多态兄弟*进行门控。
+> 真实智能体 A/B 测试（非确定性探针）发现：智能体随后**读回**了两个被骨架化的文件，
+> 适得其反：OkHttp 的 `RealCall`（它实现了 9 实现的 `Lockable` *mixin*，因此触发了兄弟
+> 信号，尽管它是编排者）和 Django 的 `compiler.py`（它*定义*了 `SQLCompiler` 并将子类
+> 置于同一文件）。两个条件修复了这一问题——仅当文件**未被豁免**时才骨架化，
+> 其中**豁免 = 智能体在该文件中命名了一个可调用符号**
+> （`getResponseWithInterceptorChain`、`SQLCompiler.execute_sql` → 保持完整）
+> **除非该文件定义了一个 ≥3 实现的超类型**（基类+子类的"家族"文件体积庞大且无论如何会
+> 被读取，因此骨架化它能*释放探索预算*给智能体本应逐一读取的兄弟文件）。
+> 结果：OkHttp **从成本增加 3% 变为降低约 10%**（RealCall 保持完整，0 次读回）；
+> Django **从成本增加 10% 变为降低约 10%**（compiler.py 骨架化释放了 28KB 预算中的约
+> 6.5KB；一半运行以 0 次读取作答）。超类型信号最初被用作*豁免*条件——那是反的，使
+> Django 回归到成本增加 9%；现在它改为*覆盖*命名可调用符号的豁免。下方单条件历史记录
+> 仅作背景保留。
+>
+> **进一步精化（2026-05-29）——按符号聚焦视图 + 命名簇保留。** 整文件骨架化/豁免对
+> 真实 Django A/B 而言仍过于粗糙：智能体读回了 `compiler.py`（折叠后其 `execute_sql`/
+> `as_sql` 体被省略）和 `query.py`（一个非兄弟的超大文件，其 `_fetch_all` 簇被裁剪）。
+> 四项改进使两个代码库从约 9–10% 变为**约 14–17% 成本更低**，**中位数 0 次读取**：
+>
+> 1. **唯一性感知豁免**——只有（近）唯一的命名可调用符号才豁免文件。`as_sql` 在每个
+>    Compiler/Expression 子类中有 **110 个定义**；命名它不应让每个后端变体保持完整
+>    （这在淹没 Django 的预算）。`getResponseWithInterceptorChain`（1 个定义）仍豁免
+>    RealCall。
+> 2. **按符号聚焦视图**——折叠的家族文件显示脊上/唯一命名/规范基类超类型方法的**完整
+>    体**，其余仅显示**签名**。因此 `SQLCompiler.execute_sql`/`as_sql` 保留，而 80 个
+>    其他符号 + 冗余子类折叠 → 无需读回。
+> 3. **所有层级排除测试文件**——一个测试文件（`custom_lookups/tests.py`）占用了
+>    Django 28KB 预算中的 2.3KB；测试文件很少能回答架构问题。（此前仅 <500 文件的层级
+>    排除测试文件。）
+> 4. **非兄弟文件中命名簇的保留**——将智能体命名的方法定义注入文件的簇中（即使收集
+>    阶段遗漏），赋予重要性 9，并以 `min(每文件上限, 剩余总量)` 限制簇选择，使高重要
+>    性的命名簇得以保留，而不会被源码顺序裁剪（Django 的 `_fetch_all`，L2237，四个大
+>    文件中最后一个）。
+>
+> 对照组维持不变：OkHttp 成本降低 14% / 0 次 RealCall 读回；Excalidraw 成本降低 31%
+> / 0 次读取（超大文件聚类不受影响——其大文件首先输出，因此预算上限不会约束它）。
+> OkHttp 的拦截器仍是纯签名骨架（其中无命名可调用符号，且未定义超类型）。
 
 ---
 
 ## TL;DR
 
-`synapse_explore` returned full source for **every** relevant file up to its
-char budget. On a question whose answer spans many *same-shaped* classes — e.g.
-"how does OkHttp process a request through its interceptor chain?", which touches
-~14 `class … : Interceptor` implementations — that meant ~28 KB of mostly
-**redundant full bodies**. Because those bodies ride in the context window for
-the rest of the session, the WITH-Synapse arm cost *more* than the WITHOUT arm
-(which answers the well-named interceptor question in ~10 cheap greps). OkHttp
-was the benchmark's cost outlier (−3% — i.e. *costlier* than native search).
+`synapse_explore` 对每个相关文件（在字符预算内）都返回完整源码。对于答案横跨许多
+*形状相同*的类的问题——例如"OkHttp 如何通过拦截器链处理请求？"，涉及约 14 个
+`class … : Interceptor` 实现——这意味着约 28KB 大多是**冗余完整体**。由于这些体在
+会话后续一直占据上下文窗口，有 synapse 的一方**比没有**的一方（通过约 10 次廉价的
+grep 就能回答这个具名拦截器问题）成本*更高*。OkHttp 是基准测试中的成本异常值
+（-3%，即*比*原生搜索更贵）。
 
-Fix: when a file is **both (a) off the synthesized flow spine and (b) a
-polymorphic sibling**, render it as a **skeleton** (class + member *signatures*,
-bodies elided) instead of full source — keeping the on-spine exemplar and the
-mechanism in full.
+修复：当一个文件**同时满足（a）脱离合成流程脊线，且（b）是多态兄弟**时，将其渲染为
+**骨架**（类 + 成员*签名*，省略体），同时保留脊线上的典型案例和机制的完整内容。
 
-- **OkHttp:** the interceptor-chain flow skeletonizes the 5 redundant
-  `: Interceptor` impls while keeping `RealInterceptorChain` (the dispatch
-  mechanism) and `RealCall` (the orchestrator the agent named) full → **~10%
-  cheaper than native, 0 RealCall read-backs** (see Refinement for the corrected
-  numbers; the original `28.5k → 16.6k` / "reads 1 vs 3" figures came from a
-  deterministic probe query, not the agent's real query).
-- **Django:** the QuerySet→SQL flow skeletonizes `compiler.py` (a
-  base+subclasses family file), freeing budget → **~10% cheaper**. (The earlier
-  claim that Django was "byte-identical / 0 skeletons" was an artifact of the
-  *probe* query; the agent's real query DOES surface the SQLCompiler family.)
-- **Excalidraw / Tokio / VS Code / Gin:** explore output is **byte-identical**
-  with the flag on/off (0 skeletons) — their flows have no off-spine
-  ≥3-implementer sibling group. The corrected gate only *adds* a spare
-  condition, so it skeletonizes a **strict subset** of the original gate → these
-  repos provably stay at 0 skeletons (verified by probe).
+- **OkHttp：** 拦截器链流程对 5 个冗余的 `: Interceptor` 实现进行骨架化，同时保持
+  `RealInterceptorChain`（调度机制）和 `RealCall`（编排者，智能体命名）完整 →
+  **比原生搜索约便宜 10%，0 次 RealCall 读回**（精化后的修正数字；原始的
+  "28.5k → 16.6k" / "读取 1 vs 3" 数字来自确定性探针查询，非智能体的真实查询）。
+- **Django：** QuerySet→SQL 流程对 `compiler.py`（基类+子类家族文件）进行骨架化，
+  释放预算 → **约便宜 10%**。（早期声称 Django "字节完全相同 / 0 个骨架" 是*探针*
+  查询的假象；智能体的真实查询确实会暴露 SQLCompiler 家族。）
+- **Excalidraw / Tokio / VS Code / Gin：** 探索输出与标志开关完全**字节相同**
+  （0 个骨架）——其流程没有脱离脊线的 ≥3 实现兄弟组。精化后的门控仅*增加*了豁免
+  条件，因此骨架化范围是原始门控的**严格子集** → 这些代码库可证明保持 0 个骨架
+  （探针已验证）。
 
 ---
 
-## The problem in one picture
+## 用一张图说明问题
 
-`handleExplore` gathers relevant files, sorts by relevance, and fills up to
-`maxOutputChars` (the "whole-small-file rule" dumps any relevant file ≤220 lines
-in full). The budget is a **target**, not a ceiling:
+`handleExplore` 收集相关文件，按相关性排序，并填充到 `maxOutputChars`（"整小文件规则"
+将任何 ≤220 行的相关文件完整输出）。预算是一个**目标**，而非上限：
 
-```
-OkHttp explore (shipped):  RealCall (full) + RealInterceptorChain (full)
-                         + CallServerInterceptor (full, 8.7k)
-                         + Bridge/Connect/Cache/… (full, ~4-5k each)   ← all ~same shape
-                         = ~28k, most of it redundant interceptor bodies
-```
-
-The agent only needs the **mechanism** (`RealInterceptorChain.proceed` iterating
-the chain) + the **contract** every interceptor implements + maybe one concrete
-example. The other five full bodies are padding — but only *because they're
-interchangeable*. On a diffuse question (Excalidraw's render pipeline:
-`mutateElement → … → renderStaticScene`), the off-spine files are **distinct
-steps**, and their bodies do real work — eliding them just makes the agent
-reconstruct them from signatures (more reasoning, net costlier; see "Dead ends").
-
-So the whole game is: **tell "interchangeable sibling" apart from "distinct
-step," cheaply.**
-
-## The gate (refined)
-
-A file is skeletonized iff **all** hold (and `SYNAPSE_ADAPTIVE_EXPLORE != 0`):
-
-1. **A spine exists.** `buildFlowFromNamedSymbols` returns its path node set
-   (`pathNodeIds`) and the full set of agent-named callables (`namedNodeIds`). If
-   no spine forms, nothing skeletonizes.
-
-2. **Off the flow spine.** No symbol in the file is on the traced chain — that
-   chain is the mechanism the agent is walking, always kept full.
-
-3. **A polymorphic sibling.** The file's class `implements`/`extends` a supertype
-   with **≥ 3 implementers** (`MIN_SIBLINGS`) — the signal that it's one of many
-   *interchangeable* impls. From real `implements`/`extends` edges, cached.
-
-4. **Not spared.** A file is **spared** (kept full) iff the agent **named a
-   callable in it** — a named method/function is something the agent asked to
-   *see* (`getResponseWithInterceptorChain`, `SQLCompiler.execute_sql`), not an
-   interchangeable leaf — **UNLESS the file itself DEFINES a ≥3-impl supertype**.
-   That last clause is the override: a base+subclasses "family" file (Django's
-   `compiler.py`) is huge and Read-anyway, so a full copy just eats explore
-   budget; skeletonizing it *frees* that budget for the sibling files the agent
-   would otherwise Read. So: *named ⇒ spare, unless it's a family file ⇒
-   skeletonize anyway.*
-
-Worked through the two repos:
-
-- **`RealInterceptorChain`** — `proceed` is on the spine → kept full (cond. 2).
-- **`RealCall`** — off-spine, and it trips the sibling signal via the **9-impl
-  `Lockable` mixin** (not because it's an interchangeable interceptor). But the
-  agent named `getResponseWithInterceptorChain`/`execute`/`enqueue` in it, and it
-  defines no ≥3-impl supertype → **spared, kept full** (cond. 4). This is the fix
-  for the read-back: before cond. 4 it skeletonized and the agent Read it back.
-- **`BridgeInterceptor` & the other 4** — off-spine, ≥3-impl siblings, named only
-  by *type*, define no supertype → **skeletonized**. The win.
-- **Django `compiler.py`** — off-spine, a sibling (its subclasses extend
-  `SQLCompiler`), the agent named `execute_sql` in it — *but it defines the
-  `SQLCompiler` supertype*, so the override fires → **skeletonized** (frees
-  budget). Sparing it instead (the wrong first attempt) cost MORE and Read MORE.
-
-## Why "shared supertype with ≥3 implementers" is the signal
-
-The thing that makes OkHttp's interceptors interchangeable is precisely that
-they're **N implementations of one interface**, invoked polymorphically. That is
-a *structural* property the graph records as `implements`/`extends` edges:
-
-```
-14 classes ──implements──▶ Interceptor      (BridgeInterceptor, CacheInterceptor,
-                                              CallServerInterceptor, … )
+```text
+OkHttp explore（已发布）：RealCall（完整）+ RealInterceptorChain（完整）
+                         + CallServerInterceptor（完整，8.7k）
+                         + Bridge/Connect/Cache/…（完整，各约 4-5k）  ← 形状几乎相同
+                         = 约 28k，大部分是冗余的拦截器体
 ```
 
-Excalidraw's `renderStaticScene`, `Scene`, `Collab` share **no** common
-supertype — the ≥3-implementer query returns nothing for them. So the signal
-cleanly separates the two repos, and (validated below) leaves every non-sibling
-flow untouched.
+智能体只需要**机制**（`RealInterceptorChain.proceed` 迭代链）+**每个拦截器实现的
+契约** + 也许一个具体示例。其余五个完整体是填充——但仅仅是*因为它们可以互换*。
+对于扩散型问题（Excalidraw 的渲染管道：`mutateElement → … → renderStaticScene`），
+脱离脊线的文件是**各自独立的步骤**，其体做了真正的工作——省略它们只会让智能体从
+签名重建（更多推理，净成本更高；见"死路"章节）。
 
-The `≥ 3` threshold matters: 1:1 "service interface → single impl" pairs (the
-common Spring/Java shape) are **not** siblings and stay full. Only genuine
-many-impl families (interceptor chains, strategy/visitor families, codec
-registries) trip the gate.
+所以整个问题在于：**廉价地区分"可互换兄弟"与"独立步骤"。**
 
-## Skeleton rendering
+## 门控条件（精化后）
 
-For a skeletonized file we emit the class + member **signature lines** (not
-bodies). Because a symbol node's `startLine` can point at a decorator/annotation
-(`@Throws`, `@Override`, `@objc`), we scan forward up to 4 lines for the line
-that actually *names* the symbol, so the skeleton shows the real signature:
+当满足**所有**以下条件时，文件被骨架化（且 `SYNAPSE_ADAPTIVE_EXPLORE != 0`）：
 
+1. **脊线存在。** `buildFlowFromNamedSymbols` 返回其路径节点集（`pathNodeIds`）和智能体
+   命名的全部可调用符号集（`namedNodeIds`）。若没有脊线形成，则不进行骨架化。
+
+2. **脱离流程脊线。** 文件中没有符号位于被追踪的链上——该链是智能体正在遍历的机制，
+   始终保持完整。
+
+3. **多态兄弟。** 文件的类 `implements`/`extends` 一个有 **≥3 个实现者**
+  （`MIN_SIBLINGS`）的超类型——这是它是众多*可互换*实现之一的信号。来自真实的
+  `implements`/`extends` 边，已缓存。
+
+4. **未被豁免。** 当且仅当智能体**命名了文件中的一个可调用符号**时，文件被**豁免**
+   （保持完整）——命名的方法/函数是智能体要*查看*的内容（`getResponseWithInterceptorChain`、
+   `SQLCompiler.execute_sql`），而非可互换叶节点——**除非文件本身定义了一个 ≥3 实现的
+   超类型**。最后这个条款是覆盖：基类+子类的"家族"文件（Django 的 `compiler.py`）体积
+   庞大且无论如何会被读取，因此一份完整副本只会吃掉探索预算；骨架化它能*释放*该预算
+   给智能体本应逐一读取的兄弟文件。即：*命名 ⇒ 豁免，除非是家族文件 ⇒ 无论如何都
+   骨架化。*
+
+在两个代码库中验证：
+
+- **`RealInterceptorChain`** —— `proceed` 在脊线上 → 保持完整（条件 2）。
+- **`RealCall`** —— 脱离脊线，且通过 **9 实现的 `Lockable` mixin**（而非作为可互换拦截
+  器）触发兄弟信号。但智能体在其中命名了 `getResponseWithInterceptorChain`/`execute`/
+  `enqueue`，且它未定义 ≥3 实现的超类型 → **豁免，保持完整**（条件 4）。这是读回问题
+  的修复：条件 4 之前它被骨架化，智能体因此读回它。
+- **`BridgeInterceptor` 及其他 4 个** —— 脱离脊线，≥3 实现的兄弟，仅按*类型*命名，未定
+  义超类型 → **骨架化**。这是赢在之处。
+- **Django `compiler.py`** —— 脱离脊线，是一个兄弟（其子类扩展了 `SQLCompiler`），智能体
+  在其中命名了 `execute_sql`——*但它定义了 `SQLCompiler` 超类型*，因此覆盖触发 →
+  **骨架化**（释放预算）。改为豁免它（错误的第一次尝试）会让成本更高、读取更多。
+
+## 为什么"有 ≥3 实现者的共享超类型"是信号
+
+让 OkHttp 的拦截器可以互换，正是因为它们是**一个接口的 N 个实现**，以多态方式被调用。
+这是图以 `implements`/`extends` 边记录的*结构性*属性：
+
+```text
+14 个类 ──implements──▶ Interceptor      （BridgeInterceptor、CacheInterceptor、
+                                           CallServerInterceptor、……）
 ```
-#### …/CallServerInterceptor.kt — CallServerInterceptor, intercept, … · skeleton (signatures only; Read for a full body)
-```kotlin
-30  object CallServerInterceptor : Interceptor {
-32  override fun intercept(chain: Interceptor.Chain): Response {
-194 private fun shouldIgnoreAndWaitForRealResponse(code: Int): Boolean =
+
+Excalidraw 的 `renderStaticScene`、`Scene`、`Collab` **没有**共同超类型——对它们的
+≥3 实现者查询不返回任何结果。因此该信号能清楚地区分这两个代码库，且（下文验证）
+对所有非兄弟流程不产生影响。
+
+`≥3` 阈值很重要：1:1 的"服务接口→单一实现"对（Spring/Java 中的常见形态）**不是**
+兄弟节点，保持完整。只有真正的多实现家族（拦截器链、策略/访问者家族、编解码器
+注册表）才触发门控。
+
+## 骨架渲染
+
+对于被骨架化的文件，我们输出类和成员的**签名行**（而非体）。由于符号节点的
+`startLine` 可能指向装饰器/注解（`@Throws`、`@Override`、`@objc`），我们向前扫描最多
+4 行以找到实际*命名*符号的行，以便骨架显示真实的签名：
+
+```text
+#### …/CallServerInterceptor.kt — CallServerInterceptor, intercept, … · 骨架（仅签名；读取完整体请使用 Read）
+
+    30  object CallServerInterceptor : Interceptor {
+    32  override fun intercept(chain: Interceptor.Chain): Response {
+    194 private fun shouldIgnoreAndWaitForRealResponse(code: Int): Boolean =
 ```
-```
 
-The header still lists the file's symbols and says `Read for a full body`, so the
-agent can pull one specific implementation if it truly needs it.
+标头仍列出文件的符号并标注 `Read for a full body`，因此智能体在真正需要时可以拉取
+某个具体实现。
 
-## Validation (refined gate)
+## 验证（精化后的门控）
 
-Headless `claude -p`, Opus 4.8, **WITH vs WITHOUT** Synapse (the real benchmark
-arm, not the on/off probe the first cut used). Cost = median `total_cost_usd`.
+无头 `claude -p`，Opus 4.8，**有 vs 无** synapse（真实基准测试臂，而非第一版使用的
+开/关探针）。成本 = 中位数 `total_cost_usd`。
 
-| Repo | WITH→WITHOUT cost | WITH reads | WITHOUT reads | RealCall/compiler read-back |
-|---|---|---|---|---|
-| **OkHttp** (n=4) | **$0.45 → $0.50** (~10% cheaper) | 2 | 3.5 | **0 / —** (RealCall full) |
-| **Django** (n=6) | **$0.56 → $0.63** (~10% cheaper) | 2 | 8.5 | half the runs read 0 |
+| 代码库 | 有→无成本 | 有侧读取次数 | 无侧读取次数 | RealCall/compiler 读回 |
+| --- | --- | --- | --- | --- |
+| **OkHttp** (n=4) | **$0.45 → $0.50**（约便宜 10%） | 2 | 3.5 | **0 / —**（RealCall 完整） |
+| **Django** (n=6) | **$0.56 → $0.63**（约便宜 10%） | 2 | 8.5 | 一半运行读取 0 次 |
 
-Both were the README's **cost outliers** (OkHttp 3% costlier, Django 10%
-costlier) and both flipped to clear wins. OkHttp WITH was cheaper in all 4 runs;
-Django in 5 of 6 (n=6 to see through its high variance). WITHOUT baselines match
-the README ($0.50/$0.63 vs $0.57/$0.64), so the gain is the WITH-arm improving.
+两者都是 README 的**成本异常值**（OkHttp 贵 3%，Django 贵 10%），现在都翻转为明显
+的胜利。OkHttp 有侧在全部 4 次运行中更便宜；Django 在 6 次中有 5 次（n=6 以应对其高
+方差）。无侧基线与 README 一致（$0.50/$0.63 vs $0.57/$0.64），因此收益来自有侧的
+改善。
 
-The **decisive check now passes for the right reason**: with the named-callable
-spare, OkHttp's `RealCall` stays full and is **never** Read back (it was Read
-back in 3/4 runs before the fix). The inert repos (Excalidraw / Tokio / VS Code /
-Gin) stay at **0 skeletons** — verified by probe — because the refined gate
-skeletonizes a strict subset of the original. (The first cut's "on vs off, reads
-flat 1 vs 3" claim came from a deterministic probe query and did **not** hold for
-the agent's real query — that mismatch is what this refinement corrects.)
+**关键检查现在以正确的原因通过**：有了命名可调用符号豁免，OkHttp 的 `RealCall` 保持完
+整，且**从不**被读回（修复前在 4 次中有 3 次被读回）。惰性代码库（Excalidraw / Tokio
+/ VS Code / Gin）保持 **0 个骨架**——探针已验证——因为精化后的门控对原始门控是严格子集。
+（第一版"开 vs 关，读取次数持平 1 vs 3"的说法来自确定性探针查询，对智能体的真实查询
+并**不**成立——这种不一致正是本次精化修正的内容。）
 
-## Dead ends (don't re-attempt these)
+## 死路（不要再次尝试）
 
-1. **Demote/rank low-value files** (e.g. broaden `isLowValuePath` to drop
-   `*-testing-support/` fixtures). Improves *content quality* but **not size** —
-   explore refills the freed budget with other full bodies (28,478 → 28,424).
-   Ranking ≠ shrinking; you must *skeletonize* to shrink.
-2. **Gate on entry-node membership.** A precise symbol-bag explore query *names*
-   every chain participant, so they're all "entry nodes" — no separation, nothing
-   skeletonizes.
-3. **Rely on interface-impl synthesizer edges** (`synthesizedBy:'interface-impl'`)
-   for the sibling signal. They were **not** created for OkHttp's `Interceptor`
-   (a Kotlin `fun interface`), so the signal must come from the real
-   `implements`/`extends` edges, not synth edges.
-4. **A plain "core-floor" gate** (keep first N full, skeletonize the rest) —
-   skeletonized Excalidraw's *distinct* steps → **+17% cost regression**. The
-   sibling condition is what makes it safe.
-5. **Sparing a file because it DEFINES the supertype** (the first refinement
-   attempt). Backwards: a base+subclasses *family* file (Django's `compiler.py`,
-   2,266 lines) is huge and Read-anyway, so keeping it full just **eats the 28 KB
-   explore budget and starves the sibling files** the agent then Reads — it
-   regressed Django to **9% costlier** ($0.71). Defining a supertype is instead
-   an **override** that lets a named family file skeletonize anyway.
-6. **Validating skeletonization with the deterministic probe query only.** The
-   probe (`probe-explore.mjs "<symbol bag>"`) and the *agent's* real explore
-   query name symbols differently, so they form different spines and skeletonize
-   different files. The probe said "Django: 0 skeletons / reads flat"; the real
-   agent query skeletonized `compiler.py` and Read it back. **Always confirm with
-   a real-agent A/B (`run-all.sh`), not just the probe.**
+1. **降权/排序低价值文件**（例如扩大 `isLowValuePath` 以丢弃 `*-testing-support/` 固
+   件）。改善*内容质量*但**不改善大小**——explore 会用其他完整体填补释放的预算
+   （28,478 → 28,424）。排序 ≠ 缩减；必须*骨架化*才能缩减。
+2. **以入口节点成员资格为门控。** 精确的符号包探索查询*命名*了每个链参与者，因此
+   它们都是"入口节点"——无法区分，无内容被骨架化。
+3. **依赖接口实现合成边**（`synthesizedBy:'interface-impl'`）作为兄弟信号。OkHttp 的
+   `Interceptor`（Kotlin `fun interface`）**未**创建这些边，因此信号必须来自真实的
+   `implements`/`extends` 边，而非合成边。
+4. **普通的"核心下限"门控**（保持前 N 个完整，其余骨架化）——骨架化了 Excalidraw 的
+   *独立*步骤 → **成本回归 +17%**。兄弟条件是使其安全的原因。
+5. **因文件定义了超类型而豁免它**（第一次精化尝试）。这是反的：基类+子类的*家族*文件
+   （Django 的 `compiler.py`，2,266 行）体积庞大且无论如何会被读取，因此保持完整只会
+   **吃掉 28KB 探索预算并使智能体逐一读取兄弟文件**——使 Django 回归到**成本增加 9%**
+   （$0.71）。定义超类型改为是一个**覆盖**，让已命名的家族文件无论如何都骨架化。
+6. **仅用确定性探针查询验证骨架化。** 探针（`probe-explore.mjs "<符号包>"`）和*智能体*
+   的真实探索查询命名符号的方式不同，因此形成不同的脊线，骨架化不同的文件。探针
+   显示"Django：0 个骨架 / 读取次数持平"；真实智能体查询对 `compiler.py` 进行了骨架
+   化并读回了它。**始终用真实智能体 A/B（`run-all.sh`）确认，而不仅仅是探针。**
 
-## Code
+## 代码
 
 - `src/mcp/tools.ts`
-  - `adaptiveExploreEnabled()` — the flag (default on).
-  - `buildFlowFromNamedSymbols()` — returns `{ text, pathNodeIds, namedNodeIds }`.
-    `namedNodeIds` is every callable the agent named (a superset of the spine) —
-    the named-callable spare reads it.
-  - `handleExplore()` — two cached helpers: `isPolymorphicSibling()` (a node has
-    an outgoing `implements`/`extends` to a ≥3-impl supertype) and
-    `definesPolymorphicSupertype()` (a node HAS ≥3 incoming `implements`/`extends`
-    — i.e. the file is the family base). The skeleton branch:
-    `off-spine && isPolymorphicSibling && !(namedInFile && !definesSupertype)`.
-- `__tests__/adaptive-explore-sizing.test.ts` — 7 cases incl. the named-callable
-  spare (RealCall) and the supertype-family override (compiler.py).
+  - `adaptiveExploreEnabled()` —— 标志（默认开启）。
+  - `buildFlowFromNamedSymbols()` —— 返回 `{ text, pathNodeIds, namedNodeIds }`。
+    `namedNodeIds` 是智能体命名的每个可调用符号（脊线的超集）——命名可调用符号豁免
+    读取它。
+  - `handleExplore()` —— 两个缓存辅助函数：`isPolymorphicSibling()`（一个节点有
+    指向 ≥3 实现超类型的 `implements`/`extends` 出边）和
+    `definesPolymorphicSupertype()`（一个节点有 ≥3 个 `implements`/`extends` 入边
+    ——即文件是家族基类）。骨架分支：
+    `off-spine && isPolymorphicSibling && !(namedInFile && !definesSupertype)`。
+- `__tests__/adaptive-explore-sizing.test.ts` —— 7 个测试用例，含命名可调用符号豁免
+  （RealCall）和超类型家族覆盖（compiler.py）。
 
-## Frontier / future work
+## 前沿 / 未来工作
 
-- **Per-symbol skeletonization within a family file.** `compiler.py` is
-  skeletonized whole, so `SQLCompiler.execute_sql` (the base mechanism) becomes a
-  signature too and *is* Read back in ~half the Django runs. The ideal is to keep
-  the base class's methods full and elide only the redundant subclass bodies —
-  shrinking the payload without eliding the answer. Whole-file skeletonization
-  can't express that yet.
-- **Big non-sibling files dominate Django's residual reads.** `query.py` (3,040
-  lines) and `sql/query.py` are not polymorphic families, so skeletonization
-  can't touch them; the agent Reads them when the 28 KB clustered view is
-  insufficient. That's the explore-budget / big-file-clustering frontier, not
-  skeletonization.
-- **Non-interface sibling families** (Go `HandlerFunc` slices, function-pointer
-  registries) aren't caught — they have no `implements`/`extends` edge. Gin's
-  middleware chain, for instance, doesn't trip the gate (its handlers are funcs,
-  not interface impls).
-- **Exemplar selection** when *no* interceptor is on the spine: today all siblings
-  skeletonize and the agent leans on the interface contract; showing one as a
-  forced exemplar might read slightly better (untested).
+- **在家族文件内部按符号骨架化。** `compiler.py` 整体被骨架化，因此
+  `SQLCompiler.execute_sql`（基类机制）也变成签名，在约一半的 Django 运行中被读回。
+  理想情况是保持基类方法完整，只省略冗余子类体——在不省略答案的情况下缩减负载。
+  整文件骨架化目前无法表达这一点。
+- **大型非兄弟文件主导 Django 的残余读取。** `query.py`（3,040 行）和
+  `sql/query.py` 不是多态家族，因此骨架化无法触及它们；当 28KB 聚类视图不足时，
+  智能体会读取它们。这是探索预算 / 大文件聚类的前沿，而非骨架化的问题。
+- **非接口兄弟家族**（Go 的 `HandlerFunc` 切片、函数指针注册表）未被捕获——它们
+  没有 `implements`/`extends` 边。例如 Gin 的中间件链不触发门控（其处理器是函数，
+  不是接口实现）。
+- **当*没有*拦截器在脊线上时的典型案例选择：** 目前所有兄弟都被骨架化，智能体
+  依赖接口契约；将一个作为强制典型案例展示可能效果略好（未经测试）。

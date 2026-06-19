@@ -1,276 +1,135 @@
-﻿# Playbook: extend value-reference edges to a new language
+# Playbook：为新语言扩展值引用边
 
-**Purpose.** This is the operational runbook for adding + validating value-reference-edge
-coverage for one more language. Point a fresh session at this file and say **"Start on
-language X"** — it has everything: how the feature works, where the code is, the exact
-validation recipe (with scripts), the per-language checklist, and the traps already hit.
+**目的。** 本文档是为新增一种语言的值引用边覆盖并验证的操作手册。将新会话指向本文件并说 **"从语言 X 开始"**——它包含一切所需信息：特性工作原理、代码位置、精确的验证方案（含脚本）、每语言核对清单，以及已踩过的坑。
 
-Design rationale + the validation matrix already done live in the companion doc:
-[`value-reference-edges.md`](./value-reference-edges.md). This file is the *how-to*.
+设计依据 + 已完成的验证矩阵见配套文档：
+[`value-reference-edges.md`](./value-reference-edges.md)。本文件是*操作指南*。
 
 ---
 
-## 0. "Start on language X" — do this in order
+## 0. "从语言 X 开始"——按顺序执行
 
-1. Read §1 (how it works) and §2 (current state) so you know the mechanism and what's done.
-2. Do the **per-language wiring check** (§5 step A–C) — this is where languages differ and
-   where most of the real work/decisions are. Do NOT skip: a wrong declarator node type or a
-   class-scope-vs-file-scope mismatch makes the feature silently emit nothing (or wrong edges).
-3. Run the **validation sweep** (§4) on small/medium/large **public OSS** repos for that
-   language. Hunt FPs. **Fix FP clusters; record singletons.** (See §3 for what a real FP
-   looks like vs an acceptable one.)
-4. Add a **row to the matrix** in `value-reference-edges.md` and a **test case** in
-   `__tests__/value-reference-edges.test.ts`.
-5. Commit on a branch, open a PR. (§6 has the git workflow + how the prior PRs were done.)
+1. 阅读 §1（工作原理）和 §2（当前状态），了解机制和已完成内容。
+2. 执行**每语言接线检查**（§5 步骤 A–C）——这里是各语言差异所在，也是大多数实际工作/决策的地方。不要跳过：错误的声明符节点类型或类作用域 vs 文件作用域不匹配，会导致特性静默地不产生任何边（或产生错误的边）。
+3. 对该语言的小/中/大**公共 OSS** 代码库运行**验证扫描**（§4）。追查误报（FP）。**修复 FP 簇；记录单例。**（§3 说明了什么是真正的 FP vs 可接受的情况。）
+4. 在 `value-reference-edges.md` 中**添加矩阵行**，并在 `__tests__/value-reference-edges.test.ts` 中添加**测试用例**。
+5. 在分支上提交，开一个 PR。（§6 有 git 工作流 + 已有 PR 的做法。）
 
-Scope rule (hard): **never eval on the maintainer's own repos** — clone a real public OSS
-repo for the language. (Memory: `agent-eval-targets-public-oss-only`.)
+作用域规则（强制）：**绝不在维护者自己的代码库上评估**——为该语言克隆一个真实的公共 OSS 代码库。（记忆：`agent-eval-targets-public-oss-only`。）
 
 ---
 
-## 1. How value-reference edges work
+## 1. 值引用边的工作原理
 
-**What:** a `references` edge with `metadata: { valueRef: true }` from a *reader symbol* to
-the **file-scope `const`/`var` it reads**, same-file only. It exists so impact analysis
-catches "change this constant / config object / lookup table → affect its readers" — a class
-of change calls/imports/inheritance edges never captured (a const's consumers used to look
-like "nothing depends on this").
+**是什么：** 从*读取者符号*到其**所读取的文件作用域 `const`/`var`** 的 `references` 边，带有 `metadata: { valueRef: true }`，仅限同文件。它的存在是为了让影响分析能捕获"修改这个常量/配置对象/查找表 → 影响其读取者"这类变更——这是 calls/imports/继承边从未捕获的一类变更（常量的消费者以前看起来像"没有任何东西依赖它"）。
 
-**Where it flows:** straight into `getImpactRadius` → `synapse impact` and the impact trail
-in `synapse_explore` / `synapse_node`. No agent-behaviour change required. **The win is
-impact-radius correctness** (a const 90 symbols read going from "1 affected" to "90"), *not*
-agent read-reduction (see §4.3).
+**流向：** 直接进入 `getImpactRadius` → `synapse impact` 以及 `synapse_explore` / `synapse_node` 中的影响追踪。无需任何智能体行为变更。**胜出在影响半径的正确性**（一个被 90 个符号读取的常量从"1 个受影响"变为"90 个"），*而非*智能体读取次数减少（见 §4.3）。
 
-**Code — all in `src/extraction/tree-sitter.ts`:**
+**代码——全部在 `src/extraction/tree-sitter.ts` 中：**
 
-| Symbol | Role |
+| 符号 | 角色 |
 |---|---|
-| `VALUE_REF_LANGS` (static Set) | languages the feature runs for. Currently `typescript`, `javascript`, `tsx`, `go`, `python`, `rust`, `ruby`, `c`, `java`, `csharp`, `php`, `scala`, `kotlin`, `swift`, `dart`, `pascal`. **Add the new language here.** |
-| `valueRefsEnabled` | `process.env.SYNAPSE_VALUE_REFS !== '0'` — default ON, env opts out. |
-| `MAX_VALUE_REF_NODES` (20_000) | per-scope traversal cap (and the shadow-scan cap). |
-| `captureValueRefScope(kind, name, id, node)` | called from `createNode` on every node. Records **targets** (file-scope `const`/`var`) and **reader scopes** (`function`/`method`/`const`/`var`). |
-| `flushValueRefs()` | called once at end of `extract()`. Prunes shadowed targets, then for each reader scope walks its subtree for identifiers matching a target name and emits the edges. |
+| `VALUE_REF_LANGS`（static Set） | 该特性运行的语言集合。当前为 `typescript`、`javascript`、`tsx`、`go`、`python`、`rust`、`ruby`、`c`、`java`、`csharp`、`php`、`scala`、`kotlin`、`swift`、`dart`、`pascal`。**在此添加新语言。** |
+| `valueRefsEnabled` | `process.env.SYNAPSE_VALUE_REFS !== '0'`——默认开启，环境变量可关闭。 |
+| `MAX_VALUE_REF_NODES`（20_000） | 每次作用域遍历上限（及影子扫描上限）。 |
+| `captureValueRefScope(kind, name, id, node)` | 在 `createNode` 中为每个节点调用。记录**目标**（文件作用域的 `const`/`var`）和**读取者作用域**（`function`/`method`/`const`/`var`）。 |
+| `flushValueRefs()` | 在 `extract()` 末尾调用一次。剪除被遮蔽的目标，然后对每个读取者作用域遍历其子树，查找与目标名称匹配的标识符并发出边。 |
 
-**The two gates inside `captureValueRefScope`** (what you may need to adjust per language):
+**`captureValueRefScope` 内的两道门控**（可能需要按语言调整）：
 
-- **Target gate:** `kind ∈ {constant, variable}` **and** `name.length >= 3` **and**
-  `/[A-Z_]/.test(name)` (distinctive name — dodges single-letter / all-lowercase shadowing)
-  **and** the node's parent id starts with `file:`, `class:`, or `module:` (file/class/module scope).
-- **Reader gate:** `kind ∈ {function, method, constant, variable}`.
+- **目标门控：** `kind ∈ {constant, variable}` **且** `name.length >= 3` **且** `/[A-Z_]/.test(name)`（有辨识度的名称——规避单字母/全小写遮蔽）**且**节点的父 id 以 `file:`、`class:` 或 `module:` 开头（文件/类/模块作用域）。
+- **读取者门控：** `kind ∈ {function, method, constant, variable}`。
 
-**The emit loop in `flushValueRefs`:** same-file only (targets + scopes are per-file, reset
-each flush); deduped per `(reader, target)`; skips `isGeneratedFile(path)`; **prunes shadowed
-targets** (see §3).
+**`flushValueRefs` 中的发射循环：** 仅限同文件（目标和作用域是按文件维护的，每次 flush 时重置）；按 `(reader, target)` 去重；跳过 `isGeneratedFile(path)` 的文件；**剪除被遮蔽的目标**（见 §3）。
 
 ---
 
-## 2. Current state (what's shipped + validated)
+## 2. 当前状态（已发布 + 已验证的内容）
 
-- **Default ON** for TS/JS/tsx + Go + Python + Rust + Ruby + C + Java + C# (`SYNAPSE_VALUE_REFS=0` disables). Shipped in **PR #895**
-  (flip-on + the shadow prune); Go added in a later PR (the shadow-prune declarator switch +
-  `VALUE_REF_LANGS`); C added later still (extractor change to emit the nodes + the bare-identifier
-  misparse guard); Java + C# after that (field→constant kind switch for the const subset).
-- **Validated S/M/L** in **TS, JS, tsx, Go, Python, Rust, Ruby, C, Java, and C#** — see the matrix in the
-  design doc. All clean: node count identical on/off, precision guards held, impact win
-  reproduced. Go required extending the shadow prune (per-grammar declarators) — the worked
-  example of "step B is load-bearing." **C required the Ruby treatment** (the extractor didn't emit
-  C file-scope const/var nodes at all) **plus** a C-specific FP guard (a macro-prefixed-prototype
-  misparse mints a bare-identifier "variable" named after the return type — skip bare-`identifier`
-  declarators). It was the worked example of "the §2b coverage table's *easy-path* guess can be
-  wrong — always do §5 step C (confirm the nodes exist) before trusting it."
-- **Java + C# were the cleanest class-scope ("Ruby treatment") languages.** The constants already
-  extract — but as `field` kind, which the gate rejects. The whole change was emitting the const
-  *subset* as `constant`: an `isConst` predicate on each extractor (Java `static final`; C# `const`
-  / `static readonly`) + a kind switch in `extractField`. **No new shadow-prune wiring** (method
-  locals are `variable_declarator`, already in the switch) and **no FP guards** (UPPER_SNAKE /
-  PascalCase fit the distinctive-name gate). Instance `final`/`readonly` fields correctly stay
-  `field`. Validated S/M/L: gson/commons-lang/guava, automapper/newtonsoft/efcore — 0 leaks, node
-  parity, big impact wins (`INDEX_NOT_FOUND` 4→165, `_resourceManager` 22→1664).
-- **PHP was the cleanest of all — one reader-scan line.** Constants already extract as `constant`
-  (top-level + class), so the only change was teaching the reader-scan that a PHP constant
-  *reference* is a `name` node (bare `X`, or the const half of `self::X` / `Foo::X`). **No extractor
-  change, no prune wiring** (a `$var` local can't shadow a bare constant — different namespace).
-  Validated S/M/L (guzzle/monolog/laravel), all clean, 0 class/const collisions. The honest caveat:
-  **lower yield** — PHP reads constants cross-file far more than same-file (laravel 2,956 files → 86
-  edges), and value-refs is same-file only; still correct, just a smaller contribution.
-- **Scala — an `object` is the constant scope.** Scala has no `static`; a singleton `object`'s `val`s
-  are the shared-constant idiom (`object Config { val Timeout = 30 }`). Top-level `val` already
-  extracted as `constant`, but object/class vals both came out as `field`. The fix: in the Scala
-  `val_definition` handler, walk to the enclosing definition — `object_definition` (or top-level) →
-  `constant`/`variable`; `class`/`trait`/`enum` → `field` (per-instance, like Java instance `final`).
-  Added `val_definition`/`var_definition` to the shadow prune (method-local `val` shadows). Reader-scan
-  needed nothing (refs are `identifier`). Minor known limitation: Scala uses `val`/`def`
-  interchangeably for members, so a camelCase val can share a name with a method — same-file name
-  matching can't tell them apart (bounded, like Ruby's sibling-class; sweep showed flagged collisions
-  were mostly real object vals read by siblings). Validated S/M/L (upickle/cats/pekko).
-- **C++ was attempted and reverted — DON'T retry without solving parse fidelity first.** tree-sitter-cpp
-  mis-parses real template/macro-heavy C++ (and `.h` files route to the C grammar): class members and
-  parameters leak to file scope as bogus constants/variables. Two guards (skip `ERROR`-ancestor and
-  `compound_statement`-ancestor declarations) removed ~83% of gross leaks, but the residual pervades
-  even well-structured library source (template-class member leaks, amalgamated mega-headers,
-  `.h`-as-C++). It did not reach the precision bar of the other languages. See the C++ section below.
-- **Kotlin = C + Scala + PHP techniques combined (and clean).** Nothing extracted before (property name
-  nests `property_declaration → variable_declaration → simple_identifier` — the C problem). Fix:
-  handle `property_declaration` in the Kotlin `visitNode` hook — pull the nested name, walk to the
-  enclosing definition for the kind (`object`/`companion object`/top-level → `constant`/`variable`;
-  `class` → `field` — the Scala rule; skip locals under a `function_body`/`init`/lambda), add
-  `simple_identifier` to the reader-scan (the PHP-`name` move), and `property_declaration` to the
-  shadow prune. Clean parse fidelity (the one `fun interface` misparse is already handled), so no
-  C++-style tail. One of the cleanest yields — companion-object bit-masks/state consts are a heavy
-  same-file-read idiom. Validated S/M/L (okio/coroutines/ktor); only the bounded val/def-or-class and
-  sibling-companion name overlaps remain (shared with Scala/Ruby).
-- **Swift reused Kotlin + two Swift-specific touches.** Top-level `let` + `static let` in a type are
-  the shared constants (`enum`/`struct` namespace them); instance `let` stays `field`. Nested name
-  (`property_declaration → <name> pattern → simple_identifier`); reader-scan already covered
-  (`simple_identifier`, from Kotlin). Two new things: **(1) the target gate was widened to `struct:`/
-  `enum:` parents** — Swift namespaces constants there (`enum Constants { static let X }`), and every
-  other language's targets are `file:`/`class:`/`module:`; **(2) computed properties are skipped** (a
-  `var x:Int{ … }` getter has no stored value — detect the `computed_property` child). Node creation
-  slots into the *existing* Swift `property_declaration` handler (property-wrapper/type deps), leaving
-  that untouched. Clean parse, no tail. Validated S/M/L (Alamofire/swift-argument-parser/swift-nio).
-- **Dart — clean grammar separation, but a sibling-body reader-scan fix.** Dart's grammar already
-  splits the cases: **`static_final_declaration`** is *exactly* a top-level/`static` `const`/`final`
-  (the shared-constant idiom), while instance fields/`var` use `initialized_identifier` and locals use
-  `initialized_variable_definition` — so extracting `static_final_declaration` → `constant` (in a
-  `visitNode` hook) has **no instance/local leaks to guard**. Reader-scan free (Dart refs are
-  `identifier`). The catch was the **reader-scan**: Dart attaches a method/function `body` as a *next
-  sibling* of the signature node (the stored scope), not a child, so the scan saw only the signature
-  and **found nothing** until it was taught to pull in a `function_body` next-sibling (Dart-only among
-  the value-ref set). Shadow prune needed `static_final_declaration` + `initialized_identifier` +
-  `initialized_variable_definition` (a local `const X` shadowing a file `const X`). Validated S/M/L
-  (http/flame/flutter-packages). **Caveat:** generated Dart files inflate the sibling-class ambiguity
-  (a JNIGEN `_bindings.dart` with hundreds of `static final _class` collapses to the file-wide target).
-  The common codegen suffixes (`.g.dart`/`.freezed.dart`/`.pb.dart`) are already filtered by
-  `isGeneratedFile`; header-only-marked generators (JNIGEN) are not, so real source is clean but
-  generated FFI/JNI bindings are noisy.
-- **Pascal — the genuine easy path + the Dart sibling-body fix again.** Unit/class `const` *already*
-  extracted as `constant` (`variableTypes: ['declConst', …]`), so it was add-to-`VALUE_REF_LANGS` +
-  the shadow prune (`declConst`/`declVar`; a local `const X` shadows a unit `const X`). The catch was
-  the *same* reader-scan bug as Dart: Pascal's proc body is a **`block` sibling** of the `declProc`
-  header (the reader scope), both under a `defProc` — so the same sibling-pull fix was extended to
-  `block`. Reader-scan node type already covered (refs are `identifier`). **Low yield** — Pascal reads
-  constants cross-unit more than same-file (horse: 4 edges). **Caveat:** Pascal is case-insensitive,
-  but the reader-scan matches exact text, so a differently-cased reference is missed (no FP, just a
-  miss); not worth normalizing.
-- **Tests:** `__tests__/value-reference-edges.test.ts` — same-file readers edged; surfaced in
-  impact radius; shadowed const NOT edged (verified to fail without the guard); JSX-only read
-  edged (tsx); `SYNAPSE_VALUE_REFS=0` emits nothing.
-- **Memory:** `value-reference-edges-default-on` (the A/B finding + shadow guard rationale).
+- **默认开启**，适用于 TS/JS/tsx + Go + Python + Rust + Ruby + C + Java + C#（`SYNAPSE_VALUE_REFS=0` 关闭）。在 **PR #895** 中发布（开关 + 影子剪除）；Go 在后续 PR 中添加（影子剪除声明符扩展 + `VALUE_REF_LANGS`）；C 再之后（提取器修改以发出节点 + 裸标识符误解析守卫）；Java + C# 在那之后（字段→常量类型切换）。
+- **已验证 S/M/L**，覆盖 **TS、JS、tsx、Go、Python、Rust、Ruby、C、Java 和 C#**——见设计文档中的矩阵。全部通过：开/关节点数一致，精度守卫有效，影响提升已复现。Go 需要扩展影子剪除（每语法声明符）——这是"步骤 B 至关重要"的实例。**C 需要 Ruby 处理方式**（提取器完全没有发出 C 文件作用域 const/var 节点）**加上** C 特有的 FP 守卫（宏前缀原型误解析会造出以返回类型命名的裸标识符"变量"——跳过裸 `identifier` 声明符）。这是"§2b 覆盖表中*简单路径*猜测可能是错的——在信任之前务必执行 §5 步骤 C（确认节点存在）"的实例。
+- **Java + C# 是最干净的类作用域（"Ruby 处理方式"）语言。** 常量已提取——但类型是 `field`，被门控拒绝。全部改动只是将 const *子集*发出为 `constant`：每个提取器上的 `isConst` 谓词（Java 的 `static final`；C# 的 `const` / `static readonly`）+ `extractField` 中的类型切换。**无需新的影子剪除接线**（方法局部变量是 `variable_declarator`，已在 switch 中）且**无 FP 守卫**（UPPER_SNAKE / PascalCase 符合有辨识度名称门控）。实例 `final`/`readonly` 字段正确保留为 `field`。已验证 S/M/L：gson/commons-lang/guava，automapper/newtonsoft/efcore——0 泄漏，节点一致，大幅影响提升（`INDEX_NOT_FOUND` 4→165，`_resourceManager` 22→1664）。
+- **PHP 是最简洁的——只需改一行读取器扫描。** 常量已提取为 `constant`（顶层 + 类），唯一的改动是让读取器扫描知道 PHP 常量*引用*是一个 `name` 节点（裸 `X`，或 `self::X` / `Foo::X` 中的 const 部分）。**无需提取器改动，无需剪除接线**（`$var` 局部变量无法遮蔽裸常量——命名空间不同）。已验证 S/M/L（guzzle/monolog/laravel），全部通过，0 类/常量冲突。诚实的注意事项：**产出较低**——PHP 跨文件读取常量远多于同文件（laravel 2,956 个文件 → 86 条边），而值引用仅限同文件；结果仍然正确，只是贡献较小。
+- **Scala——`object` 是常量作用域。** Scala 没有 `static`；单例 `object` 的 `val` 是共享常量惯用法（`object Config { val Timeout = 30 }`）。顶层 `val` 已提取为 `constant`，但 object/class 的 val 都作为 `field` 输出。修复：在 Scala 的 `val_definition` 处理器中，上走至外层定义——`object_definition`（或顶层）→ `constant`/`variable`；`class`/`trait`/`enum` → `field`（按实例，类似 Java 实例 `final`）。将 `val_definition`/`var_definition` 添加到影子剪除（方法局部 `val` 遮蔽）。读取器扫描无需改动（引用是 `identifier`）。已知轻微限制：Scala 的 `val`/`def` 可互换作为成员，所以 camelCase 的 val 可能与方法同名——同文件名称匹配无法区分（有界的，类似 Ruby 的兄弟类；扫描显示标记的冲突大多是真实的 object val 被兄弟读取）。已验证 S/M/L（upickle/cats/pekko）。
+- **C++ 尝试后已回退——不要在解决解析保真度之前重试。** tree-sitter-cpp 对真实的模板/宏密集型 C++（以及将 `.h` 文件路由到 C 语法的情况）存在误解析：类成员和参数泄漏到文件作用域，成为虚假的常量/变量。两个守卫（跳过 `ERROR` 祖先和 `compound_statement` 祖先声明）消除了约 83% 的严重泄漏，但残余问题充斥于结构良好的库源码（模板类成员泄漏、合并的超大头文件、`.h` 当 C++ 使用）。未达到其他语言的精度标准。见下方 C++ 章节。
+- **Kotlin = C + Scala + PHP 技术的组合（且干净）。** 此前没有任何提取（属性名嵌套在 `property_declaration → variable_declaration → simple_identifier` 中——C 问题的翻版）。修复：在 Kotlin 的 `visitNode` 钩子中处理 `property_declaration`——提取嵌套名称，上走外层定义确定类型（`object`/`companion object`/顶层 → `constant`/`variable`；`class` → `field`——Scala 规则；跳过 `function_body`/`init`/lambda 下的局部），将 `simple_identifier` 添加到读取器扫描（PHP 的 `name` 动作），并将 `property_declaration` 添加到影子剪除。解析保真度干净（唯一的 `fun interface` 误解析已处理），因此无 C++ 风格的尾巴。产出最佳之一——companion-object 位掩码/状态常量是大量同文件读取的惯用法。已验证 S/M/L（okio/coroutines/ktor）；只剩有界的 val/def 或类与兄弟 companion 名称重叠（与 Scala/Ruby 共有）。
+- **Swift 复用了 Kotlin + 两个 Swift 特有处理。** 顶层 `let` + 类型中的 `static let` 是共享常量（`enum`/`struct` 命名空间化它们）；实例 `let` 保留为 `field`。嵌套名称（`property_declaration → <name> pattern → simple_identifier`）；读取器扫描已覆盖（`simple_identifier`，来自 Kotlin）。两个新增点：**(1) 目标门控扩展到 `struct:`/`enum:` 父级**——Swift 在那里命名空间化常量（`enum Constants { static let X }`），其他所有语言的目标都是 `file:`/`class:`/`module:`；**(2) 跳过计算属性**（`var x:Int{ … }` 的 getter 没有存储值——检测 `computed_property` 子节点）。节点创建嵌入*现有*的 Swift `property_declaration` 处理器（属性包装器/类型依赖），保持其不变。解析干净，无尾巴。已验证 S/M/L（Alamofire/swift-argument-parser/swift-nio）。
+- **Dart——语法分离干净，但有兄弟体读取器扫描修复。** Dart 的语法已将情况清晰分开：**`static_final_declaration`** *正好*是顶层/`static` 的 `const`/`final`（共享常量惯用法），而实例字段/`var` 使用 `initialized_identifier`，局部变量使用 `initialized_variable_definition`——所以将 `static_final_declaration` 提取为 `constant`（在 `visitNode` 钩子中）**无需实例/局部泄漏守卫**。读取器扫描无障碍（Dart 引用是 `identifier`）。关键问题在**读取器扫描**：Dart 将方法/函数的 `body` 作为签名节点（存储的作用域）的*下一个兄弟*附加，而非子节点，因此扫描只看到签名，**找不到任何内容**，直到被教会引入 `function_body` 下一兄弟（值引用集合中仅 Dart 如此）。影子剪除需要 `static_final_declaration` + `initialized_identifier` + `initialized_variable_definition`（局部 `const X` 遮蔽文件 `const X`）。已验证 S/M/L（http/flame/flutter-packages）。**注意事项：** 生成的 Dart 文件会放大兄弟类的歧义（带有数百个 `static final _class` 的 JNIGEN `_bindings.dart` 会折叠为文件范围目标）。常见代码生成后缀（`.g.dart`/`.freezed.dart`/`.pb.dart`）已被 `isGeneratedFile` 过滤；仅有头部标记的生成器（JNIGEN）未处理，所以真实源码干净，但生成的 FFI/JNI 绑定有噪声。
+- **Pascal——真正的简单路径 + 再次遇到 Dart 兄弟体修复。** 单元/类 `const` *已经*提取为 `constant`（`variableTypes: ['declConst', …]`），所以只需添加到 `VALUE_REF_LANGS` + 影子剪除（`declConst`/`declVar`；局部 `const X` 遮蔽单元 `const X`）。关键是遇到了*相同*的读取器扫描 bug：Pascal 的过程体是 `declProc` 头部（读取者作用域）的**`block` 兄弟**，两者都在 `defProc` 下——所以同样的兄弟引入修复扩展到了 `block`。读取器扫描节点类型已覆盖（引用是 `identifier`）。**产出低**——Pascal 跨单元读取常量多于同文件（horse：4 条边）。**注意事项：** Pascal 不区分大小写，但读取器扫描匹配确切文本，所以大小写不同的引用会被遗漏（无 FP，只是遗漏）；不值得规范化。
+- **测试：** `__tests__/value-reference-edges.test.ts`——同文件读取者有边；在影响半径中呈现；被遮蔽的常量不应有边（验证无守卫时失败）；仅 JSX 读取有边（tsx）；`SYNAPSE_VALUE_REFS=0` 不产生任何边。
+- **记忆：** `value-reference-edges-default-on`（A/B 发现 + 影子守卫依据）。
 
 ---
 
-## 2b. Coverage vs the README (languages + frameworks)
+## 2b. 覆盖对比 README（语言 + 框架）
 
-Tracked against the README's **Supported Languages** table (24 rows) and **Framework-aware
-Routes** list. Value-refs is **language-level**, so frameworks are *not* a separate axis (see
-the bottom of this section).
+以 README 的**支持语言**表（24 行）和**框架感知路由**列表为基准跟踪。值引用是**语言级别**特性，框架*不是*独立轴（见本节底部）。
 
-**✅ Done — validated S/M/L (15 + 3 inherited):**
+**✅ 已完成——已验证 S/M/L（15 + 3 继承）：**
 
-| Language | How |
+| 语言 | 方式 |
 |---|---|
-| TypeScript, JavaScript, tsx | file-scope `const`/`var`; the original languages |
-| Python | module-level `NAME =` |
-| Go | package `const`/`var` |
-| Rust | module + impl `const`/`static` |
-| Ruby | class/module `CONST` (the class-scope extension) |
-| C | file-scope `static const` scalars + pointer/array lookup tables + mutable globals. **Needed an extractor change** (nodes weren't emitted) + a bare-identifier misparse guard — NOT the easy path the table below first guessed |
-| Java | class `static final` fields. Nodes existed as `field` kind; emitted the const subset as `constant` (`isConst` + `extractField` kind switch). No new prune wiring, no FP guards |
-| C# | class `const` / `static readonly`. Identical to Java — same `field`→`constant` change |
-| PHP | top-level `const` + class `const` (both already `constant` kind). **Only** change was the reader-scan: a PHP const *reference* is a `name` node. No extractor change, no prune wiring (a `$var` local can't shadow a bare constant). Lower yield — PHP reads consts cross-file more than same-file |
-| Scala | top-level `val` (already `constant`) + **`object` val** (the singleton-constant idiom; re-kinded from `field` by walking to the enclosing `object_definition`). `class`/`trait`/`enum` vals stay `field`. `val_definition`/`var_definition` added to the shadow prune. Minor val/def name-collision limit |
-| Kotlin | top-level / `object` / `companion object` `val` (re-kinded from nothing — properties weren't extracted at all). Handled in `visitNode`: nested name (`variable_declaration → simple_identifier`, the C move) + scope-walk for kind (Scala move) + `simple_identifier` in the reader-scan (PHP move) + prune. `class` instance vals stay `field`. Clean — one of the best yields (companion bit-masks) |
-| Swift | top-level `let` + `static let` in `struct`/`enum`/`class`. Reused Kotlin (nested name + `simple_identifier` reader-scan). Two Swift touches: **gate widened to `struct:`/`enum:` parents** (Swift namespaces consts there), and **computed properties skipped**. `class`/instance stored props stay `field`. Slots into the existing Swift property-wrapper handler |
-| Dart | top-level `const`/`final` + class `static const`/`static final` — all the **`static_final_declaration`** node, cleanly separated by the grammar from instance/`var`/local (so no leak guard). `visitNode` → `constant`. Needed a reader-scan fix: Dart's method **body is a next sibling** of the signature, so the scan pulls in a `function_body` sibling. Generated-FFI noise (JNIGEN `_bindings.dart`) is the one caveat |
-| Pascal / Delphi | unit/class `const` (already extracted as `constant`). Add-to-`VALUE_REF_LANGS` + shadow prune (`declConst`/`declVar`) + the **same Dart sibling-body fix** (Pascal's proc body is a `block` sibling of the `declProc` header). Low yield (cross-unit reads); case-insensitive (exact-text scan misses re-cased refs) |
-| **Svelte, Vue, Astro** | **inherited for free** — their extractors re-parse the `<script>`/frontmatter block as `typescript`/`javascript`, which are in `VALUE_REF_LANGS` (verified: a `.svelte` `const` edges its readers). No separate work; no separate matrix row needed. |
+| TypeScript、JavaScript、tsx | 文件作用域 `const`/`var`；最初支持的语言 |
+| Python | 模块级 `NAME =` |
+| Go | 包 `const`/`var` |
+| Rust | 模块 + impl 中的 `const`/`static` |
+| Ruby | 类/模块 `CONST`（类作用域扩展） |
+| C | 文件作用域 `static const` 标量 + 指针/数组查找表 + 可变全局变量。**需要提取器修改**（节点未被发出）+ 裸标识符误解析守卫——并非表格最初猜测的简单路径 |
+| Java | 类 `static final` 字段。节点已存在，类型为 `field`；将 const 子集发出为 `constant`（`isConst` + `extractField` 类型切换）。无需新的剪除接线，无 FP 守卫 |
+| C# | 类 `const` / `static readonly`。与 Java 相同——同样的 `field`→`constant` 改动 |
+| PHP | 顶层 `const` + 类 `const`（均已为 `constant` 类型）。**唯一**改动是读取器扫描：PHP 常量*引用*是一个 `name` 节点。无提取器改动，无剪除接线（`$var` 局部无法遮蔽裸常量）。产出较低——PHP 跨文件读取常量多于同文件 |
+| Scala | 顶层 `val`（已为 `constant`）+ **`object` val**（单例常量惯用法；从 `field` 通过上走 `object_definition` 重新分类）。`class`/`trait`/`enum` val 保留为 `field`。`val_definition`/`var_definition` 添加到影子剪除。轻微的 val/def 名称冲突限制 |
+| Kotlin | 顶层 / `object` / `companion object` `val`（从无到有重新分类——属性根本没有被提取）。在 `visitNode` 中处理：嵌套名称（`variable_declaration → simple_identifier`，C 的动作）+ 作用域上走确定类型（Scala 的动作）+ 读取器扫描中的 `simple_identifier`（PHP 的动作）+ 剪除。类实例 val 保留为 `field`。干净——产出最佳之一（companion 位掩码） |
+| Swift | 顶层 `let` + `struct`/`enum`/`class` 中的 `static let`。复用 Kotlin（嵌套名称 + `simple_identifier` 读取器扫描）。两个 Swift 特有处理：**门控扩展到 `struct:`/`enum:` 父级**（Swift 在那里命名空间化常量），以及**跳过计算属性**。类/实例存储属性保留为 `field`。嵌入现有的 Swift 属性包装器处理器 |
+| Dart | 顶层 `const`/`final` + 类 `static const`/`static final`——均为 **`static_final_declaration`** 节点，语法上与实例/`var`/局部干净分离（无泄漏守卫）。`visitNode` → `constant`。需要读取器扫描修复：Dart 方法的**体是签名的下一个兄弟**，扫描引入 `function_body` 兄弟。生成的 FFI 噪声（JNIGEN `_bindings.dart`）是唯一注意事项 |
+| Pascal / Delphi | 单元/类 `const`（已提取为 `constant`）。添加到 `VALUE_REF_LANGS` + 影子剪除（`declConst`/`declVar`）+ **同 Dart 的兄弟体修复**（Pascal 的过程体是 `declProc` 头部的 `block` 兄弟）。产出低（跨单元读取）；不区分大小写（精确文本扫描遗漏大小写不同的引用） |
+| **Svelte、Vue、Astro** | **免费继承**——它们的提取器将 `<script>`/前置内容块重新解析为 `typescript`/`javascript`，这两者在 `VALUE_REF_LANGS` 中（已验证：`.svelte` 中的 `const` 会与其读取者建立边）。无需独立工作；无需独立矩阵行。 |
 
-**🔜 Remaining — likely the easy path** (constants are file/module-scope, or top-level; do §5: add
-to `VALUE_REF_LANGS`, verify the declarator node type + extractor kind, sweep). Classify each
-*before* building — several are mixed file+class scope. **Caveat learned from C:** "easy path" here
-means *scope* fits — it does NOT promise the extractor already emits the const nodes. C was in this
-column but emitted *no* file-scope const/var nodes (its name nests in an `init_declarator` the
-generic fallback can't read), so it needed the Ruby-style extractor change after all. **Always run
-§5 step C (confirm `select kind,name from nodes …` actually shows the consts) before trusting this
-column.**
+**🔜 剩余——可能是简单路径**（常量在文件/模块作用域或顶层；执行 §5：添加到 `VALUE_REF_LANGS`，验证声明符节点类型 + 提取器类型，扫描）。在构建之前先分类——其中几个是混合文件 + 类作用域。**从 C 学到的教训：** 这里的"简单路径"意味着*作用域*符合——**不**保证提取器已发出 const 节点。C 在这一列，但没有发出任何文件作用域 const/var 节点（其名称嵌套在通用回退无法读取的 `init_declarator` 中），所以最终还是需要 Ruby 风格的提取器修改。**运行 §5 步骤 C（确认 `select kind,name from nodes …` 实际显示 const）之前不要信任这一列。**
 
-| Language | Constant forms | Note |
+| 语言 | 常量形式 | 备注 |
 |---|---|---|
-| Lua / Luau | file/chunk `local X =` + globals; no `const` keyword | distinctive-name gate (needs `[A-Z_]`) catches fewer — Lua casing varies |
-| R | file-scope `X <- …` / `X = …` | |
+| Lua / Luau | 文件/块 `local X =` + 全局；无 `const` 关键字 | 有辨识度名称门控（需要 `[A-Z_]`）捕获较少——Lua 大小写使用不一 |
+| R | 文件作用域 `X <- …` / `X = …` | |
 
-**🧱 Remaining — needs the Ruby treatment** (constants live almost entirely **inside a
-class/type**; the class-scope *gate* exists now, but first confirm the extractor emits them as
-`constant`/`variable` nodes — Ruby's weren't extracted at all, and class fields often come out as
-`field`/`property` kind, which the gate rejects). **Java + C# (done) were this case**: their
-constants extracted as `field` kind, and the fix was emitting the const subset (`static final` /
-`const` / `static readonly`) as `constant` — the template for the rest of this bucket:
+**🧱 剩余——需要 Ruby 处理方式**（常量几乎完全**在类/类型内部**；类作用域*门控*现已存在，但首先确认提取器将其发出为 `constant`/`variable` 节点——Ruby 的常量根本没有被提取，类字段通常以 `field`/`property` 类型输出，被门控拒绝）。**Java + C#（已完成）正是这种情况**：其常量以 `field` 类型提取，修复是将 const 子集（`static final` / `const` / `static readonly`）发出为 `constant`——这是其余语言的模板：
 
-| Language | Constant forms |
+| 语言 | 常量形式 |
 |---|---|
-| Objective-C | `static const` / `extern const` / `#define` (file-ish; macros unparsed; already "partial support") |
+| Objective-C | `static const` / `extern const` / `#define`（类似文件作用域；宏未解析；已是"部分支持"） |
 
-**⛔ Attempted & reverted — C++.** file-scope + class `static const`/`constexpr` (mixed). Machinery
-built and correct on clean C++, but **tree-sitter-cpp parse fidelity is the blocker**: template/
-macro-heavy real C++ leaks class members + parameters to file scope as bogus constants/variables, and
-`.h` files route to the C grammar (mangling C++ classes). Two guards (skip `ERROR`-ancestor and
-`compound_statement`-ancestor declarations) cut ~83% of gross leaks but the residual pervades even
-well-structured library source. **Did not meet the precision bar; reverted.** Don't retry as a
-"value-refs" task — it needs prior work on C++ parse handling (template-class member scoping,
-`.h`-as-C++ detection, amalgamated-header exclusion).
+**⛔ 已尝试并回退——C++。** 文件作用域 + 类 `static const`/`constexpr`（混合）。机制已构建且在干净的 C++ 上正确，但 **tree-sitter-cpp 解析保真度是阻塞问题**：模板/宏密集型真实 C++ 会将类成员 + 参数泄漏到文件作用域为虚假的常量/变量，且 `.h` 文件路由到 C 语法（破坏 C++ 类）。两个守卫（跳过 `ERROR` 祖先和 `compound_statement` 祖先声明）消除了约 83% 的严重泄漏，但残余问题充斥于结构良好的库源码。**未达到精度标准；已回退。** 不要以"值引用"任务重试——需要先解决 C++ 解析处理问题（模板类成员作用域、`.h` 当 C++ 检测、合并超大头文件排除）。
 
-**🚫 N/A:** Liquid (template language — no value constants to track).
+**🚫 不适用：** Liquid（模板语言——没有值常量可跟踪）。
 
-**Frameworks — not a value-refs axis.** The README's framework list (Django, Flask, Express,
-NestJS, Rails, Spring, Gin, Laravel, …) is a *separate* feature: **route-node extraction**.
-Value-refs is framework-agnostic — it covers constants in any framework's code through the
-underlying language support, with **nothing to do per framework**. The validation sweeps already
-ran on framework repos (Rails → Ruby, Django → Python, gin → Go, express/eslint/webpack → JS,
-jekyll/sinatra → Ruby), so framework code is exercised; there's no separate framework matrix.
+**框架——不是值引用轴。** README 的框架列表（Django、Flask、Express、NestJS、Rails、Spring、Gin、Laravel……）是*独立*特性：**路由节点提取**。值引用与框架无关——它通过底层语言支持覆盖任何框架代码中的常量，**每个框架无需做任何额外工作**。验证扫描已在框架代码库上运行（Rails → Ruby，Django → Python，gin → Go，express/eslint/webpack → JS，jekyll/sinatra → Ruby），所以框架代码已被覆盖；无需独立的框架矩阵。
 
 ---
 
-## 3. Precision guards + what counts as a false positive
+## 3. 精度守卫 + 什么算误报
 
-Guards run in `flushValueRefs`, in order:
+守卫在 `flushValueRefs` 中按顺序运行：
 
-1. **`isGeneratedFile(path)`** (`src/extraction/generated-detection.ts`) — skips
-   *suffix-recognised* generated files (`.pb.ts`, `.min.js`, …). **Path-only** — cannot catch
-   content-minified bundles.
-2. **Shadow prune** — drop a target when its **declarator count exceeds its file-scope node
-   count** (so it's also bound in an inner/local scope). Rationale: a bundled/Emscripten `const
-   Module` re-declared as an inner `var Module`, a Go package const shadowed by a local `:=`, or
-   a Python module const shadowed by a local `=` resolves to the *inner* binding for nested
-   readers, so a file-scope edge is wrong. Inner re-bindings aren't graph nodes, so declarators
-   are counted at the **syntax-tree** level. *This is the per-language-sensitive guard:* the
-   declarator node types differ per grammar (§5 step B), and comparing against file-scope node
-   count (not a flat `>1`) is what keeps **conditional module defs** (`try: X=…; except: X=…`).
-3. **Distinctive-name + same-file** (the target gate).
+1. **`isGeneratedFile(path)`**（`src/extraction/generated-detection.ts`）——跳过*后缀识别的*生成文件（`.pb.ts`、`.min.js`……）。**仅路径**——无法捕获内容压缩的包。
+2. **影子剪除**——当目标的**声明符数量超过其文件作用域节点数量**时，丢弃该目标（即它也在内层/局部作用域中绑定）。依据：捆绑的/Emscripten 的 `const Module` 被内层 `var Module` 重新声明，Go 包 const 被局部 `:=` 遮蔽，或 Python 模块 const 被局部 `=` 遮蔽，对嵌套读取者解析的是*内层*绑定，所以文件作用域边是错误的。内层重绑定不是图节点，所以声明符在**语法树**层面计数。*这是每语言敏感的守卫：* 声明符节点类型因语法而异（§5 步骤 B），且比较的是文件作用域节点数（非单纯的 `>1`），这样才能保留**条件模块定义**（`try: X=…; except: X=…`）。
+3. **有辨识度名称 + 同文件**（目标门控）。
 
-**What a real FP looks like** (fix it): a reader edged to a file-scope const it does **not**
-actually read — almost always **intra-file shadowing** (the name is re-bound in an inner
-scope) concentrated in **bundled/minified/generated** files. On excalidraw this was 23 edges
-in one Emscripten blob.
+**真正的 FP 是什么样的**（需修复）：读取者与文件作用域 const 建立了边，但它**实际上并未读取**该常量——几乎总是集中在**捆绑/压缩/生成**文件中的**文件内遮蔽**（名称在内层作用域重绑定）。在 excalidraw 上，这是一个 Emscripten blob 中的 23 条边。
 
-**What is NOT an FP** (leave it):
-- **CommonJS `var x = require('…')` bindings** (JS) — correct same-file reads; changing the
-  binding *does* affect its readers; dedups against `calls` edges in impact. Not noise.
-- **Module-level mutable `var` state** read by many same-file functions — the intended case.
-- A higher edge share in a language (JS ~4–5% vs TS ~0.7–1.6%) is fine if precision holds.
+**什么不是 FP**（保留）：
+- **CommonJS `var x = require('…')` 绑定**（JS）——正确的同文件读取；修改绑定*确实*影响其读取者；在影响中与 `calls` 边去重。不是噪声。
+- **被许多同文件函数读取的模块级可变 `var` 状态**——这正是预期用途。
+- 某语言边的占比更高（JS ~4–5% vs TS ~0.7–1.6%）在精度保持的情况下是可以接受的。
 
-**Known limitations (intentional, documented):** parameter-only shadowing is *not* guarded
-(the prune counts declarators, not params — guarding it would over-prune legit consts whose
-name coincides with a param); same-file only (no cross-file consumers); reactive/computed
-reads with no static identifier aren't covered.
+**已知限制（有意的，已记录）：** 仅参数的遮蔽*没有*被守卫（剪除计数声明符，而非参数——守卫它会过度剪除名称与参数重合的合法常量）；仅限同文件（不覆盖跨文件消费者）；没有静态标识符的响应式/计算式读取不在覆盖范围内。
 
 ---
 
-## 4. Validation recipe
+## 4. 验证方案
 
-### 4.1 Deterministic probe (the core — finds FPs)
+### 4.1 确定性探针（核心——发现 FP）
 
-Index the same repo twice (on vs `SYNAPSE_VALUE_REFS=0`); node count **must be identical**
-(edges-only feature). Build first: `npm run build`. Save this as `probe.sh`:
+对同一代码库索引两次（开启 vs `SYNAPSE_VALUE_REFS=0`）；节点数**必须完全一致**（仅边特性）。先构建：`npm run build`。将以下内容保存为 `probe.sh`：
 
 ```bash
 #!/usr/bin/env bash
@@ -285,37 +144,36 @@ node "$CG" init "$ON"  2>&1 | grep -E "nodes,|Indexed"
 SYNAPSE_VALUE_REFS=0 node "$CG" init "$OFF" 2>&1 | grep -E "nodes,|Indexed"
 OND="$ON/.synapse/synapse.db"; OFD="$OFF/.synapse/synapse.db"
 echo "nodes on/off: $(sqlite3 "$OND" 'select count(*) from nodes') / $(sqlite3 "$OFD" 'select count(*) from nodes')  (MUST MATCH)"
-# PRECISE filter — do NOT use LIKE '%valueRef%' (it matches filenames like
-# textModelValueReference.ts; see §7). Always: kind='references' AND the exact key.
+# 精确过滤——不要使用 LIKE '%valueRef%'（它会匹配文件名中含 valueRef 的边，
+# 如 textModelValueReference.ts；见 §7）。始终使用：kind='references' AND 精确键。
 F="kind='references' and metadata like '%\"valueRef\":true%'"
 echo "value-ref edges: $(sqlite3 "$OND" "select count(*) from edges where $F")"
 echo "=== top targets by same-file reader count ==="
 sqlite3 -column "$OND" "select t.name, count(*) r, replace(t.file_path,'$ON/','') f from edges e join nodes t on e.target=t.id where e.$F group by e.target order by r desc limit 15;"
 ```
 
-Run: `WORK=/tmp/cg-vr bash probe.sh /path/to/cloned-repo reponame`.
+运行：`WORK=/tmp/cg-vr bash probe.sh /path/to/cloned-repo reponame`。
 
-### 4.2 FP hunts (run against the ON db `$OND`, with `F` from above)
+### 4.2 FP 追踪（对开启的 db `$OND` 运行，使用上方的 `F`）
 
 ```bash
-# (a) bundled/minified files among targets — the #1 FP source (the woff2 case):
+# (a) 目标中的捆绑/压缩文件——#1 FP 来源（woff2 案例）：
 sqlite3 "$OND" "select distinct t.file_path from edges e join nodes t on e.target=t.id where e.$F;" \
  | while read -r f; do [ -f "$f" ] || continue; \
      m=$(awk '{if(length>x)x=length}END{print x+0}' "$f"); [ "$m" -gt 300 ] && echo "MINIFIED? $m $f"; done
-# (b) guard invariant — no surviving target re-declared in its file (adjust regex per language):
+# (b) 守卫不变式——没有幸存目标在其文件中被重新声明（按语言调整正则）：
 sqlite3 "$OND" "select distinct t.name, t.file_path from edges e join nodes t on e.target=t.id where e.$F limit 80;" \
  | while IFS='|' read -r n f; do [ -f "$f" ] || continue; \
      c=$(grep -cE "(const|let|var)[[:space:]]+$n\b" "$f"); [ "${c:-0}" -gt 1 ] && echo "LEAK $n x$c $f"; done
-# (c) precision sample — eyeball reader->target pairs across the tree:
+# (c) 精度抽查——目测整棵树中的读取者→目标对：
 sqlite3 -column "$OND" "select s.name,'->',t.name from edges e join nodes s on e.source=s.id join nodes t on e.target=t.id where e.$F order by e.id desc limit 12;"
 ```
 
-For each FP suspect, open the file and confirm whether the reader truly reads that file-scope
-target. Cluster of FPs in one file → fix (extend a guard). One-off → record it, don't chase.
+对每个疑似 FP，打开文件确认读取者是否确实读取了那个文件作用域目标。某个文件中有 FP 簇 → 修复（扩展守卫）。孤立 FP → 记录它，不要追查。
 
-### 4.3 Impact-API delta (the headline) + agent A/B
+### 4.3 影响 API 增量（头条指标）+ 智能体 A/B
 
-Headline metric — value-refs turns a blind impact into a real one:
+头条指标——值引用将盲目的影响变为真实的影响：
 
 ```bash
 for s in SOME_CONST ANOTHER_CONST; do
@@ -324,221 +182,105 @@ for s in SOME_CONST ANOTHER_CONST; do
     "$(node dist/bin/synapse.js impact "$s" --path "$OFF" 2>/dev/null | grep -oE '— [0-9]+ affected' | head -1)"
 done
 ```
-Pick targets from the probe's "top targets" list. Expect ON ≫ OFF (e.g. 1 → 90).
+从探针的"top targets"列表中选取目标。预期 ON ≫ OFF（例如 1 → 90）。
 
-**Agent A/B** (optional per language — the finding below is size/language-independent, so the
-deterministic probe + impact delta usually suffice). If you run it: two **fresh on/off
-indexes**, pre-warm a `--no-watch` daemon per index, `claude -p` with **`--model sonnet
---effort high`**, ≥2 runs/arm. The pattern in `scripts/agent-eval/ab-new-vs-baseline.sh` is
-the template **but it switches builds + re-indexes (no flag), which wipes a flag-specific
-index — don't use it as-is for a flag A/B.** (Memories: `agent-eval-nested-attach`,
-`agent-eval-targets-public-oss-only`.)
+**智能体 A/B**（按语言可选——以下发现与大小/语言无关，所以确定性探针 + 影响增量通常已足够）。如果运行：两个**全新开/关索引**，每个索引预热一个 `--no-watch` 守护进程，使用 **`--model sonnet --effort high`** 的 `claude -p`，每组 ≥2 次运行。`scripts/agent-eval/ab-new-vs-baseline.sh` 中的模式是模板，**但它切换构建 + 重建索引（无标志），这会抹掉标志特定的索引——不要直接用于标志 A/B。**（记忆：`agent-eval-nested-attach`，`agent-eval-targets-public-oss-only`。）
 
-**The established A/B finding (don't re-derive):** across 12 runs on excalidraw both arms did
-0 Read / 0 Grep — the agent answers impact questions in one call and reaches for
-`synapse_search`/`callers`, *not* `impact`/`explore`, so it often doesn't query the
-value-ref edges at all. ON was never worse than OFF. **So: value-refs does NOT reduce agent
-reads — the win is blast-radius correctness** (impact API / Synapse Pro's verdict engine).
+**已确立的 A/B 发现（不要重新推导）：** 在 excalidraw 的 12 次运行中，两组都是 0 次 Read / 0 次 Grep——智能体用一次调用回答影响问题，并使用 `synapse_search`/`callers` 而*非* `impact`/`explore`，所以通常根本不查询值引用边。ON 从未比 OFF 更差。**所以：值引用不减少智能体读取——胜出在爆炸半径的正确性**（影响 API / Synapse Pro 的评判引擎）。
 
 ---
 
-## 5. Per-language checklist (the actual work)
+## 5. 每语言核对清单（实际工作）
 
-### A. Where do "constants worth tracking" live? (decide FIRST)
+### A. "值得跟踪的常量"在哪里？（首先决定）
 
-The target gate now accepts **`file:`, `class:`, and `module:`** parents. Before anything:
+目标门控现在接受 **`file:`、`class:` 和 `module:`** 父级。在做任何事之前：
 
-- If the language puts shareable constants at **file/module scope** (TS/JS, Python module
-  consts, Go package vars, Rust module/impl `const`/`static`) → fits as-is; proceed.
-- If constants live **inside a class/module** (Ruby — done) → the `class:`/`module:` gate now
-  covers them, BUT two things may need fixing first: (1) the extractor must actually *extract*
-  the class-internal constant as a node (the dispatch at the `variableTypes` branch skips
-  class-internal assignments — Ruby needed an exception for `constant`-LHS assignments); (2) the
-  reader-scan must match however the grammar represents a constant *reference* (Ruby uses
-  `constant` nodes, not `identifier`). See the Ruby block in the design doc.
-- **Class-scope precision** uses a **file-wide** target map (one target per name per file), NOT
-  strict same-class matching — because lexical-scope languages (Ruby) let a nested class read an
-  enclosing class's constant, and strict matching would drop those valid reads. The only real FP
-  is the same constant name in *sibling* classes in one file (~1.7% of Ruby targets on rails);
-  valid code rarely hits it (a bare sibling-class constant is a NameError in Ruby).
-- **Java/C#/Kotlin/Swift class-scope constants are DONE.** The gate now accepts `file:`/`class:`/
-  `module:`/**`struct:`/`enum:`** parents — the `struct:`/`enum:` widening was added for Swift, which
-  namespaces shared constants in `enum`/`struct` (`enum Constants { static let X }`). **Lesson for the
-  next class-scope language:** check the *parent kind* of a sample const (`select … substr(id…)`) — if
-  it's `struct:`/`enum:`/`interface:` and the gate doesn't list it, widen the gate (one line) or the
-  feature silently emits nothing despite the nodes existing.
-- **Confirm the reader-scan matches the language's constant *reference* node type (the PHP lesson).**
-  The reader-scan in `flushValueRefs` matches `identifier` / `constant` / `name`. If the new language
-  represents a constant *read* as some other node type, the scan finds nothing and **no edges form**
-  even with targets correctly registered. PHP refs a const as a **`name`** node (bare `X`, and the
-  const half of `self::X` / `Foo::X`), which the scan missed until `name` was added. Dump a sample's
-  reader body (`scripts/agent-eval` or a quick `getParser` walk) and check the node type of a
-  constant reference *before* sweeping — a zero-edge sweep usually means this, not a target-gate bug.
+- 如果语言将可共享常量放在**文件/模块作用域**（TS/JS，Python 模块 const，Go 包变量，Rust 模块/impl `const`/`static`）→ 直接适配；继续。
+- 如果常量**在类/模块内部**（Ruby——已完成）→ `class:`/`module:` 门控现在已覆盖，但可能需要先修复两件事：(1) 提取器必须实际*提取*类内部常量为节点（`variableTypes` 分支上的分发跳过类内赋值——Ruby 需要对 `constant` LHS 赋值的例外）；(2) 读取器扫描必须匹配语法中常量*引用*的表示方式（Ruby 使用 `constant` 节点，而非 `identifier`）。见设计文档中的 Ruby 块。
+- **类作用域精度**使用**文件范围**目标映射（每文件每名称一个目标），而非严格的同类匹配——因为词法作用域语言（Ruby）允许嵌套类读取外层类的常量，严格匹配会丢弃这些有效读取。唯一真正的 FP 是同一文件中的*兄弟*类中有相同常量名（rails 中约 1.7% 的 Ruby 目标）；有效代码很少遇到（裸兄弟类常量在 Ruby 中是 NameError）。
+- **Java/C#/Kotlin/Swift 类作用域常量已完成。** 门控现接受 `file:`/`class:`/`module:`/**`struct:`/`enum:`** 父级——`struct:`/`enum:` 扩展是为 Swift 添加的，Swift 将共享常量命名空间化在 `enum`/`struct` 中（`enum Constants { static let X }`）。**下一个类作用域语言的教训：** 检查样本 const 的*父类型*（`select … substr(id…)`）——如果是 `struct:`/`enum:`/`interface:` 且门控没有列出它，扩展门控（一行）否则特性静默无边，尽管节点存在。
+- **确认读取器扫描匹配语言的常量*引用*节点类型（PHP 教训）。** `flushValueRefs` 中的读取器扫描匹配 `identifier` / `constant` / `name`。如果新语言以其他节点类型表示常量*读取*，扫描找不到任何东西，**即使目标正确注册也不会形成任何边**。PHP 通过 **`name`** 节点引用常量（裸 `X`，以及 `self::X` / `Foo::X` 中的 const 部分），扫描直到 `name` 被添加才检测到。在扫描之前，转储样本的读取者体并检查常量引用的节点类型——零边扫描通常意味着这个，而非目标门控 bug。
 
-### B. Confirm the declarator node type (for the shadow prune)
+### B. 确认声明符节点类型（用于影子剪除）
 
-The shadow prune (in `flushValueRefs`) counts declarator names via a `switch (n.type)` over
-declarator node types — a file only has its own grammar's nodes, so it's safe to list all
-languages' types in one switch. **Add the new grammar's declarator types there**, with the
-right way to pull the bound name(s). **Verify against the actual grammar** (don't trust this
-table — confirm by parsing a sample). **This step is load-bearing:** if you skip it, the prune
-silently does nothing for the new language and intra-file shadowing produces false positives
-(this is exactly what happened on the first Go pass — see §5-Go below).
+影子剪除（在 `flushValueRefs` 中）通过对声明符节点类型的 `switch (n.type)` 计数声明符名称——一个文件只有自己语法的节点，所以在一个 switch 中列出所有语言的类型是安全的。**在那里添加新语法的声明符类型**，以及正确提取绑定名称的方式。**对照实际语法验证**（不要信任此表——通过解析样本确认）。**这一步至关重要：** 如果跳过，剪除对新语言静默无效，文件内遮蔽产生误报（这正是第一次 Go 传递时发生的——见下方 §5-Go）。
 
-| Language | declarator node(s) | name extraction | status |
+| 语言 | 声明符节点 | 名称提取 | 状态 |
 |---|---|---|---|
-| TS/JS/tsx | `variable_declarator` | `namedChild(0)` | done |
-| Go | `const_spec`, `var_spec`, `short_var_declaration` | spec → `namedChild(0)`; short-var → identifiers in the `left` field | **done** |
-| Python | `assignment` | `left` field: identifier, or iterate a `pattern_list`/`tuple_pattern` | **done** |
-| Rust | `const_item`, `static_item`, `let_declaration` | const/static → `name` field; let → `pattern` field | **done** |
-| Ruby | `assignment` (LHS is a `constant` node) | already in the switch; Ruby can't local-shadow a constant, so the prune is effectively a no-op for it | **done** (class-scope) |
-| Ruby | `assignment` with constant LHS (`CONST`) | LHS | to verify |
-| C | `init_declarator` in a file-scope `declaration` | `cDeclaratorIdentifier` walks the `declarator` chain (init → pointer/array → identifier) | **done** |
-| C++ | **attempted & reverted** — parse fidelity (see the C++ note in §2b) | — | reverted |
-| Java | `variable_declarator` (field AND method-local) | `namedChild(0)` = name identifier — **already the TS/JS case**, no new wiring | **done** |
-| C# | `variable_declarator` (field AND method-local) | same as Java — already in the switch | **done** |
-| PHP | **none** | a `$var` local (`variable_name`) is a different namespace from a bare constant — a local can never shadow a constant, so the prune is a no-op and needs no PHP declarator | **done** (n/a) |
-| Scala | `val_definition`, `var_definition` | `pattern` field (identifier) — catches an object/top-level val shadowed by a method-local `val` | **done** |
-| Kotlin | `property_declaration` | `variable_declaration → simple_identifier` (and `bump` accepts `simple_identifier`) — catches an object/companion const shadowed by a method-local `val` | **done** |
-| Swift | `property_declaration` | `<name> pattern → simple_identifier` (`firstSimpleIdentifier`) — the prune case resolves both Kotlin and Swift shapes; catches a static const shadowed by a method-local `let` | **done** |
-| Dart | `static_final_declaration` (target) + `initialized_identifier` (field/`var`) + `initialized_variable_definition` (local) | each has a direct `identifier` child — catches a top-level/static const shadowed by a method-local `const` | **done** |
-| Pascal | `declConst` (unit/class const = the target) + `declVar` (a local `var`) | `<name>` field — catches a unit `const X` shadowed by a function-local `const X` | **done** |
+| TS/JS/tsx | `variable_declarator` | `namedChild(0)` | 已完成 |
+| Go | `const_spec`、`var_spec`、`short_var_declaration` | spec → `namedChild(0)`；short-var → `left` 字段中的标识符 | **已完成** |
+| Python | `assignment` | `left` 字段：标识符，或遍历 `pattern_list`/`tuple_pattern` | **已完成** |
+| Rust | `const_item`、`static_item`、`let_declaration` | const/static → `name` 字段；let → `pattern` 字段 | **已完成** |
+| Ruby | `assignment`（LHS 是 `constant` 节点） | 已在 switch 中；Ruby 无法局部遮蔽常量，剪除对其实际上是空操作 | **已完成**（类作用域） |
+| Ruby | 带 constant LHS 的 `assignment`（`CONST`） | LHS | 待验证 |
+| C | 文件作用域 `declaration` 中的 `init_declarator` | `cDeclaratorIdentifier` 沿 `declarator` 链走（init → 指针/数组 → 标识符） | **已完成** |
+| C++ | **已尝试并回退**——解析保真度（见 §2b 的 C++ 注释） | — | 已回退 |
+| Java | `variable_declarator`（字段和方法局部） | `namedChild(0)` = 名称标识符——**已是 TS/JS 的情况**，无需新接线 | **已完成** |
+| C# | `variable_declarator`（字段和方法局部） | 同 Java——已在 switch 中 | **已完成** |
+| PHP | **无** | `$var` 局部（`variable_name`）与裸常量命名空间不同——局部永远无法遮蔽常量，剪除是空操作，无需 PHP 声明符 | **已完成**（不适用） |
+| Scala | `val_definition`、`var_definition` | `pattern` 字段（标识符）——捕获 object/顶层 val 被方法局部 `val` 遮蔽 | **已完成** |
+| Kotlin | `property_declaration` | `variable_declaration → simple_identifier`（`bump` 接受 `simple_identifier`）——捕获 object/companion const 被方法局部 `val` 遮蔽 | **已完成** |
+| Swift | `property_declaration` | `<name> pattern → simple_identifier`（`firstSimpleIdentifier`）——剪除情况同时处理 Kotlin 和 Swift 形状；捕获 static const 被方法局部 `let` 遮蔽 | **已完成** |
+| Dart | `static_final_declaration`（目标）+ `initialized_identifier`（字段/`var`）+ `initialized_variable_definition`（局部） | 每个都有直接的 `identifier` 子节点——捕获顶层/static const 被方法局部 `const` 遮蔽 | **已完成** |
+| Pascal | `declConst`（单元/类 const = 目标）+ `declVar`（局部 `var`） | `<name>` 字段——捕获单元 `const X` 被函数局部 `const X` 遮蔽 | **已完成** |
 
-**The prune rule is `declarators > file-scope-node-count`, NOT `> 1`.** A name can be bound
-twice *at file scope* legitimately — a **conditional module def** (`try: X = a; except: X = b`,
-or `if cond: X = a else: X = b`). Those make N file-scope nodes AND N declarators, so they're
-kept; a real local shadow makes declarators exceed file-scope nodes. Python forced this
-refinement (try/except const defs are everywhere); it's strictly more correct for all
-languages. `fileScopeValueCounts` (incremented in `captureValueRefScope`) tracks the file-scope
-node count per name. Also: same-name value-ref edges are suppressed (`refName !== scope.name`),
-since the two halves of a conditional def would otherwise cross-reference.
+**剪除规则是 `declarators > file-scope-node-count`，而非 `> 1`。** 一个名称可以在*文件作用域*合法地绑定两次——**条件模块定义**（`try: X = a; except: X = b`，或 `if cond: X = a else: X = b`）。这些会形成 N 个文件作用域节点 AND N 个声明符，所以会被保留；真正的局部遮蔽使声明符超过文件作用域节点数。Python 迫使了这个改进（try/except const 定义无处不在）；它对所有语言都更严格正确。`fileScopeValueCounts`（在 `captureValueRefScope` 中递增）按名称跟踪文件作用域节点数。另外：同名值引用边会被抑制（`refName !== scope.name`），因为条件定义的两半否则会相互引用。
 
-**Go was the worked example of "step B matters":** the first pass added `go` to
-`VALUE_REF_LANGS` only, and a synthetic probe immediately showed a false positive —
-`func withShadow() { TimeoutSeconds := 5; return TimeoutSeconds }` got edged to the package
-`const TimeoutSeconds`, because the prune scanned `variable_declarator` (which Go doesn't
-have). Fix: add Go's `const_spec`/`var_spec`/`short_var_declaration` to the switch. Note the
-**precision-first tradeoff** this inherits from TS/JS — a shadowed target is dropped for the
-*whole file*, so a legit reader elsewhere in that file loses its edge too. On the Go sweep
-(gin/hugo/prometheus) this over-pruning was negligible (guard invariant clean, no LEAKs), so
-it wasn't worth per-reader analysis — but re-check it per language.
+**Go 是"步骤 B 很重要"的实例：** 第一次传递只将 `go` 添加到 `VALUE_REF_LANGS`，合成探针立即显示出误报——`func withShadow() { TimeoutSeconds := 5; return TimeoutSeconds }` 与包 `const TimeoutSeconds` 建立了边，因为剪除扫描了 `variable_declarator`（Go 没有这个节点类型）。修复：将 Go 的 `const_spec`/`var_spec`/`short_var_declaration` 添加到 switch。注意这从 TS/JS 继承了**精度优先的权衡**——被遮蔽的目标对*整个文件*都被丢弃，所以那个文件中其他地方的合法读取者也失去了边。在 Go 扫描（gin/hugo/prometheus）中，这种过度剪除可以忽略不计（守卫不变式干净，无 LEAK），所以不值得进行每读取者分析——但要按语言重新检查。
 
-### C. Confirm what kind the extractor assigns
+### C. 确认提取器分配的类型
 
-`captureValueRefScope` keys off `kind ∈ {constant, variable}` for targets. Index a sample file
-and check `select kind,name from nodes where file_path like '%sample%'` — confirm module-level
-constants come out as `constant`/`variable` (not `field`, `property`, `import`, etc.). If they
-come out as something else, adjust the target gate.
+`captureValueRefScope` 对目标使用 `kind ∈ {constant, variable}` 作为键。索引一个样本文件，检查 `select kind,name from nodes where file_path like '%sample%'`——确认模块级常量以 `constant`/`variable` 类型输出（而非 `field`、`property`、`import` 等）。如果以其他类型输出，调整目标门控。
 
-### D. Wire + sweep
+### D. 接线 + 扫描
 
-1. Add the language string to `VALUE_REF_LANGS`.
-2. `npm run build`.
-3. Run §4.1 probe on **small / medium / large** public OSS repos (≥3 sizes). Prefer repos
-   with real config/constant/lookup-table modules (where the feature shines).
-4. Run §4.2 FP hunts on each. Fix FP clusters (extend a guard); record singletons.
-5. Run §4.3 impact delta on a few targets.
-6. Add a **matrix row** to `value-reference-edges.md` (per language) and a **test** to
-   `__tests__/value-reference-edges.test.ts` (positive read + a shadow/negative case).
-7. `npx vitest run __tests__/value-reference-edges.test.ts` and the full suite.
+1. 将语言字符串添加到 `VALUE_REF_LANGS`。
+2. `npm run build`。
+3. 在**小/中/大**公共 OSS 代码库（≥3 种规模）上运行 §4.1 探针。优先选择有真实配置/常量/查找表模块的代码库（特性在那里最有效）。
+4. 对每个代码库运行 §4.2 FP 追踪。修复 FP 簇（扩展守卫）；记录单例。
+5. 对几个目标运行 §4.3 影响增量。
+6. 在 `value-reference-edges.md` 中添加**矩阵行**（按语言），并在 `__tests__/value-reference-edges.test.ts` 中添加**测试**（正读取 + 遮蔽/否定案例）。
+7. `npx vitest run __tests__/value-reference-edges.test.ts` 以及完整测试套件。
 
-**Pass bar:** node count identical on/off at every size; precision samples clean (FP clusters
-fixed); impact delta shows the blind→real radius win; full test suite green.
+**通过标准：** 每种规模开/关节点数一致；精度抽查干净（FP 簇已修复）；影响增量显示盲目→真实半径的提升；完整测试套件通过。
 
 ---
 
-## 6. Git / PR workflow (how the prior ones were done)
+## 6. Git / PR 工作流（已有 PR 的做法）
 
-- Branch off `main` (e.g. `feat/value-refs-<lang>`). This validation work has lived on
-  `feat/value-refs-validation`; a new language can extend it or take its own branch.
-- A pure-validation change is **docs (+ a test)**; a precision fix is a focused **code** PR
-  (like #895). Keep code fixes separate from the doc/matrix update when practical.
-- Commit-message trailer: `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`.
-- PR body trailer: `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
-- Merge is the **maintainer's call** — don't self-merge unless told. Branch protection needs
-  `gh pr merge --squash --admin` when authorised (memory: `gh-merge-needs-admin`).
-- CHANGELOG: user-facing entries under `## [Unreleased]`; don't pre-create a version block.
+- 从 `main` 分支（例如 `feat/value-refs-<lang>`）。此验证工作在 `feat/value-refs-validation` 上进行；新语言可以在其上扩展，或使用自己的分支。
+- 纯验证性改动是 **docs（+ 测试）**；精度修复是专注的 **code** PR（如 #895）。在实际操作中，将代码修复与文档/矩阵更新分开。
+- Commit 消息尾部：`Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`。
+- PR 正文尾部：`🤖 Generated with [Claude Code](https://claude.com/claude-code)`。
+- 合并由**维护者决定**——未被告知时不要自行合并。分支保护需要经授权时使用 `gh pr merge --squash --admin`（记忆：`gh-merge-needs-admin`）。
+- CHANGELOG：在 `## [Unreleased]` 下写面向用户的条目；不要预先创建版本块。
 
 ---
 
-## 7. Traps already hit (save yourself the time)
+## 7. 已踩过的坑（省去重蹈覆辙的时间）
 
-- **Probe false-match:** `metadata LIKE '%valueRef%'` matches *filenames* in other edges'
-  metadata (e.g. an `interface-impl` `calls` edge whose `registeredAt` is
-  `…/textModelValueReference.ts`). **Always** filter `kind='references' AND metadata LIKE
-  '%"valueRef":true%'`. This created a phantom "method target" FP on vscode that was pure
-  query noise.
-- **`searchNodes` returns `SearchResult[]`** (`.node` wraps the `Node`) — in tests use
-  `.map(r => r.node)`. `getImpactRadius().nodes` is a **`Map`** — iterate `.values()`.
-- **`Synapse.initSync(dir, opts)` ignores `opts`** — it takes only the path; the default
-  config indexes `.ts`/`.tsx`/`.js`. Don't rely on a passed `include`.
-- **Node count must be identical on/off.** If it isn't, value-refs is (wrongly) creating nodes
-  — investigate before anything else.
-- **Big repos:** indexing vscode (11.5k files) took ~2m and a ~1GB DB per arm; clean up
-  `/tmp` after (each on/off pair is hundreds of MB to >2GB).
-- **require-bindings (CommonJS) are not FPs** — see §3. Don't "fix" them.
-- **Don't over-engineer a guard for a gap that doesn't manifest** (e.g. param-only shadow):
-  evidence-driven only. The maintainer steered toward minimal, surgical fixes.
-- **C macro-prefixed-prototype misparse (the C FP cluster):** an unknown leading macro
-  (`CURL_EXTERN`, `XXH_PUBLIC_API`) makes tree-sitter-c misparse a prototype `MACRO RetType
-  fn(args);` as a *declaration* whose declared "variable" is the bare return-type identifier
-  (`XXH_errorcode`), splitting `fn(args)` into a bogus expression. It mints one spurious type-named
-  global per prototype — then edged by every function of that type (redis `XXH_errorcode` 1→18).
-  These misparses *always* produce a **bare `identifier`** declarator (checked across
-  pointer/array/sized-return variants); real consts/tables always have an `init_declarator` and real
-  pointer/array globals their own declarator. Fix = **skip bare-`identifier` declarators** in the C
-  branch. The "extra" file-scope variable nodes also drop node-count vs an early pass — both arms
-  match, but don't be surprised the post-fix count is *lower*.
-- **"Easy path" ≠ "nodes already exist."** The §2b table classifies by *scope*; it does not promise
-  the language's consts are extracted. C sat in the easy column yet emitted zero file-scope const
-  nodes. Run §5 step C (`select kind,name from nodes where file_path like '%sample%'`) on a sample
-  *first* — if the consts aren't there, you're doing the Ruby treatment, not the easy path.
-- **Class consts may extract as `field` kind, not `constant` (Java/C#).** Step C must check the
-  *kind*, not just that a node exists: Java `static final` and C# `const`/`static readonly` came out
-  as `field`, which the value-ref target gate (`constant`/`variable` only) silently rejects — so the
-  feature emitted nothing despite the nodes being present. Fix = an `isConst` predicate on the
-  extractor (gated on the const modifiers) + a kind switch in `extractField` (scoped per-language so
-  other languages' fields stay `field`). Don't widen the *gate* to accept `field` — that would pull
-  in every mutable instance field as a target. And only the const *subset* converts: a Java instance
-  `final` or C# instance `readonly` is per-object state, must stay `field`.
-- **A zero-edge sweep with correctly-registered targets = the reader-scan node type (the PHP trap).**
-  Targets can register perfectly (right kind, right scope) and *still* produce zero edges if the
-  reader-scan doesn't recognise how the language writes a constant *read*. PHP refs a const as a
-  **`name`** node, not `identifier`/`constant`, so the scan saw nothing until `name` was added to the
-  match. Before assuming a target-gate bug on a sparse/empty sweep, dump a reader body and check the
-  node type of a known constant reference. (Adding a ref node type to the scan is safe across
-  languages — `flushValueRefs` only runs for the value-ref set, and a file holds only its own
-  grammar's nodes; `name` is PHP-only among the current set.)
-- **Same-file-only means cross-file-heavy languages yield less — that's correct, not a miss.** PHP
-  reads constants across files far more than within one (`Logger::DEBUG` everywhere), so laravel
-  (2,956 files) gave only 86 edges vs Ruby rails's 2,255. Don't chase it: cross-file value consumers
-  are out of scope for *every* language (would need import/scope resolution). Report the lower yield
-  honestly in the matrix rather than treating it as a bug to fix.
-- **Some extractors emit parameters/fields as `variable` at the wrong scope — restrict to `constant`
-  (the Pascal trap).** Pascal's extractor emits function `const`/`var` parameters and class fields as
-  `variable` parented to the enclosing unit/class, so they pass the target gate and collapse to noisy
-  file-wide targets (`Dest`, `aItem` read "everywhere"). The genuine shared values were all `constant`
-  (`declConst`), so the fix is a one-line per-language restriction in `captureValueRefScope`: Pascal
-  targets `constant` only. Before trusting a new language's `variable` targets, sample them — if they're
-  parameters or instance fields rather than module/global state, restrict to `constant`. (A residual
-  tail can still leak: tree-sitter-pascal context-dependently misparses a `const` param in a complex
-  Delphi signature as a `declConst` — a small parse-fidelity FP, accepted as a documented caveat.)
-- **A zero-edge sweep with targets present can be the READER side, not just the reader-scan node type
-  (the Dart trap).** Targets extracted fine, reader scopes registered, reader-scan node type correct —
-  and still zero edges, because Dart attaches a method **body as a next *sibling*** of the signature
-  node (which is what gets stored as the reader scope), so the scan walked only the signature subtree.
-  If a language's function/method body isn't a descendant of the node you register as the reader scope,
-  the scan won't see the reads — pull in the sibling/linked body. Check this when edges are zero but
-  both the targets and the reader nodes look right.
+- **探针误匹配：** `metadata LIKE '%valueRef%'` 会匹配其他边的 metadata 中的*文件名*（例如一条 `interface-impl` 的 `calls` 边，其 `registeredAt` 是 `…/textModelValueReference.ts`）。**始终**过滤 `kind='references' AND metadata LIKE '%"valueRef":true%'`。这在 vscode 上制造了一个虚假的"方法目标" FP，完全是查询噪声。
+- **`searchNodes` 返回 `SearchResult[]`**（`.node` 包装 `Node`）——在测试中使用 `.map(r => r.node)`。`getImpactRadius().nodes` 是一个 **`Map`**——遍历 `.values()`。
+- **`Synapse.initSync(dir, opts)` 忽略 `opts`**——它只接受路径；默认配置索引 `.ts`/`.tsx`/`.js`。不要依赖传入的 `include`。
+- **开/关节点数必须一致。** 如果不一致，值引用（错误地）正在创建节点——在做其他任何事之前先调查。
+- **大型代码库：** 索引 vscode（11.5k 个文件）每组用了约 2 分钟，每个 DB 约 1GB；之后清理 `/tmp`（每个开/关对是数百 MB 到 >2GB）。
+- **require 绑定（CommonJS）不是 FP**——见 §3。不要"修复"它们。
+- **不要为未出现的问题过度设计守卫**（例如仅参数遮蔽）：以证据为驱动。维护者倾向于最小化、外科手术式的修复。
+- **C 宏前缀原型误解析（C FP 簇）：** 未知的前导宏（`CURL_EXTERN`、`XXH_PUBLIC_API`）使 tree-sitter-c 将原型 `MACRO RetType fn(args);` 误解析为一个*声明*，其中声明的"变量"是裸返回类型标识符（`XXH_errorcode`），将 `fn(args)` 分割为一个虚假表达式。这为每个原型造出一个以类型命名的虚假全局——然后被那个类型的每个函数建立边（redis 的 `XXH_errorcode` 1→18）。这些误解析*总是*产生一个**裸 `identifier`** 声明符（经指针/数组/带大小返回变体验证）；真正的 const/表总有 `init_declarator`，真正的指针/数组全局有自己的声明符。修复 = 在 C 分支中**跳过裸 `identifier` 声明符**。"额外的"文件作用域变量节点也降低了早期传递的节点数——两组一致，但修复后数量*更低*，不要惊讶。
+- **"简单路径" ≠ "节点已存在。"** §2b 表按*作用域*分类；它不保证语言的 const 已被提取。C 位于简单路径列，却没有发出任何文件作用域 const 节点。先在样本上运行 §5 步骤 C（`select kind,name from nodes where file_path like '%sample%'`）——如果 const 不在那里，你在做 Ruby 处理方式，而非简单路径。
+- **类 const 可能以 `field` 类型提取，而非 `constant`（Java/C# 案例）。** 步骤 C 必须检查*类型*，而非仅检查节点是否存在：Java 的 `static final` 和 C# 的 `const`/`static readonly` 以 `field` 类型输出，而值引用目标门控（只接受 `constant`/`variable`）静默拒绝——所以尽管节点存在，特性没有产生任何边。修复 = 提取器上的 `isConst` 谓词（以 const 修饰符为条件）+ `extractField` 中的类型切换（按语言限定，其他语言的字段保留为 `field`）。不要扩展*门控*以接受 `field`——那会将每个可变实例字段都拉入目标。且仅转换 const *子集*：Java 实例 `final` 或 C# 实例 `readonly` 是每对象状态，必须保留为 `field`。
+- **有目标却零边的扫描 = 读取器侧问题，不仅仅是读取器扫描节点类型（PHP 陷阱）。** 目标可以完美注册（正确的类型、正确的作用域），*仍然*产生零边，如果读取器扫描不识别语言写常量*读取*的方式。PHP 通过 **`name`** 节点引用常量，而非 `identifier`/`constant`，所以扫描什么都看不到，直到 `name` 被添加。在假设目标门控 bug 之前，在稀疏/空扫描时转储读取者体并检查已知常量引用的节点类型。（向扫描添加引用节点类型在各语言间是安全的——`flushValueRefs` 只对值引用集合运行，文件只含有自己语法的节点；`name` 在当前集合中是 PHP 独有的。）
+- **同文件限制意味着跨文件密集型语言产出更少——这是正确的，而非遗漏。** PHP 跨文件读取常量远多于同文件（`Logger::DEBUG` 无处不在），所以 laravel（2,956 个文件）只给出 86 条边，而 Ruby rails 有 2,255 条。不要追查它：跨文件值消费者对*每种*语言都超出范围（需要导入/作用域解析）。在矩阵中诚实地报告较低的产出，而非将其视为需要修复的 bug。
+- **一些提取器在错误作用域将参数/字段发出为 `variable`——限制为 `constant`（Pascal 陷阱）。** Pascal 的提取器将函数 `const`/`var` 参数和类字段作为 `variable` 发出，父级为外层单元/类，所以它们通过目标门控并折叠为嘈杂的文件范围目标（`Dest`、`aItem` "到处"被读取）。真正的共享值全是 `constant`（`declConst`），所以修复是 `captureValueRefScope` 中的单行每语言限制：Pascal 只针对 `constant`。在信任新语言的 `variable` 目标之前，抽样检查它们——如果是参数或实例字段而非模块/全局状态，限制为 `constant`。（仍有残余尾巴可能泄漏：tree-sitter-pascal 在复杂 Delphi 签名中将 `const` 参数上下文相关地误解析为 `declConst`——小型解析保真度 FP，作为已记录的注意事项接受。）
+- **有目标存在时的零边扫描也可能是读取者侧，而非仅读取器扫描节点类型（Dart 陷阱）。** 目标提取正常，读取者作用域已注册，读取器扫描节点类型正确——仍然零边，因为 Dart 将方法的**体作为签名节点（注册为读取者作用域的节点）的下一个*兄弟***附加，所以扫描只遍历了签名子树。如果语言的函数/方法体不是注册为读取者作用域的节点的后代，扫描看不到读取——引入兄弟/链接体。当边为零但目标和读取者节点看起来都正确时，检查这一点。
 
 ---
 
-## 8. Reference
+## 8. 参考
 
-- Code: `src/extraction/tree-sitter.ts` (`VALUE_REF_LANGS`, `captureValueRefScope`,
-  `flushValueRefs`), `src/extraction/generated-detection.ts` (`isGeneratedFile`).
-- Design + matrix: `docs/design/value-reference-edges.md`.
-- Tests: `__tests__/value-reference-edges.test.ts`.
-- PRs: **#895** (default-on + shadow prune), **#897** (TS/JS/tsx validation).
-- Memories: `value-reference-edges-default-on`, `agent-eval-targets-public-oss-only`,
-  `agent-eval-nested-attach`, `gh-merge-needs-admin`, `impact-coverage-findings`.
+- 代码：`src/extraction/tree-sitter.ts`（`VALUE_REF_LANGS`、`captureValueRefScope`、`flushValueRefs`），`src/extraction/generated-detection.ts`（`isGeneratedFile`）。
+- 设计 + 矩阵：`docs/design/value-reference-edges.md`。
+- 测试：`__tests__/value-reference-edges.test.ts`。
+- PR：**#895**（默认开启 + 影子剪除），**#897**（TS/JS/tsx 验证）。
+- 记忆：`value-reference-edges-default-on`、`agent-eval-targets-public-oss-only`、`agent-eval-nested-attach`、`gh-merge-needs-admin`、`impact-coverage-findings`。

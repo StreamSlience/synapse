@@ -1,50 +1,50 @@
-﻿# Framework Resolver `extract()` Wiring Implementation Plan
+# 框架解析器 `extract()` 接线实现计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **面向智能体工作者：** 必需子技能：使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans 逐任务实现本计划。步骤使用复选框（`- [ ]`）语法进行追踪。
 
-**Goal:** Wire up the dead `FrameworkResolver.extractNodes` hook so every framework resolver can contribute route nodes AND route-to-handler edges to the graph, and update all 13 existing framework resolvers to use it correctly.
+**目标：** 接通死代码 `FrameworkResolver.extractNodes` 钩子，让每个框架解析器都能向图中贡献路由节点和路由到处理器的边，并将所有 13 个现有框架解析器更新为正确使用该钩子。
 
-**Architecture:** Replace the unused `extractNodes?(filePath, content): Node[]` hook with a single `extract?(filePath, content): { nodes, references }` method. Call it once per file during the extraction phase (after tree-sitter parses the file) for any framework whose language matches the file. Extracted nodes go into the DB alongside tree-sitter nodes; extracted references flow into the existing unresolved-references pipeline so the existing name-matcher / import-resolver / framework `resolve()` machinery creates the final edges. Net effect: `path('/users', UserListView.as_view())` produces a `route` node linked by a `references` edge to the `UserListView` class node — and the equivalent holds for Flask, FastAPI, Express, Rails, Laravel, Spring, Gin, Axum, ASP.NET, Vapor, React Router, and SvelteKit.
+**架构：** 将未使用的 `extractNodes?(filePath, content): Node[]` 钩子替换为单一的 `extract?(filePath, content): { nodes, references }` 方法。在提取阶段（tree-sitter 解析文件后）对框架语言匹配的每个文件调用一次。提取的节点与 tree-sitter 节点一起存入 DB；提取的引用流入现有的未解析引用管道，由现有的名称匹配器 / 导入解析器 / 框架 `resolve()` 机制创建最终的边。最终效果：`path('/users', UserListView.as_view())` 产生一个 `route` 节点，通过 `references` 边链接到 `UserListView` 类节点——对 Flask、FastAPI、Express、Rails、Laravel、Spring、Gin、Axum、ASP.NET、Vapor、React Router 和 SvelteKit 同样成立。
 
-**Tech Stack:** TypeScript, vitest, tree-sitter (existing), better-sqlite3 (existing). No new dependencies.
-
----
-
-## Background
-
-Today, every `FrameworkResolver` ships with an `extractNodes?(filePath, content)` method (express, laravel, python/django, python/flask, python/fastapi, ruby/rails, java/spring, go, rust, csharp, swift × 3, react, svelte). None of them are ever called. Empirical proof: grep across `src/` finds exactly one reference to `extractNodes` — the interface definition at `src/resolution/types.ts:99`. As a result the graph has zero `route` kind nodes in practice, and the link between a URL entry in a routing file and its view/controller/handler doesn't exist.
-
-Separately, the Django extractor's regex captures the view name in group 2 but the destructure in `src/resolution/frameworks/python.ts` discards it, so even if the hook were alive it wouldn't link the route to the view. Similar shape bugs exist across most frameworks.
-
-This plan fixes both problems in one coherent change.
-
-## File Structure
-
-- `src/resolution/types.ts` — add `extract?()` to `FrameworkResolver`; remove `extractNodes?()`.
-- `src/resolution/frameworks/index.ts` — keep `detectFrameworks` signature; add `getApplicableFrameworks(language)` helper.
-- `src/resolution/frameworks/python.ts` — rewrite Django/Flask/FastAPI extractors.
-- `src/resolution/frameworks/express.ts` / `laravel.ts` / `ruby.ts` / `java.ts` / `go.ts` / `rust.ts` / `csharp.ts` / `swift.ts` / `react.ts` / `svelte.ts` — migrate to new interface.
-- `src/extraction/index.ts` — plug framework extraction into `ExtractionOrchestrator.indexAll` after per-file tree-sitter parse.
-- `src/extraction/parse-worker.ts` — pass detected-framework names into the worker so the worker can invoke framework extractors itself (needed because main-thread `extractFromSource` and worker-thread parse path both have to cover this).
-- `__tests__/frameworks.test.ts` — NEW. One `describe` per framework, checking that representative fixtures produce the expected `{nodes, references}`.
-- `__tests__/frameworks-integration.test.ts` — NEW. End-to-end test: index a tiny Django project fixture, assert a `route -> class` edge with kind `references` exists from `urlpatterns` entry to `UserListView`.
-
-Rationale for splitting the two test files: the unit tests are deterministic string-in / array-out and run in milliseconds; the integration test boots a Synapse DB and is slower but gives the strongest behavioral guarantee.
-
-## Scope Note
-
-This plan does NOT move Django extraction from regex to AST. The regex approach is fine for the shapes this PR targets (`path(...)`, `url(...)`, `re_path(...)`, `include(...)`, DRF `router.register(...)`, CBV `.as_view()`, dotted module paths). A follow-up PR can swap the regex for AST walking using tree-sitter's existing Python parser. That's a larger change and doesn't block this one.
+**技术栈：** TypeScript、vitest、tree-sitter（现有）、better-sqlite3（现有）。无新依赖。
 
 ---
 
-## Task 1: Update the `FrameworkResolver` interface
+## 背景
 
-**Files:**
-- Modify: `src/resolution/types.ts:88-100`
+目前，每个 `FrameworkResolver` 都带有 `extractNodes?(filePath, content)` 方法（express、laravel、python/django、python/flask、python/fastapi、ruby/rails、java/spring、go、rust、csharp、swift × 3、react、svelte）。但它们从未被调用过。实证证明：在 `src/` 中 grep `extractNodes`，只找到一处引用——`src/resolution/types.ts:99` 处的接口定义。因此，实际上图中没有任何 `route` 类型的节点，路由文件中的 URL 条目与其视图/控制器/处理器之间的链接也不存在。
 
-- [ ] **Step 1: Write the failing test**
+另外，Django 提取器的正则表达式在第 2 组中捕获了视图名，但 `src/resolution/frameworks/python.ts` 中的解构却将其丢弃了，所以即使钩子存活，也无法将路由链接到视图。大多数框架中都存在类似的结构性 bug。
 
-Create `__tests__/frameworks.test.ts`:
+本计划一次性修复这两个问题。
+
+## 文件结构
+
+- `src/resolution/types.ts` — 在 `FrameworkResolver` 中添加 `extract?()`；移除 `extractNodes?()`。
+- `src/resolution/frameworks/index.ts` — 保留 `detectFrameworks` 签名；添加 `getApplicableFrameworks(language)` 辅助函数。
+- `src/resolution/frameworks/python.ts` — 重写 Django/Flask/FastAPI 提取器。
+- `src/resolution/frameworks/express.ts` / `laravel.ts` / `ruby.ts` / `java.ts` / `go.ts` / `rust.ts` / `csharp.ts` / `swift.ts` / `react.ts` / `svelte.ts` — 迁移到新接口。
+- `src/extraction/index.ts` — 在 `ExtractionOrchestrator.indexAll` 的每文件 tree-sitter 解析后插入框架提取。
+- `src/extraction/parse-worker.ts` — 将检测到的框架名称传入 worker，使 worker 能自行调用框架提取器（因为主线程的 `extractFromSource` 和 worker 线程的解析路径都必须覆盖此逻辑）。
+- `__tests__/frameworks.test.ts` — 新建。每个框架一个 `describe`，检查代表性 fixture 是否产生预期的 `{nodes, references}`。
+- `__tests__/frameworks-integration.test.ts` — 新建。端到端测试：索引一个小型 Django 项目 fixture，断言从 `urlpatterns` 条目到 `UserListView` 存在 `route -> class` 边，边类型为 `references`。
+
+拆分为两个测试文件的理由：单元测试是确定性的字符串输入 / 数组输出，运行只需毫秒；集成测试启动 Synapse DB，速度较慢，但能提供最强的行为保证。
+
+## 范围说明
+
+本计划不将 Django 提取从正则表达式迁移到 AST。正则方法对本 PR 所针对的常见形式（`path(...)`、`url(...)`、`re_path(...)`、`include(...)`、DRF `router.register(...)`、CBV `.as_view()`、点分模块路径）已经足够。后续 PR 可以使用 tree-sitter 现有的 Python 解析器将正则换成 AST 遍历，那是更大的改动，不应阻塞本 PR。
+
+---
+
+## 任务 1：更新 `FrameworkResolver` 接口
+
+**文件：**
+- 修改：`src/resolution/types.ts:88-100`
+
+- [ ] **步骤 1：编写失败测试**
+
+创建 `__tests__/frameworks.test.ts`：
 
 ```typescript
 import { describe, it, expect } from 'vitest';
@@ -69,14 +69,14 @@ describe('FrameworkResolver.extract interface', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **步骤 2：运行测试，确认失败**
 
-Run: `npx vitest run __tests__/frameworks.test.ts`
-Expected: FAIL — `extract` is not a property of `FrameworkResolver`; `languages` is not a property of `FrameworkResolver`.
+运行：`npx vitest run __tests__/frameworks.test.ts`
+预期结果：FAIL — `extract` 不是 `FrameworkResolver` 的属性；`languages` 也不是 `FrameworkResolver` 的属性。
 
-- [ ] **Step 3: Update the interface**
+- [ ] **步骤 3：更新接口**
 
-Replace `src/resolution/types.ts:88-100` with:
+将 `src/resolution/types.ts:88-100` 替换为：
 
 ```typescript
 /**
@@ -113,17 +113,17 @@ export interface FrameworkResolver {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **步骤 4：运行测试，确认通过**
 
-Run: `npx vitest run __tests__/frameworks.test.ts`
-Expected: PASS.
+运行：`npx vitest run __tests__/frameworks.test.ts`
+预期结果：PASS。
 
-- [ ] **Step 5: Run typecheck to catch downstream breakage**
+- [ ] **步骤 5：运行类型检查，检测下游破坏**
 
-Run: `npx tsc --noEmit`
-Expected: FAIL — every `src/resolution/frameworks/*.ts` will error on `extractNodes` not existing on `FrameworkResolver`. That's expected; subsequent tasks fix each one.
+运行：`npx tsc --noEmit`
+预期结果：FAIL — 每个 `src/resolution/frameworks/*.ts` 都会因 `extractNodes` 不存在于 `FrameworkResolver` 而报错。这是预期的；后续任务会逐一修复。
 
-- [ ] **Step 6: Commit**
+- [ ] **步骤 6：提交**
 
 ```bash
 git add src/resolution/types.ts __tests__/frameworks.test.ts
@@ -132,14 +132,14 @@ git commit -m "feat(resolution): replace extractNodes with extract() returning n
 
 ---
 
-## Task 2: Add `getApplicableFrameworks` helper and keep detection correct
+## 任务 2：添加 `getApplicableFrameworks` 辅助函数并保持检测正确
 
-**Files:**
-- Modify: `src/resolution/frameworks/index.ts`
+**文件：**
+- 修改：`src/resolution/frameworks/index.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **步骤 1：编写失败测试**
 
-Append to `__tests__/frameworks.test.ts`:
+追加到 `__tests__/frameworks.test.ts`：
 
 ```typescript
 import { getApplicableFrameworks } from '../src/resolution/frameworks';
@@ -162,14 +162,14 @@ describe('getApplicableFrameworks', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **步骤 2：运行测试，确认失败**
 
-Run: `npx vitest run __tests__/frameworks.test.ts`
-Expected: FAIL — `getApplicableFrameworks` is not exported.
+运行：`npx vitest run __tests__/frameworks.test.ts`
+预期结果：FAIL — `getApplicableFrameworks` 未导出。
 
-- [ ] **Step 3: Add helper to `src/resolution/frameworks/index.ts`**
+- [ ] **步骤 3：在 `src/resolution/frameworks/index.ts` 中添加辅助函数**
 
-Add after the existing `detectFrameworks` function:
+在现有 `detectFrameworks` 函数之后添加：
 
 ```typescript
 import type { Language } from '../../types';
@@ -188,12 +188,12 @@ export function getApplicableFrameworks(
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **步骤 4：运行测试，确认通过**
 
-Run: `npx vitest run __tests__/frameworks.test.ts`
-Expected: PASS.
+运行：`npx vitest run __tests__/frameworks.test.ts`
+预期结果：PASS。
 
-- [ ] **Step 5: Commit**
+- [ ] **步骤 5：提交**
 
 ```bash
 git add src/resolution/frameworks/index.ts __tests__/frameworks.test.ts
@@ -202,14 +202,14 @@ git commit -m "feat(resolution): add getApplicableFrameworks helper for per-lang
 
 ---
 
-## Task 3: Port Django resolver to new `extract()` with proper route→view references
+## 任务 3：将 Django 解析器迁移到带有正确路由→视图引用的新 `extract()`
 
-**Files:**
-- Modify: `src/resolution/frameworks/python.ts` (djangoResolver section, ~line 1-100)
+**文件：**
+- 修改：`src/resolution/frameworks/python.ts`（djangoResolver 部分，约第 1-100 行）
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **步骤 1：编写失败测试**
 
-Append to `__tests__/frameworks.test.ts`:
+追加到 `__tests__/frameworks.test.ts`：
 
 ```typescript
 import { djangoResolver } from '../src/resolution/frameworks/python';
@@ -272,14 +272,14 @@ urlpatterns = [
 });
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [ ] **步骤 2：运行测试，确认失败**
 
-Run: `npx vitest run __tests__/frameworks.test.ts -t djangoResolver`
-Expected: FAIL — `djangoResolver.extract` is undefined.
+运行：`npx vitest run __tests__/frameworks.test.ts -t djangoResolver`
+预期结果：FAIL — `djangoResolver.extract` 为 undefined。
 
-- [ ] **Step 3: Rewrite djangoResolver**
+- [ ] **步骤 3：重写 djangoResolver**
 
-Replace the `djangoResolver` object in `src/resolution/frameworks/python.ts` (approximately lines 7-100) with:
+将 `src/resolution/frameworks/python.ts` 中的 `djangoResolver` 对象（约第 7-100 行）替换为：
 
 ```typescript
 export const djangoResolver: FrameworkResolver = {
@@ -388,19 +388,19 @@ function resolveHandlerName(expr: string): { name: string; kind: 'references' | 
 }
 ```
 
-Also ensure the top of the file imports `UnresolvedRef` and `Node`:
+同时确保文件顶部导入了 `UnresolvedRef` 和 `Node`：
 
 ```typescript
 import type { FrameworkResolver, UnresolvedRef } from '../types';
 import type { Node } from '../../types';
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [ ] **步骤 4：运行测试，确认通过**
 
-Run: `npx vitest run __tests__/frameworks.test.ts -t djangoResolver`
-Expected: PASS (6 tests).
+运行：`npx vitest run __tests__/frameworks.test.ts -t djangoResolver`
+预期结果：PASS（6 个测试）。
 
-- [ ] **Step 5: Commit**
+- [ ] **步骤 5：提交**
 
 ```bash
 git add src/resolution/frameworks/python.ts __tests__/frameworks.test.ts
@@ -409,14 +409,14 @@ git commit -m "feat(django): emit route nodes and route->view references in extr
 
 ---
 
-## Task 4: Port Flask and FastAPI resolvers
+## 任务 4：迁移 Flask 和 FastAPI 解析器
 
-**Files:**
-- Modify: `src/resolution/frameworks/python.ts` (flaskResolver and fastapiResolver sections)
+**文件：**
+- 修改：`src/resolution/frameworks/python.ts`（flaskResolver 和 fastapiResolver 部分）
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **步骤 1：编写失败测试**
 
-Append to `__tests__/frameworks.test.ts`:
+追加到 `__tests__/frameworks.test.ts`：
 
 ```typescript
 import { flaskResolver, fastapiResolver } from '../src/resolution/frameworks/python';
@@ -472,14 +472,14 @@ def create_item(item: Item):
 });
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [ ] **步骤 2：运行测试，确认失败**
 
-Run: `npx vitest run __tests__/frameworks.test.ts -t "flaskResolver|fastapiResolver"`
-Expected: FAIL — both resolvers' `extract` are undefined.
+运行：`npx vitest run __tests__/frameworks.test.ts -t "flaskResolver|fastapiResolver"`
+预期结果：FAIL — 两个解析器的 `extract` 均为 undefined。
 
-- [ ] **Step 3: Rewrite flaskResolver and fastapiResolver**
+- [ ] **步骤 3：重写 flaskResolver 和 fastapiResolver**
 
-Replace `flaskResolver` in `src/resolution/frameworks/python.ts` with:
+将 `src/resolution/frameworks/python.ts` 中的 `flaskResolver` 替换为：
 
 ```typescript
 export const flaskResolver: FrameworkResolver = {
@@ -565,7 +565,7 @@ export const fastapiResolver: FrameworkResolver = {
 };
 ```
 
-And add this shared helper at the bottom of `python.ts`:
+并在 `python.ts` 底部添加以下共享辅助函数：
 
 ```typescript
 interface DecoratorRouteOpts {
@@ -635,12 +635,12 @@ function extractDecoratorRoutes(filePath: string, content: string, opts: Decorat
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [ ] **步骤 4：运行测试，确认通过**
 
-Run: `npx vitest run __tests__/frameworks.test.ts -t "flaskResolver|fastapiResolver"`
-Expected: PASS (4 tests).
+运行：`npx vitest run __tests__/frameworks.test.ts -t "flaskResolver|fastapiResolver"`
+预期结果：PASS（4 个测试）。
 
-- [ ] **Step 5: Commit**
+- [ ] **步骤 5：提交**
 
 ```bash
 git add src/resolution/frameworks/python.ts __tests__/frameworks.test.ts
@@ -649,14 +649,14 @@ git commit -m "feat(flask,fastapi): emit route nodes and route->handler referenc
 
 ---
 
-## Task 5: Port Express resolver
+## 任务 5：迁移 Express 解析器
 
-**Files:**
-- Modify: `src/resolution/frameworks/express.ts` (extractNodes section, ~line 83-117)
+**文件：**
+- 修改：`src/resolution/frameworks/express.ts`（extractNodes 部分，约第 83-117 行）
 
-- [ ] **Step 1: Write failing tests**
+- [ ] **步骤 1：编写失败测试**
 
-Append to `__tests__/frameworks.test.ts`:
+追加到 `__tests__/frameworks.test.ts`：
 
 ```typescript
 import { expressResolver } from '../src/resolution/frameworks/express';
@@ -686,14 +686,14 @@ describe('expressResolver.extract', () => {
 });
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [ ] **步骤 2：运行测试，确认失败**
 
-Run: `npx vitest run __tests__/frameworks.test.ts -t expressResolver`
-Expected: FAIL.
+运行：`npx vitest run __tests__/frameworks.test.ts -t expressResolver`
+预期结果：FAIL。
 
-- [ ] **Step 3: Rewrite expressResolver.extract**
+- [ ] **步骤 3：重写 expressResolver.extract**
 
-Replace the existing `extractNodes` method on `expressResolver` (in `src/resolution/frameworks/express.ts`) with:
+将 `src/resolution/frameworks/express.ts` 中 `expressResolver` 上现有的 `extractNodes` 方法替换为：
 
 ```typescript
   languages: ['javascript', 'typescript'],
@@ -744,7 +744,7 @@ Replace the existing `extractNodes` method on `expressResolver` (in `src/resolut
   },
 ```
 
-And add near the top of the file:
+并在文件顶部附近添加：
 
 ```typescript
 import type { FrameworkResolver, UnresolvedRef } from '../types';
@@ -757,14 +757,14 @@ function extractTailIdent(expr: string): string | null {
 }
 ```
 
-Remove the old `extractNodes` method.
+删除旧的 `extractNodes` 方法。
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [ ] **步骤 4：运行测试，确认通过**
 
-Run: `npx vitest run __tests__/frameworks.test.ts -t expressResolver`
-Expected: PASS.
+运行：`npx vitest run __tests__/frameworks.test.ts -t expressResolver`
+预期结果：PASS。
 
-- [ ] **Step 5: Commit**
+- [ ] **步骤 5：提交**
 
 ```bash
 git add src/resolution/frameworks/express.ts __tests__/frameworks.test.ts
@@ -773,122 +773,122 @@ git commit -m "feat(express): emit route nodes and route->handler references"
 
 ---
 
-## Task 6: Port Laravel, Rails, Spring, Gin (Go), Axum (Rust), ASP.NET (C#), Swift resolvers
+## 任务 6：迁移 Laravel、Rails、Spring、Gin（Go）、Axum（Rust）、ASP.NET（C#）、Swift 解析器
 
-**Files:**
-- Modify: `src/resolution/frameworks/laravel.ts` / `ruby.ts` / `java.ts` / `go.ts` / `rust.ts` / `csharp.ts` / `swift.ts`
+**文件：**
+- 修改：`src/resolution/frameworks/laravel.ts` / `ruby.ts` / `java.ts` / `go.ts` / `rust.ts` / `csharp.ts` / `swift.ts`
 
-Each framework follows the **same pattern** as Tasks 3–5 above:
+每个框架都遵循与任务 3-5 **相同的模式**：
 
-1. Add `languages: [...]` field.
-2. Replace `extractNodes(filePath, content)` with `extract(filePath, content): { nodes, references }`.
-3. Inside `extract()`, for each matched route regex: create a route node (reuse existing shape) AND emit a `UnresolvedRef` for the handler/controller with `fromNodeId = routeNode.id`.
-4. For each framework, add one unit test to `__tests__/frameworks.test.ts` that verifies at least one route shape produces both a node and a handler reference.
+1. 添加 `languages: [...]` 字段。
+2. 将 `extractNodes(filePath, content)` 替换为 `extract(filePath, content): { nodes, references }`。
+3. 在 `extract()` 内部，对每个匹配的路由正则：创建一个路由节点（复用现有形状）并为处理器/控制器发出 `UnresolvedRef`（`fromNodeId = routeNode.id`）。
+4. 为每个框架在 `__tests__/frameworks.test.ts` 中添加一个单元测试，验证至少一种路由形式能同时产生节点和处理器引用。
 
-**Per-framework specifics:**
+**各框架具体说明：**
 
-- **Laravel** (`laravel.ts`): `Route::get('/x', [Ctrl::class, 'method'])` → handler ref name = `method`; `Route::get('/x', 'Ctrl@method')` → handler ref name = `method`; `Route::resource('users', UserController::class)` → handler ref name = `UserController`. `languages: ['php']`.
+- **Laravel** (`laravel.ts`)：`Route::get('/x', [Ctrl::class, 'method'])` → 处理器引用名 = `method`；`Route::get('/x', 'Ctrl@method')` → 处理器引用名 = `method`；`Route::resource('users', UserController::class)` → 处理器引用名 = `UserController`。`languages: ['php']`。
 
-- **Rails** (`ruby.ts`): `get '/x', to: 'users#index'` → handler ref name = `index` (scope by `users`); `resources :users` → one node per CRUD action, each referencing the corresponding method name on `UsersController`. `languages: ['ruby']`.
+- **Rails** (`ruby.ts`)：`get '/x', to: 'users#index'` → 处理器引用名 = `index`（按 `users` 限定范围）；`resources :users` → 每个 CRUD 动作一个节点，各自引用 `UsersController` 上对应的方法名。`languages: ['ruby']`。
 
-- **Spring** (`java.ts`): `@GetMapping("/x")` on method → handler is the following method name (scan forward past the decorator). `languages: ['java']`.
+- **Spring** (`java.ts`)：方法上的 `@GetMapping("/x")` → 处理器是其后的方法名（向前扫过装饰器）。`languages: ['java']`。
 
-- **Gin / chi / gorilla** (`go.ts`): `r.GET("/x", handler)` → handler ref = last ident in the last arg. `languages: ['go']`.
+- **Gin / chi / gorilla** (`go.ts`)：`r.GET("/x", handler)` → 处理器引用 = 最后一个参数中的最后一个标识符。`languages: ['go']`。
 
-- **Axum / actix** (`rust.ts`): `.route("/x", get(handler))` → handler ref = ident inside `get(...)`. `languages: ['rust']`.
+- **Axum / actix** (`rust.ts`)：`.route("/x", get(handler))` → 处理器引用 = `get(...)` 内的标识符。`languages: ['rust']`。
 
-- **ASP.NET** (`csharp.ts`): `[HttpGet("/x")] public ActionResult Method()` → handler ref = method name on same class. `languages: ['csharp']`.
+- **ASP.NET** (`csharp.ts`)：`[HttpGet("/x")] public ActionResult Method()` → 处理器引用 = 同一类上的方法名。`languages: ['csharp']`。
 
-- **Swift / Vapor** (`swift.ts`): `app.get("/x", use: handler)` → handler ref = ident after `use:`. `languages: ['swift']`.
+- **Swift / Vapor** (`swift.ts`)：`app.get("/x", use: handler)` → 处理器引用 = `use:` 后的标识符。`languages: ['swift']`。
 
-Each of these gets its own commit in the form:
+每个框架各自提交，格式为：
 
 ```bash
 git add src/resolution/frameworks/<framework>.ts __tests__/frameworks.test.ts
 git commit -m "feat(<framework>): emit route nodes and route->handler references"
 ```
 
-**Important:** keep each framework's commit independent so any one of them can be reverted if it causes regressions.
+**重要：** 保持每个框架的提交独立，以便在任一框架导致回归时可以单独回滚。
 
-### Task 6a: Laravel
+### 任务 6a：Laravel
 
-- [ ] **Step 1: Write test** for `Route::get('/users', [UserController::class, 'index'])` → `{nodes[0].name='GET /users', references[0].referenceName='index'}`.
-- [ ] **Step 2: Run test, see fail.**
-- [ ] **Step 3: Implement `extract()`** following the Express pattern. Regex: `/Route::(get|post|put|patch|delete|options|any)\s*\(\s*['"]([^'"]+)['"]\s*,\s*([^)]+)\)/g`. Extract handler from third group via `resolveLaravelHandler()`: strip `[`/`]`/`::class`, take second element of comma-split array or `Ctrl@method`.
-- [ ] **Step 4: Run test, see pass.**
-- [ ] **Step 5: Commit.**
+- [ ] **步骤 1：编写测试** `Route::get('/users', [UserController::class, 'index'])` → `{nodes[0].name='GET /users', references[0].referenceName='index'}`。
+- [ ] **步骤 2：运行测试，确认失败。**
+- [ ] **步骤 3：实现 `extract()`**，遵循 Express 模式。正则：`/Route::(get|post|put|patch|delete|options|any)\s*\(\s*['"]([^'"]+)['"]\s*,\s*([^)]+)\)/g`。通过 `resolveLaravelHandler()` 从第三组中提取处理器：去掉 `[`/`]`/`::class`，取逗号分割数组的第二个元素或 `Ctrl@method`。
+- [ ] **步骤 4：运行测试，确认通过。**
+- [ ] **步骤 5：提交。**
 
-### Task 6b: Rails
+### 任务 6b：Rails
 
-- [ ] **Step 1: Write test** for `get '/users', to: 'users#index'` → `{references[0].referenceName='index'}`.
-- [ ] **Step 2: Run test, see fail.**
-- [ ] **Step 3: Implement `extract()`**. Regex: `/\b(get|post|put|patch|delete|match)\s+['"]([^'"]+)['"]\s*,\s*to:\s*['"]([^'"]+)['"]/g` → `controller#method` split on `#` gives handler = `method`.
-- [ ] **Step 4: Run test, see pass.**
-- [ ] **Step 5: Commit.**
+- [ ] **步骤 1：编写测试** `get '/users', to: 'users#index'` → `{references[0].referenceName='index'}`。
+- [ ] **步骤 2：运行测试，确认失败。**
+- [ ] **步骤 3：实现 `extract()`**。正则：`/\b(get|post|put|patch|delete|match)\s+['"]([^'"]+)['"]\s*,\s*to:\s*['"]([^'"]+)['"]/g` → `controller#method` 按 `#` 分割，处理器 = `method`。
+- [ ] **步骤 4：运行测试，确认通过。**
+- [ ] **步骤 5：提交。**
 
-### Task 6c: Spring
+### 任务 6c：Spring
 
-- [ ] **Step 1: Write test** for `@GetMapping("/x")\npublic String list() {...}` → `{references[0].referenceName='list'}`.
-- [ ] **Step 2: Run test, see fail.**
-- [ ] **Step 3: Implement `extract()`** using the shared `extractDecoratorRoutes` helper (move it to a new `src/resolution/frameworks/shared.ts` if cleaner). Find the next `public` or `private` method declaration's name after each mapping annotation.
-- [ ] **Step 4: Run test, see pass.**
-- [ ] **Step 5: Commit.**
+- [ ] **步骤 1：编写测试** `@GetMapping("/x")\npublic String list() {...}` → `{references[0].referenceName='list'}`。
+- [ ] **步骤 2：运行测试，确认失败。**
+- [ ] **步骤 3：实现 `extract()`**，使用共享的 `extractDecoratorRoutes` 辅助函数（如果更清晰，可将其移至新建的 `src/resolution/frameworks/shared.ts`）。找到每个映射注解后的第一个 `public` 或 `private` 方法声明的名称。
+- [ ] **步骤 4：运行测试，确认通过。**
+- [ ] **步骤 5：提交。**
 
-### Task 6d: Go
+### 任务 6d：Go
 
-- [ ] **Step 1: Write test** for `r.GET("/x", handler)` and `router.Handle("/x", handler)` → `{references[0].referenceName='handler'}`.
-- [ ] **Step 2: Run test, see fail.**
-- [ ] **Step 3: Implement `extract()`**. Regex: `/\b(?:router|r|mux|app)\.(GET|POST|PUT|PATCH|DELETE|Handle|HandleFunc)\s*\(\s*["]([^"]+)["]\s*,\s*([^)]+)\)/g`. Handler = last ident in third group.
-- [ ] **Step 4: Run test, see pass.**
-- [ ] **Step 5: Commit.**
+- [ ] **步骤 1：编写测试** `r.GET("/x", handler)` 和 `router.Handle("/x", handler)` → `{references[0].referenceName='handler'}`。
+- [ ] **步骤 2：运行测试，确认失败。**
+- [ ] **步骤 3：实现 `extract()`**。正则：`/\b(?:router|r|mux|app)\.(GET|POST|PUT|PATCH|DELETE|Handle|HandleFunc)\s*\(\s*["]([^"]+)["]\s*,\s*([^)]+)\)/g`。处理器 = 第三组中的最后一个标识符。
+- [ ] **步骤 4：运行测试，确认通过。**
+- [ ] **步骤 5：提交。**
 
-### Task 6e: Rust
+### 任务 6e：Rust
 
-- [ ] **Step 1: Write test** for `.route("/x", get(list_users))` → `{references[0].referenceName='list_users'}`.
-- [ ] **Step 2: Run test, see fail.**
-- [ ] **Step 3: Implement `extract()`**. Regex: `/\.route\s*\(\s*"([^"]+)"\s*,\s*(get|post|put|patch|delete)\s*\(\s*(\w+)/g` → handler = group 3.
-- [ ] **Step 4: Run test, see pass.**
-- [ ] **Step 5: Commit.**
+- [ ] **步骤 1：编写测试** `.route("/x", get(list_users))` → `{references[0].referenceName='list_users'}`。
+- [ ] **步骤 2：运行测试，确认失败。**
+- [ ] **步骤 3：实现 `extract()`**。正则：`/\.route\s*\(\s*"([^"]+)"\s*,\s*(get|post|put|patch|delete)\s*\(\s*(\w+)/g` → 处理器 = 第 3 组。
+- [ ] **步骤 4：运行测试，确认通过。**
+- [ ] **步骤 5：提交。**
 
-### Task 6f: C# (ASP.NET)
+### 任务 6f：C#（ASP.NET）
 
-- [ ] **Step 1: Write test** for `[HttpGet("/x")]\npublic IActionResult List()` → `{references[0].referenceName='List'}`.
-- [ ] **Step 2: Run test, see fail.**
-- [ ] **Step 3: Implement `extract()`**. Find attributes, then scan forward to first `public|private|protected` method declaration and take its name.
-- [ ] **Step 4: Run test, see pass.**
-- [ ] **Step 5: Commit.**
+- [ ] **步骤 1：编写测试** `[HttpGet("/x")]\npublic IActionResult List()` → `{references[0].referenceName='List'}`。
+- [ ] **步骤 2：运行测试，确认失败。**
+- [ ] **步骤 3：实现 `extract()`**。找到属性后，向前扫描到第一个 `public|private|protected` 方法声明并取其名称。
+- [ ] **步骤 4：运行测试，确认通过。**
+- [ ] **步骤 5：提交。**
 
-### Task 6g: Swift / Vapor
+### 任务 6g：Swift / Vapor
 
-- [ ] **Step 1: Write test** for `app.get("/users", use: list)` → `{references[0].referenceName='list'}`.
-- [ ] **Step 2: Run test, see fail.**
-- [ ] **Step 3: Implement `extract()`**. Regex: `/\b(app|router|routes)\.(get|post|put|patch|delete)\s*\(\s*"([^"]+)"\s*,\s*use:\s*([A-Za-z_][A-Za-z0-9_.]*)/g` → handler = group 4's last segment.
-- [ ] **Step 4: Run test, see pass.**
-- [ ] **Step 5: Commit.**
+- [ ] **步骤 1：编写测试** `app.get("/users", use: list)` → `{references[0].referenceName='list'}`。
+- [ ] **步骤 2：运行测试，确认失败。**
+- [ ] **步骤 3：实现 `extract()`**。正则：`/\b(app|router|routes)\.(get|post|put|patch|delete)\s*\(\s*"([^"]+)"\s*,\s*use:\s*([A-Za-z_][A-Za-z0-9_.]*)/g` → 处理器 = 第 4 组的最后一个片段。
+- [ ] **步骤 4：运行测试，确认通过。**
+- [ ] **步骤 5：提交。**
 
-### Task 6h: React & Svelte
+### 任务 6h：React 和 Svelte
 
-These are UI frameworks where routes map to components, not handlers in the server sense. Keep the existing behavior but migrate the interface:
+这些是 UI 框架，路由映射到组件而非服务端处理器。迁移接口但保留现有行为：
 
-- [ ] **Step 1: Migrate `reactResolver`** (`src/resolution/frameworks/react.ts`) — add `languages: ['javascript', 'typescript']`, rename `extractNodes` to `extract`, make it return `{ nodes, references: [] }` (the existing logic only emits nodes, no handler references needed yet — a follow-up can add `<Route element={<Page/>}/>` → `Page` references).
-- [ ] **Step 2: Migrate `svelteResolver`** (`src/resolution/frameworks/svelte.ts`) — same pattern; `languages: ['svelte']`.
-- [ ] **Step 3: Add a smoke test** for each that verifies `extract()` returns the same node shape it used to.
-- [ ] **Step 4: Run tests, see pass.**
-- [ ] **Step 5: Commit.**
+- [ ] **步骤 1：迁移 `reactResolver`**（`src/resolution/frameworks/react.ts`）——添加 `languages: ['javascript', 'typescript']`，将 `extractNodes` 重命名为 `extract`，使其返回 `{ nodes, references: [] }`（现有逻辑只发出节点，暂不需要处理器引用——后续可添加 `<Route element={<Page/>}/>` → `Page` 引用）。
+- [ ] **步骤 2：迁移 `svelteResolver`**（`src/resolution/frameworks/svelte.ts`）——同上；`languages: ['svelte']`。
+- [ ] **步骤 3：为每个解析器添加冒烟测试**，验证 `extract()` 返回与之前相同的节点形状。
+- [ ] **步骤 4：运行测试，确认通过。**
+- [ ] **步骤 5：提交。**
 
 ---
 
-## Task 7: Wire framework extraction into `ExtractionOrchestrator`
+## 任务 7：将框架提取接线到 `ExtractionOrchestrator`
 
-**Files:**
-- Modify: `src/extraction/index.ts` (the per-file extraction result merging path)
-- Modify: `src/extraction/parse-worker.ts` (pass detected frameworks to worker if extraction runs there)
+**文件：**
+- 修改：`src/extraction/index.ts`（每文件提取结果合并路径）
+- 修改：`src/extraction/parse-worker.ts`（如果提取在 worker 中运行，则将检测到的框架传入 worker）
 
-This is the core wiring change. It runs after each file is parsed by tree-sitter.
+这是核心接线变更，在每个文件被 tree-sitter 解析后运行。
 
-- [ ] **Step 1: Write an integration test**
+- [ ] **步骤 1：编写集成测试**
 
-Create `__tests__/frameworks-integration.test.ts`:
+创建 `__tests__/frameworks-integration.test.ts`：
 
 ```typescript
 import { describe, it, expect, beforeAll, afterEach } from 'vitest';
@@ -944,16 +944,16 @@ describe('Django end-to-end', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [ ] **步骤 2：运行测试，确认失败**
 
-Run: `npx vitest run __tests__/frameworks-integration.test.ts`
-Expected: FAIL — no route nodes get created (framework extract isn't wired in yet).
+运行：`npx vitest run __tests__/frameworks-integration.test.ts`
+预期结果：FAIL — 没有路由节点被创建（框架 extract 尚未接线）。
 
-- [ ] **Step 3: Add the wiring**
+- [ ] **步骤 3：添加接线代码**
 
-In `src/extraction/index.ts`, locate the `extractFromSource` function (around line 600; the function that runs tree-sitter on a single file and returns `ExtractionResult`). Add framework extraction as a post-tree-sitter augmentation.
+在 `src/extraction/index.ts` 中，找到 `extractFromSource` 函数（约第 600 行；对单个文件运行 tree-sitter 并返回 `ExtractionResult` 的函数）。在 tree-sitter 之后添加框架提取作为后处理增强。
 
-Find where `ExtractionResult` is built at the end of `extractFromSource` (around line 1000-1015). Just before `return result`, add:
+找到 `extractFromSource` 末尾构建 `ExtractionResult` 的位置（约第 1000-1015 行）。在 `return result` 之前添加：
 
 ```typescript
 // Framework-specific extraction (routes, etc.)
@@ -976,9 +976,9 @@ if (detectedFrameworks && detectedFrameworks.length > 0) {
 }
 ```
 
-Also add `detectedFrameworks?: FrameworkResolver[]` as a parameter to `extractFromSource`.
+同时将 `detectedFrameworks?: FrameworkResolver[]` 作为参数添加到 `extractFromSource`。
 
-In `ExtractionOrchestrator.indexAll` (around line 412), before kicking off the parse workers, detect frameworks once:
+在 `ExtractionOrchestrator.indexAll`（约第 412 行）中，在启动解析 worker 之前，一次性检测框架：
 
 ```typescript
 // Detect frameworks once per indexing run (project-level signal)
@@ -986,19 +986,19 @@ const resolutionContext = buildResolutionContext(this.rootDir, this.queries);
 const detectedFrameworks = detectFrameworks(resolutionContext);
 ```
 
-Pass `detectedFrameworks` into the parse worker batch config (or, if the parse worker doesn't invoke `extractFromSource` directly, into the main-thread merge step that invokes framework extract on the raw file content). If the parse worker already has access to file content, pass the framework NAMES and re-resolve to resolver objects inside the worker from `getAllFrameworkResolvers().filter(f => detectedNames.includes(f.name))` — objects with functions can't cross worker_threads postMessage boundaries.
+将 `detectedFrameworks` 传入解析 worker 批次配置（或者，如果 parse worker 不直接调用 `extractFromSource`，则传入对原始文件内容调用框架 extract 的主线程合并步骤）。如果 worker 已经能访问文件内容，则传入框架**名称**，并在 worker 内部通过 `getAllFrameworkResolvers().filter(f => detectedNames.includes(f.name))` 重新解析为解析器对象——含函数的对象无法跨 worker_threads postMessage 边界传递。
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **步骤 4：运行测试，确认通过**
 
-Run: `npx vitest run __tests__/frameworks-integration.test.ts`
-Expected: PASS.
+运行：`npx vitest run __tests__/frameworks-integration.test.ts`
+预期结果：PASS。
 
-- [ ] **Step 5: Run the full test suite to check for regressions**
+- [ ] **步骤 5：运行完整测试套件，检查回归**
 
-Run: `npx vitest run`
-Expected: All existing tests still pass.
+运行：`npx vitest run`
+预期结果：所有现有测试均通过。
 
-- [ ] **Step 6: Commit**
+- [ ] **步骤 6：提交**
 
 ```bash
 git add src/extraction/index.ts src/extraction/parse-worker.ts __tests__/frameworks-integration.test.ts
@@ -1007,25 +1007,25 @@ git commit -m "feat(extraction): run framework extractors after tree-sitter pars
 
 ---
 
-## Task 8: Remove dead regex code + update README
+## 任务 8：删除死代码 + 更新 README
 
-**Files:**
-- Modify: `src/resolution/frameworks/*.ts` — confirm no dangling `extractNodes` remains
-- Modify: `README.md` — add a section on framework route extraction
+**文件：**
+- 修改：`src/resolution/frameworks/*.ts` — 确认没有遗留的 `extractNodes`
+- 修改：`README.md` — 添加框架路由提取章节
 
-- [ ] **Step 1: grep for any lingering references**
+- [ ] **步骤 1：grep 检查残留引用**
 
-Run: `grep -rn "extractNodes" src/ __tests__/`
-Expected: zero matches. If any remain, delete or rename them.
+运行：`grep -rn "extractNodes" src/ __tests__/`
+预期结果：零匹配。如有残留，删除或重命名。
 
-- [ ] **Step 2: Run the full build and test**
+- [ ] **步骤 2：运行完整构建和测试**
 
-Run: `npm run build && npm test`
-Expected: Build succeeds; all tests pass.
+运行：`npm run build && npm test`
+预期结果：构建成功；所有测试通过。
 
-- [ ] **Step 3: Add a README section**
+- [ ] **步骤 3：添加 README 章节**
 
-Append to `README.md` after the features list:
+在 `README.md` 特性列表后追加：
 
 ```markdown
 ### Framework-aware Routes
@@ -1046,7 +1046,7 @@ Synapse recognizes web framework routing files and links URL patterns to their h
 Query `synapse_callers(YourView)` and the route pattern will appear as an incoming edge.
 ```
 
-- [ ] **Step 4: Commit**
+- [ ] **步骤 4：提交**
 
 ```bash
 git add README.md
@@ -1055,15 +1055,15 @@ git commit -m "docs: document framework route extraction"
 
 ---
 
-## Task 9: Open the PR
+## 任务 9：开 PR
 
-- [ ] **Step 1: Push branch to fork**
+- [ ] **步骤 1：推送分支到 fork**
 
 ```bash
 git push -u origin feat/framework-extract-wiring
 ```
 
-- [ ] **Step 2: Create PR**
+- [ ] **步骤 2：创建 PR**
 
 ```bash
 gh pr create \
@@ -1098,20 +1098,20 @@ EOF
 )"
 ```
 
-- [ ] **Step 3: Link PR in task tracker** (if one exists).
+- [ ] **步骤 3：在任务追踪器中链接 PR**（如果有的话）。
 
 ---
 
-## Self-Review Checklist
+## 自查清单
 
-- [ ] **Spec coverage:** each framework in the original codebase has a migration task. Django has the richest test coverage because it was the motivating case.
-- [ ] **No placeholders:** every task shows actual code. The "same pattern as Task X" phrasing in Task 6 is backed by full implementations in Tasks 3-5 as referents.
-- [ ] **Type consistency:** `FrameworkExtractionResult` is defined once in Task 1 and used by every resolver's `extract` signature.
-- [ ] **Realistic stats placeholders** (X/Y/Z) are filled in at PR time, not plan time.
+- [ ] **规范覆盖：** 原始代码库中每个框架都有迁移任务。Django 的测试覆盖最丰富，因为它是本次改动的动机案例。
+- [ ] **无占位符：** 每个任务都展示了实际代码。任务 6 中"与任务 X 相同的模式"措辞以任务 3-5 的完整实现为参照。
+- [ ] **类型一致性：** `FrameworkExtractionResult` 在任务 1 中定义一次，每个解析器的 `extract` 签名均使用该类型。
+- [ ] **统计占位符**（X/Y/Z）在 PR 创建时填入，而非计划阶段填入。
 
-## Known gaps (intentionally out of scope)
+## 已知缺口（刻意不在范围内）
 
-- **AST-based extraction.** Regex is good enough for the common shapes. Swap to tree-sitter AST in a follow-up.
-- **DRF router expansion.** `router.register(r'users', UserViewSet)` produces a single route node pointing at the viewset. Expanding to 6 CRUD action nodes can be a follow-up.
-- **React Router handler edges.** `<Route element={<Page/>}/>` currently only produces a route node. Follow-up can add `route -> Page` references.
-- **Spring Controller-class scoping.** Method-scoped mappings work; class-level `@RequestMapping` base path composition is a follow-up.
+- **基于 AST 的提取。** 正则对常见形式已足够。后续 PR 可换用 tree-sitter AST。
+- **DRF router 展开。** `router.register(r'users', UserViewSet)` 产生一个指向 viewset 的路由节点。展开为 6 个 CRUD 动作节点可作为后续 PR。
+- **React Router 处理器边。** `<Route element={<Page/>}/>` 目前仅产生路由节点。后续可添加 `route -> Page` 引用。
+- **Spring Controller 类级作用域。** 方法级映射已支持；类级 `@RequestMapping` 基路径组合作为后续 PR。
