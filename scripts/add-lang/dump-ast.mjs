@@ -1,7 +1,7 @@
-#!/usr/bin/env node
+﻿#!/usr/bin/env node
 // Dump the tree-sitter AST for a sample file so you can write a LanguageExtractor
 // mapping. Loads a grammar .wasm directly via web-tree-sitter (the same runtime
-// codegraph uses) — you do NOT need to register the language first.
+// synapse uses) — you do NOT need to register the language first.
 //
 // Usage:
 //   node scripts/add-lang/dump-ast.mjs <lang|wasm-path> <sample-file> [--depth=N] [--full]

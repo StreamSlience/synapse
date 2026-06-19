@@ -1,4 +1,4 @@
-/**
+﻿/**
  * node:sqlite backend (issue #238 follow-up).
  *
  * node:sqlite (Node's built-in real SQLite) is now the sole backend. This drives
@@ -12,7 +12,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import CodeGraph from '../src';
+import Synapse from '../src';
 
 let nodeSqliteAvailable = false;
 try {
@@ -25,7 +25,7 @@ try {
 
 describe.skipIf(!nodeSqliteAvailable)('node:sqlite backend — real index + queries', () => {
   let dir: string;
-  let cg: CodeGraph;
+  let cg: Synapse;
 
   beforeAll(async () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-nodesqlite-'));
@@ -34,7 +34,7 @@ describe.skipIf(!nodeSqliteAvailable)('node:sqlite backend — real index + quer
       path.join(dir, 'b.ts'),
       "import { helper } from './a';\nexport function main(): number { return helper(); }\n"
     );
-    cg = await CodeGraph.init(dir, { index: true });
+    cg = await Synapse.init(dir, { index: true });
   });
 
   afterAll(() => {

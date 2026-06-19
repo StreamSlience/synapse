@@ -1,4 +1,4 @@
-import type { NodeKind } from '../../src/types.js';
+﻿import type { NodeKind } from '../../src/types.js';
 
 export interface EvalTestCase {
   id: string;
@@ -25,7 +25,7 @@ export interface EvalResult {
 export interface EvalReport {
   timestamp: string;
   codebasePath: string;
-  codegraphSha: string;
+  synapseSha: string;
   summary: {
     total: number;
     passed: number;

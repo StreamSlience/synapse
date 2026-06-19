@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Extraction Orchestrator
  *
  * Coordinates file scanning, parsing, and database storage.
@@ -18,7 +18,7 @@ import {
 import { QueryBuilder } from '../db/queries';
 import { extractFromSource } from './tree-sitter';
 import { detectLanguage, isSourceFile, isLanguageSupported, isFileLevelOnlyLanguage, initGrammars, loadGrammarsForLanguages } from './grammars';
-import { isCodeGraphDataDir } from '../directory';
+import { isSynapseDataDir } from '../directory';
 import { logDebug, logWarn } from '../errors';
 import { validatePathWithinRoot, normalizePath } from '../utils';
 import ignore, { Ignore } from 'ignore';
@@ -102,7 +102,7 @@ const MAX_FILE_SIZE = 1024 * 1024;
 
 /**
  * Directory names that are dependency, build, cache, or tooling output across the
- * languages/frameworks CodeGraph supports — curated from the canonical
+ * languages/frameworks Synapse supports — curated from the canonical
  * github/gitignore templates. Excluded by default so the graph reflects your code,
  * not third-party noise, without requiring a `.gitignore` (issue #407). The
  * exclusion applies uniformly (git or not, tracked or not); the only opt-in is an
@@ -111,7 +111,7 @@ const MAX_FILE_SIZE = 1024 * 1024;
  * `Library`) are deliberately NOT listed, to avoid ever hiding real source.
  *
  * Only dirs that actually contain *indexable source* (or are enormous) earn a slot
- * — IDE/state dirs like `.idea`/`.vs` are omitted because CodeGraph indexes only
+ * — IDE/state dirs like `.idea`/`.vs` are omitted because Synapse indexes only
  * recognized source extensions, so they produce no symbols regardless.
  */
 const DEFAULT_IGNORE_DIRS: ReadonlySet<string> = new Set([
@@ -208,7 +208,7 @@ function readGitignorePatterns(giPath: string): string {
   // Fast path: one `.ignores()` call forces the library to compile EVERY rule,
   // so if it doesn't throw, the whole file is safe to use verbatim.
   try {
-    ignore().add(content).ignores('.codegraph-probe');
+    ignore().add(content).ignores('.synapse-probe');
     return content;
   } catch {
     // Fall through: a line is uncompilable — keep the good ones, drop the bad.
@@ -217,7 +217,7 @@ function readGitignorePatterns(giPath: string): string {
   let dropped = 0;
   for (const line of content.split(/\r?\n/)) {
     try {
-      ignore().add(line).ignores('.codegraph-probe');
+      ignore().add(line).ignores('.synapse-probe');
       kept.push(line);
     } catch {
       dropped++;
@@ -287,7 +287,7 @@ const EMBEDDED_REPO_SEARCH_ENTRIES = 2000;
  *   super-repo merely hides from git; index it (#193, #514).
  * - A `.git` **file** is a pointer (`gitdir: …`). A git **worktree** points into
  *   the host repo's own `.git/worktrees/<name>`, so it is a second working view
- *   of a repo CodeGraph already indexes — indexing it just duplicates the whole
+ *   of a repo Synapse already indexes — indexing it just duplicates the whole
  *   graph N times; skip it (#848). A **submodule** points into `.git/modules/`
  *   and is distinct code, so index it as before.
  *
@@ -317,7 +317,7 @@ function classifyGitDir(absDir: string): 'embedded' | 'worktree' | 'none' {
  * Find git repositories nested under `absDir` (inclusive), shallow bounded BFS.
  * Stops descending at each repo root found — contents belong to that repo's own
  * enumeration. Skips default-ignored dirs (`node_modules` can contain `.git`
- * from npm git-dependencies — that never makes it project code) and CodeGraph
+ * from npm git-dependencies — that never makes it project code) and Synapse
  * data dirs. Depth- and entry-capped so a huge ignored tree can't stall the scan.
  */
 function findNestedGitRepos(absDir: string, relPrefix: string): string[] {
@@ -350,7 +350,7 @@ function findNestedGitRepos(absDir: string, relPrefix: string): string[] {
     }
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      if (entry.name === '.git' || isCodeGraphDataDir(entry.name)) continue;
+      if (entry.name === '.git' || isSynapseDataDir(entry.name)) continue;
       const childRel = rel + entry.name + '/';
       if (defaults.ignores(childRel)) continue;
       queue.push({ abs: path.join(abs, entry.name), rel: childRel, depth: depth + 1 });
@@ -599,7 +599,7 @@ interface GitChanges {
  * `git status` inside each, so changes in a multi-repo workspace sync without
  * a full rescan. Deleting an ENTIRE embedded repo dir is the one case this
  * cannot see (the child status that would report the deletions is gone with
- * it); a full `codegraph index` reconciles that.
+ * it); a full `synapse index` reconciles that.
  */
 function getGitChangedFiles(rootDir: string): GitChanges | null {
   try {
@@ -787,9 +787,9 @@ function scanDirectoryWalk(
     }
 
     for (const entry of entries) {
-      // Never descend into git internals or any CodeGraph data directory
+      // Never descend into git internals or any Synapse data directory
       // (the active one or a sibling another environment created — #636).
-      if (entry.name === '.git' || isCodeGraphDataDir(entry.name)) continue;
+      if (entry.name === '.git' || isSynapseDataDir(entry.name)) continue;
 
       const fullPath = path.join(dir, entry.name);
       const relativePath = normalizePath(path.relative(rootDir, fullPath));

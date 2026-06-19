@@ -1,4 +1,4 @@
-/**
+﻿/**
  * `QueryBuilder.iterateNodesByKind` — the streaming scan that fixes the #610
  * OOM. The dynamic-edge synthesizers used to `getNodesByKind('function')` /
  * `('method')`, materializing every symbol into one array (gigabytes on a
@@ -11,11 +11,11 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import CodeGraph from '../src/index';
+import Synapse from '../src/index';
 
 describe('iterateNodesByKind (#610 streaming)', () => {
   let dir: string;
-  let cg: CodeGraph;
+  let cg: Synapse;
 
   beforeEach(async () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-iter-'));
@@ -26,7 +26,7 @@ describe('iterateNodesByKind (#610 streaming)', () => {
       'export function bar() { return 2; }\n' +
       'export class C { m() { return 3; } n() { return 4; } }\n'
     );
-    cg = CodeGraph.initSync(dir, { config: { include: ['**/*.ts'], exclude: [] } });
+    cg = Synapse.initSync(dir, { config: { include: ['**/*.ts'], exclude: [] } });
     await cg.indexAll();
   });
 

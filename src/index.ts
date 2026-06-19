@@ -1,5 +1,5 @@
-/**
- * CodeGraph
+﻿/**
+ * Synapse
  *
  * A local-first code intelligence system that builds a semantic
  * knowledge graph from any codebase.
@@ -48,29 +48,29 @@ import { ContextBuilder, createContextBuilder } from './context';
 import { Mutex, FileLock } from './utils';
 import { FileWatcher, WatchOptions, PendingFile, LockUnavailableError } from './sync';
 import { EXTRACTION_VERSION } from './extraction/extraction-version';
-import { getCodeGraphDir } from './directory';
+import { getSynapseDir } from './directory';
 import { deriveProjectNameTokens } from './search/query-utils';
-import { CodeGraphPackageVersion } from './mcp/version';
+import { SynapsePackageVersion } from './mcp/version';
 
 // Re-export types for consumers
 export * from './types';
 // Storage building blocks for embedded/SDK consumers that drive the graph
-// directly (open a DB, run prepared queries) rather than through the CodeGraph
+// directly (open a DB, run prepared queries) rather than through the Synapse
 // facade. Exposed from the package entry so they no longer require deep imports
 // into dist/ (issue #354).
 export { getDatabasePath, DatabaseConnection } from './db';
 export { QueryBuilder } from './db/queries';
 export {
-  getCodeGraphDir,
+  getSynapseDir,
   isInitialized,
-  findNearestCodeGraphRoot,
-  CODEGRAPH_DIR,
+  findNearestSynapseRoot,
+  SYNAPSE_DIR,
 } from './directory';
 export { IndexProgress, IndexResult, SyncResult } from './extraction';
 export { detectLanguage, isLanguageSupported, isGrammarLoaded, getSupportedLanguages, initGrammars, loadGrammarsForLanguages, loadAllGrammars } from './extraction';
 export { ResolutionResult } from './resolution';
 export {
-  CodeGraphError,
+  SynapseError,
   FileError,
   ParseError,
   DatabaseError,
@@ -88,7 +88,7 @@ export { FileWatcher, WatchOptions, PendingFile, LockUnavailableError } from './
 export { MCPServer } from './mcp';
 
 /**
- * Options for initializing a new CodeGraph project
+ * Options for initializing a new Synapse project
  */
 export interface InitOptions {
   /** Whether to run initial indexing after init */
@@ -99,7 +99,7 @@ export interface InitOptions {
 }
 
 /**
- * Options for opening an existing CodeGraph project
+ * Options for opening an existing Synapse project
  */
 export interface OpenOptions {
   /** Whether to run sync if files have changed */
@@ -124,11 +124,11 @@ export interface IndexOptions {
 }
 
 /**
- * Main CodeGraph class
+ * Main Synapse class
  *
  * Provides the primary interface for interacting with the code knowledge graph.
  */
-export class CodeGraph {
+export class Synapse {
   private db: DatabaseConnection;
   private queries: QueryBuilder;
   private projectRoot: string;
@@ -163,7 +163,7 @@ export class CodeGraph {
       // Best-effort: ranking still works without it.
     }
     this.fileLock = new FileLock(
-      path.join(getCodeGraphDir(projectRoot), 'codegraph.lock')
+      path.join(getSynapseDir(projectRoot), 'synapse.lock')
     );
     this.orchestrator = new ExtractionOrchestrator(projectRoot, queries);
     this.resolver = createResolver(projectRoot, queries);
@@ -181,21 +181,21 @@ export class CodeGraph {
   // ===========================================================================
 
   /**
-   * Initialize a new CodeGraph project
+   * Initialize a new Synapse project
    *
-   * Creates the .CodeGraph directory, database, and configuration.
+   * Creates the .synapse/ directory, database, and configuration.
    *
    * @param projectRoot - Path to the project root directory
    * @param options - Initialization options
-   * @returns A new CodeGraph instance
+   * @returns A new Synapse instance
    */
-  static async init(projectRoot: string, options: InitOptions = {}): Promise<CodeGraph> {
+  static async init(projectRoot: string, options: InitOptions = {}): Promise<Synapse> {
     await initGrammars();
     const resolvedRoot = path.resolve(projectRoot);
 
     // Check if already initialized
     if (isInitialized(resolvedRoot)) {
-      throw new Error(`CodeGraph already initialized in ${resolvedRoot}`);
+      throw new Error(`Synapse already initialized in ${resolvedRoot}`);
     }
 
     // Create directory structure
@@ -206,7 +206,7 @@ export class CodeGraph {
     const db = DatabaseConnection.initialize(dbPath);
     const queries = new QueryBuilder(db.getDb());
 
-    const instance = new CodeGraph(db, queries, resolvedRoot);
+    const instance = new Synapse(db, queries, resolvedRoot);
 
     // Run initial indexing if requested
     if (options.index) {
@@ -219,12 +219,12 @@ export class CodeGraph {
   /**
    * Initialize synchronously (without indexing)
    */
-  static initSync(projectRoot: string): CodeGraph {
+  static initSync(projectRoot: string): Synapse {
     const resolvedRoot = path.resolve(projectRoot);
 
     // Check if already initialized
     if (isInitialized(resolvedRoot)) {
-      throw new Error(`CodeGraph already initialized in ${resolvedRoot}`);
+      throw new Error(`Synapse already initialized in ${resolvedRoot}`);
     }
 
     // Create directory structure
@@ -235,29 +235,29 @@ export class CodeGraph {
     const db = DatabaseConnection.initialize(dbPath);
     const queries = new QueryBuilder(db.getDb());
 
-    return new CodeGraph(db, queries, resolvedRoot);
+    return new Synapse(db, queries, resolvedRoot);
   }
 
   /**
-   * Open an existing CodeGraph project
+   * Open an existing Synapse project
    *
    * @param projectRoot - Path to the project root directory
    * @param options - Open options
-   * @returns A CodeGraph instance
+   * @returns A Synapse instance
    */
-  static async open(projectRoot: string, options: OpenOptions = {}): Promise<CodeGraph> {
+  static async open(projectRoot: string, options: OpenOptions = {}): Promise<Synapse> {
     await initGrammars();
     const resolvedRoot = path.resolve(projectRoot);
 
     // Check if initialized
     if (!isInitialized(resolvedRoot)) {
-      throw new Error(`CodeGraph not initialized in ${resolvedRoot}. Run init() first.`);
+      throw new Error(`Synapse not initialized in ${resolvedRoot}. Run init() first.`);
     }
 
     // Validate directory structure
     const validation = validateDirectory(resolvedRoot);
     if (!validation.valid) {
-      throw new Error(`Invalid CodeGraph directory: ${validation.errors.join(', ')}`);
+      throw new Error(`Invalid Synapse directory: ${validation.errors.join(', ')}`);
     }
 
     // Open database
@@ -265,7 +265,7 @@ export class CodeGraph {
     const db = DatabaseConnection.open(dbPath);
     const queries = new QueryBuilder(db.getDb());
 
-    const instance = new CodeGraph(db, queries, resolvedRoot);
+    const instance = new Synapse(db, queries, resolvedRoot);
 
     // Sync if requested
     if (options.sync) {
@@ -278,18 +278,18 @@ export class CodeGraph {
   /**
    * Open synchronously (without sync)
    */
-  static openSync(projectRoot: string): CodeGraph {
+  static openSync(projectRoot: string): Synapse {
     const resolvedRoot = path.resolve(projectRoot);
 
     // Check if initialized
     if (!isInitialized(resolvedRoot)) {
-      throw new Error(`CodeGraph not initialized in ${resolvedRoot}. Run init() first.`);
+      throw new Error(`Synapse not initialized in ${resolvedRoot}. Run init() first.`);
     }
 
     // Validate directory structure
     const validation = validateDirectory(resolvedRoot);
     if (!validation.valid) {
-      throw new Error(`Invalid CodeGraph directory: ${validation.errors.join(', ')}`);
+      throw new Error(`Invalid Synapse directory: ${validation.errors.join(', ')}`);
     }
 
     // Open database
@@ -297,18 +297,18 @@ export class CodeGraph {
     const db = DatabaseConnection.open(dbPath);
     const queries = new QueryBuilder(db.getDb());
 
-    return new CodeGraph(db, queries, resolvedRoot);
+    return new Synapse(db, queries, resolvedRoot);
   }
 
   /**
-   * Check if a directory has been initialized as a CodeGraph project
+   * Check if a directory has been initialized as a Synapse project
    */
   static isInitialized(projectRoot: string): boolean {
     return isInitialized(path.resolve(projectRoot));
   }
 
   /**
-   * Close the CodeGraph instance and release resources
+   * Close the Synapse instance and release resources
    */
   close(): void {
     this.unwatch();
@@ -402,14 +402,14 @@ export class CodeGraph {
           result.edgesCreated = after.edges - before.edges;
         }
 
-        // Stamp the index with the engine that built it, so `codegraph status`
-        // and `codegraph upgrade` can recommend a re-index when the running
+        // Stamp the index with the engine that built it, so `synapse status`
+        // and `synapse upgrade` can recommend a re-index when the running
         // engine produces richer extraction than the one on disk. Only on a
         // real full index — a sync touches a subset, so it must NOT advance the
         // extraction stamp (the bulk would still be stale). See extraction-version.ts.
         if (result.success && result.filesIndexed > 0) {
           try {
-            this.queries.setMetadata('indexed_with_version', CodeGraphPackageVersion);
+            this.queries.setMetadata('indexed_with_version', SynapsePackageVersion);
             this.queries.setMetadata('indexed_with_extraction_version', String(EXTRACTION_VERSION));
           } catch { /* metadata is advisory — never fail an index over it */ }
         }
@@ -636,7 +636,7 @@ export class CodeGraph {
   /**
    * Most recent index timestamp (ms since epoch) across all tracked files, or
    * null when nothing is indexed yet. Lets library consumers check index
-   * freshness without shelling out to `codegraph status --json`. (#329)
+   * freshness without shelling out to `synapse status --json`. (#329)
    */
   getLastIndexedAt(): number | null {
     return this.queries.getLastIndexedAt();
@@ -659,8 +659,8 @@ export class CodeGraph {
    * True when the on-disk index was built by an engine whose extraction is
    * older than the one now running — i.e. a re-index would add data a migration
    * can't backfill. False when there's no index yet (nothing to refresh) or the
-   * stamp is current. This is the signal behind `codegraph status`'s re-index
-   * hint and `codegraph upgrade`'s reminder.
+   * stamp is current. This is the signal behind `synapse status`'s re-index
+   * hint and `synapse upgrade`'s reminder.
    */
   isIndexStale(): boolean {
     if (this.queries.getLastIndexedAt() == null) return false;
@@ -731,8 +731,8 @@ export class CodeGraph {
 
   /**
    * Active SQLite backend for this project's connection (`node-sqlite` — Node's
-   * built-in real-SQLite module). Surfaced via `codegraph status` and the
-   * `codegraph_status` MCP tool alongside the effective journal mode.
+   * built-in real-SQLite module). Surfaced via `synapse status` and the
+   * `synapse_status` MCP tool alongside the effective journal mode.
    */
   getBackend(): import('./db').SqliteBackend {
     return this.db.getBackend();
@@ -742,7 +742,7 @@ export class CodeGraph {
    * The journal mode actually in effect ('wal', 'delete', …). 'wal' means
    * readers never block on a concurrent writer; anything else means they can,
    * which is the precondition for the "database is locked" failures in issue
-   * #238. Surfaced via `codegraph status` and the `codegraph_status` MCP tool.
+   * #238. Surfaced via `synapse status` and the `synapse_status` MCP tool.
    */
   getJournalMode(): string {
     return this.db.getJournalMode();
@@ -804,9 +804,9 @@ export class CodeGraph {
    * Find the project's "primary route file" — the file with the densest
    * concentration of framework-emitted `route` nodes (≥3 routes, ≥30%
    * of all non-test routes). Used to inline the routing config in
-   * `codegraph_explore` responses on small realworld template repos
+   * `synapse_explore` responses on small realworld template repos
    * (rails-realworld, laravel-realworld, drupal-admintoolbar, …) where
-   * Glob+Read of `routes.rb`/`urls.py`/etc. otherwise beats codegraph.
+   * Glob+Read of `routes.rb`/`urls.py`/etc. otherwise beats synapse.
    */
   getTopRouteFile(): { filePath: string; routeCount: number; totalRoutes: number } | null {
     return this.queries.getTopRouteFile();
@@ -1142,10 +1142,10 @@ export class CodeGraph {
   }
 
   /**
-   * Completely remove CodeGraph from the project.
-   * This closes the database and deletes the .CodeGraph directory.
+   * Completely remove Synapse from the project.
+   * This closes the database and deletes the .synapse/ directory.
    *
-   * WARNING: This permanently deletes all CodeGraph data for the project.
+   * WARNING: This permanently deletes all Synapse data for the project.
    */
   uninitialize(): void {
     this.close();
@@ -1154,4 +1154,4 @@ export class CodeGraph {
 }
 
 // Default export
-export default CodeGraph;
+export default Synapse;

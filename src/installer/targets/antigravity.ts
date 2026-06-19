@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Google Antigravity IDE target. Antigravity is Google's VS Code-derived
  * multi-agent IDE; the Gemini CLI is in the process of consolidating with
  * it under a single agent platform. Antigravity reads MCP server
@@ -16,24 +16,24 @@
  *
  * We detect the marker at install time and write to the right path. On
  * uninstall we sweep BOTH — so a user who installed on the legacy path,
- * was then auto-migrated by Antigravity, and re-ran `codegraph install`
- * doesn't end up with stale codegraph entries in two files.
+ * was then auto-migrated by Antigravity, and re-ran `synapse install`
+ * doesn't end up with stale synapse entries in two files.
  *
  * ## Entry shape: no `type: stdio` field
  *
  * Antigravity rejects MCP entries that carry the `type: "stdio"` field
  * the rest of our targets use — the working entries it manages itself
  * (e.g. `code-review-graph`) omit it, and dropping it was load-bearing
- * to get codegraph to appear in the Customizations UI. We build the
+ * to get synapse to appear in the Customizations UI. We build the
  * entry locally instead of routing through `getMcpServerConfig()`.
  *
  * ## macOS GUI app PATH resolution
  *
  * Antigravity is a GUI Electron app. macOS gives Dock/Finder-launched
  * apps a stripped PATH (`/usr/bin:/bin:/usr/sbin:/sbin`) — nvm-managed
- * tools live outside that, so a bare `codegraph` command fails to spawn
- * even when `which codegraph` resolves in the user's shell. We resolve
- * `codegraph` to its absolute path on macOS at install time. (Linux GUI
+ * tools live outside that, so a bare `synapse` command fails to spawn
+ * even when `which synapse` resolves in the user's shell. We resolve
+ * `synapse` to its absolute path on macOS at install time. (Linux GUI
  * apps inherit user PATH; Windows uses `PATH` env directly — both are
  * fine with the bare command.)
  *
@@ -43,7 +43,7 @@
  * — written by the `./gemini.ts` target. We deliberately don't touch it
  * here so uninstalling Antigravity without uninstalling Gemini CLI
  * leaves CLI instructions intact. Users who install only Antigravity
- * still get a working MCP integration; the prefer-codegraph-over-grep
+ * still get a working MCP integration; the prefer-synapse-over-grep
  * guidance just won't be present unless they also install the gemini
  * target.
  *
@@ -103,9 +103,9 @@ function preferredMcpConfigPath(): string {
 }
 
 /**
- * Resolve the on-disk path of the `codegraph` binary so a Mac GUI app
+ * Resolve the on-disk path of the `synapse` binary so a Mac GUI app
  * launched from Dock/Finder (with a stripped PATH) can find it. Falls
- * back to the bare `codegraph` name when:
+ * back to the bare `synapse` name when:
  *
  *  - we're not on macOS (Linux GUI apps inherit user PATH; Windows
  *    uses env PATH directly), OR
@@ -117,10 +117,10 @@ function preferredMcpConfigPath(): string {
  * shell PATH at install time — that's the right PATH for finding
  * nvm-managed tools like ours.
  */
-function resolveCodegraphCommand(): string {
-  if (process.platform !== 'darwin') return 'codegraph';
+function resolveSynapseCommand(): string {
+  if (process.platform !== 'darwin') return 'synapse';
   try {
-    const resolved = execSync('command -v codegraph || which codegraph', {
+    const resolved = execSync('command -v synapse || which synapse', {
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'ignore'],
       shell: '/bin/bash',
@@ -130,18 +130,18 @@ function resolveCodegraphCommand(): string {
   } catch {
     /* fall through to bare name */
   }
-  return 'codegraph';
+  return 'synapse';
 }
 
 /**
- * Build the codegraph MCP-server entry for Antigravity. Distinct from
+ * Build the synapse MCP-server entry for Antigravity. Distinct from
  * `getMcpServerConfig()` because Antigravity (a) rejects the `type`
  * field and (b) needs an absolute command path on macOS — see file
  * header.
  */
 function buildAntigravityEntry(): { command: string; args: string[] } {
   return {
-    command: resolveCodegraphCommand(),
+    command: resolveSynapseCommand(),
     args: ['serve', '--mcp'],
   };
 }
@@ -161,7 +161,7 @@ class AntigravityTarget implements AgentTarget {
     }
     const file = preferredMcpConfigPath();
     const config = readJsonFile(file);
-    const alreadyConfigured = !!config.mcpServers?.codegraph;
+    const alreadyConfigured = !!config.mcpServers?.synapse;
     // "Installed" heuristic: either the unified config dir, the legacy
     // config dir, or one of the config files exists. Antigravity creates
     // ~/.gemini/ on first launch even before MCP configs.
@@ -183,7 +183,7 @@ class AntigravityTarget implements AgentTarget {
     files.push(writeMcpEntry());
     // If the user originally installed on the legacy path and Antigravity
     // has since migrated, strip the stale legacy entry so they don't
-    // wind up with two competing codegraph configs.
+    // wind up with two competing synapse configs.
     const legacyCleanup = cleanupLegacyEntry();
     if (legacyCleanup) files.push(legacyCleanup);
     return {
@@ -198,16 +198,16 @@ class AntigravityTarget implements AgentTarget {
 
     // Remove from the preferred path.
     const preferred = preferredMcpConfigPath();
-    files.push(removeCodegraphFromFile(preferred));
+    files.push(removeSynapseFromFile(preferred));
 
     // Also sweep the OTHER path (legacy when preferred is unified, and
-    // vice versa) — handles the migration-half-state case where codegraph
+    // vice versa) — handles the migration-half-state case where synapse
     // got written to one file but Antigravity now reads from the other.
     const other = preferred === unifiedMcpConfigPath()
       ? legacyMcpConfigPath()
       : unifiedMcpConfigPath();
     if (preferred !== other) {
-      const otherResult = removeCodegraphFromFile(other);
+      const otherResult = removeSynapseFromFile(other);
       // Only surface the secondary file if we actually touched it —
       // a `not-found` on a file the user never had is noise.
       if (otherResult.action === 'removed') files.push(otherResult);
@@ -221,7 +221,7 @@ class AntigravityTarget implements AgentTarget {
       return '# Antigravity IDE has no project-local config — use --location=global.\n';
     }
     const file = preferredMcpConfigPath();
-    const snippet = JSON.stringify({ mcpServers: { codegraph: buildAntigravityEntry() } }, null, 2);
+    const snippet = JSON.stringify({ mcpServers: { synapse: buildAntigravityEntry() } }, null, 2);
     return `# Add to ${file}\n\n${snippet}\n`;
   }
 
@@ -237,7 +237,7 @@ function writeMcpEntry(): WriteResult['files'][number] {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
   const existing = readJsonFile(file);
-  const before = existing.mcpServers?.codegraph;
+  const before = existing.mcpServers?.synapse;
   const after = buildAntigravityEntry();
 
   if (jsonDeepEqual(before, after)) {
@@ -246,15 +246,15 @@ function writeMcpEntry(): WriteResult['files'][number] {
   const action: 'created' | 'updated' =
     before ? 'updated' : (fs.existsSync(file) ? 'updated' : 'created');
   if (!existing.mcpServers) existing.mcpServers = {};
-  existing.mcpServers.codegraph = after;
+  existing.mcpServers.synapse = after;
   writeJsonFile(file, existing);
   return { path: file, action };
 }
 
 /**
- * Strip the codegraph entry from the legacy `~/.gemini/antigravity/mcp_config.json`
+ * Strip the synapse entry from the legacy `~/.gemini/antigravity/mcp_config.json`
  * if it's present AND we're writing to the unified path. Used by install
- * to migrate users who had codegraph configured on the legacy path
+ * to migrate users who had synapse configured on the legacy path
  * before Antigravity migrated their config. Returns the file action for
  * reporting, or `null` when there's nothing to clean up.
  */
@@ -263,8 +263,8 @@ function cleanupLegacyEntry(): WriteResult['files'][number] | null {
   const legacy = legacyMcpConfigPath();
   if (!fs.existsSync(legacy)) return null;
   const config = readJsonFile(legacy);
-  if (!config.mcpServers?.codegraph) return null;
-  delete config.mcpServers.codegraph;
+  if (!config.mcpServers?.synapse) return null;
+  delete config.mcpServers.synapse;
   if (Object.keys(config.mcpServers).length === 0) {
     delete config.mcpServers;
   }
@@ -272,11 +272,11 @@ function cleanupLegacyEntry(): WriteResult['files'][number] | null {
   return { path: legacy, action: 'removed' };
 }
 
-function removeCodegraphFromFile(file: string): WriteResult['files'][number] {
+function removeSynapseFromFile(file: string): WriteResult['files'][number] {
   if (!fs.existsSync(file)) return { path: file, action: 'not-found' };
   const config = readJsonFile(file);
-  if (!config.mcpServers?.codegraph) return { path: file, action: 'not-found' };
-  delete config.mcpServers.codegraph;
+  if (!config.mcpServers?.synapse) return { path: file, action: 'not-found' };
+  delete config.mcpServers.synapse;
   if (Object.keys(config.mcpServers).length === 0) {
     delete config.mcpServers;
   }

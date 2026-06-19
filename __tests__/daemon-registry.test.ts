@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+﻿import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -22,7 +22,7 @@ async function deadPid(): Promise<number> {
 }
 
 function rec(root: string, pid: number, startedAt = Date.now()): DaemonRecord {
-  return { root, pid, version: '1.0.0', socketPath: `${root}/.codegraph/daemon.sock`, startedAt };
+  return { root, pid, version: '1.0.0', socketPath: `${root}/.synapse/daemon.sock`, startedAt };
 }
 
 describe('daemon-registry', () => {
@@ -37,7 +37,7 @@ describe('daemon-registry', () => {
     process.env.HOME = tmpHome; // os.homedir() honors HOME (POSIX) ...
     process.env.USERPROFILE = tmpHome; // ... and USERPROFILE (Windows)
     // Sanity: the registry must resolve under our temp home, or the test would
-    // pollute the real ~/.codegraph.
+    // pollute the real ~/.synapse.
     expect(getRegistryDir().startsWith(tmpHome)).toBe(true);
   });
 

@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeAll, afterEach } from 'vitest';
+﻿import { describe, it, expect, beforeAll, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { CodeGraph } from '../src';
+import { Synapse } from '../src';
 import { initGrammars, loadAllGrammars } from '../src/extraction/grammars';
 
 beforeAll(async () => {
@@ -34,7 +34,7 @@ describe('Django end-to-end framework extraction', () => {
         'urlpatterns = [path("users/", UserListView.as_view(), name="user-list")]\n'
     );
 
-    const cg = CodeGraph.initSync(tmpDir);
+    const cg = Synapse.initSync(tmpDir);
     await cg.indexAll();
 
     // Route node exists
@@ -81,7 +81,7 @@ describe('Flask end-to-end framework extraction', () => {
         '    return render_template("index.html")\n'
     );
 
-    const cg = CodeGraph.initSync(tmpDir);
+    const cg = Synapse.initSync(tmpDir);
     await cg.indexAll();
 
     // Both stacked @bp.route decorators are extracted (the second was previously
@@ -135,7 +135,7 @@ describe('Flutter end-to-end — setState→build synthesis', () => {
         '}\n'
     );
 
-    const cg = CodeGraph.initSync(tmpDir);
+    const cg = Synapse.initSync(tmpDir);
     await cg.indexAll();
 
     const methods = cg.getNodesByKind('method');
@@ -163,7 +163,7 @@ describe('C++ end-to-end — virtual override synthesis', () => {
 
   it('resolves callers through typed object pointers', async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-cpp-'));
-    let cg: CodeGraph | undefined;
+    let cg: Synapse | undefined;
     try {
       fs.writeFileSync(
         path.join(tmpDir, 'detect.hpp'),
@@ -187,7 +187,7 @@ describe('C++ end-to-end — virtual override synthesis', () => {
           'int CDetect::Processing() { return 0; }\n'
       );
 
-      cg = CodeGraph.initSync(tmpDir);
+      cg = Synapse.initSync(tmpDir);
       await cg.indexAll();
 
       const processing = cg
@@ -218,7 +218,7 @@ describe('C++ end-to-end — virtual override synthesis', () => {
     // anyway — but as soon as two classes share a method name (very common in
     // real C++), both calls go unresolved.
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-cpp-'));
-    let cg: CodeGraph | undefined;
+    let cg: Synapse | undefined;
     try {
       fs.writeFileSync(
         path.join(tmpDir, 'detect.hpp'),
@@ -241,7 +241,7 @@ describe('C++ end-to-end — virtual override synthesis', () => {
           'int CWidget::Processing() { return 0; }\n'
       );
 
-      cg = CodeGraph.initSync(tmpDir);
+      cg = Synapse.initSync(tmpDir);
       await cg.indexAll();
 
       const detectProc = cg
@@ -281,7 +281,7 @@ describe('C++ end-to-end — virtual override synthesis', () => {
         '};\n'
     );
 
-    const cg = CodeGraph.initSync(tmpDir);
+    const cg = Synapse.initSync(tmpDir);
     await cg.indexAll();
 
     // Two methods named Next: the base virtual (lower line) and the override.
@@ -364,7 +364,7 @@ describe('Java end-to-end — field-injected bean trace (issue #389)', () => {
         '}\n'
     );
 
-    const cg = CodeGraph.initSync(tmpDir);
+    const cg = Synapse.initSync(tmpDir);
     await cg.indexAll();
 
     const methods = cg.getNodesByKind('method');
@@ -430,7 +430,7 @@ describe('Java end-to-end — field-injected bean trace (issue #389)', () => {
         '</mapper>\n'
     );
 
-    const cg = CodeGraph.initSync(tmpDir);
+    const cg = Synapse.initSync(tmpDir);
     await cg.indexAll();
 
     const methods = cg.getNodesByKind('method');
@@ -507,7 +507,7 @@ describe('Java end-to-end — field-injected bean trace (issue #389)', () => {
         'public class CacheProperties { private boolean enabled; }\n'
     );
 
-    const cg = CodeGraph.initSync(tmpDir);
+    const cg = Synapse.initSync(tmpDir);
     await cg.indexAll();
 
     // YAML/properties leaf keys: one constant node per dotted path.
@@ -571,7 +571,7 @@ describe('Java end-to-end — field-injected bean trace (issue #389)', () => {
       '<?xml version="1.0"?><Configuration><Loggers><Root level="info"/></Loggers></Configuration>\n'
     );
 
-    const cg = CodeGraph.initSync(tmpDir);
+    const cg = Synapse.initSync(tmpDir);
     await cg.indexAll();
     // No method nodes — non-mapper XML produces no symbols (just file rows).
     expect(cg.getNodesByKind('method').filter((n) => n.language === 'xml').length).toBe(0);
@@ -592,7 +592,7 @@ describe('Java end-to-end — field-injected bean trace (issue #389)', () => {
         '}\n'
     );
 
-    const cg = CodeGraph.initSync(tmpDir);
+    const cg = Synapse.initSync(tmpDir);
     await cg.indexAll();
 
     const methods = cg.getNodesByKind('method');
@@ -627,7 +627,7 @@ describe('JVM FQN imports — end-to-end', () => {
       'package com.example.app\n\nimport com.example.Bar\n\nclass App {\n  fun run() { Bar().greet() }\n}\n'
     );
 
-    const cg = CodeGraph.initSync(tmpDir);
+    const cg = Synapse.initSync(tmpDir);
     await cg.indexAll();
 
     const bar = cg.getNodesByKind('class').find((n) => n.qualifiedName === 'com.example::Bar');
@@ -658,7 +658,7 @@ describe('JVM FQN imports — end-to-end', () => {
       'package com.example.app\n\nimport com.example.util\n\nfun main() { util() }\n'
     );
 
-    const cg = CodeGraph.initSync(tmpDir);
+    const cg = Synapse.initSync(tmpDir);
     await cg.indexAll();
 
     const util = cg.getNodesByKind('function').find((n) => n.qualifiedName === 'com.example::util');
@@ -679,7 +679,7 @@ describe('JVM FQN imports — end-to-end', () => {
       'package com.example.app\n\nimport com.example.JavaBar\n\nfun main() { JavaBar().greet() }\n'
     );
 
-    const cg = CodeGraph.initSync(tmpDir);
+    const cg = Synapse.initSync(tmpDir);
     await cg.indexAll();
 
     const javaBar = cg.getNodesByKind('class').find((n) => n.qualifiedName === 'com.example::JavaBar');
@@ -711,7 +711,7 @@ describe('JVM FQN imports — end-to-end', () => {
       'package app\n\nimport com.example.beta.Bar\n\nfun b() { Bar().who() }\n'
     );
 
-    const cg = CodeGraph.initSync(tmpDir);
+    const cg = Synapse.initSync(tmpDir);
     await cg.indexAll();
 
     const alphaBar = cg.getNodesByKind('class').find((n) => n.qualifiedName === 'com.example.alpha::Bar');
@@ -767,7 +767,7 @@ describe('Java anonymous-class override synthesis — end-to-end', () => {
         '}\n'
     );
 
-    const cg = CodeGraph.initSync(tmpDir);
+    const cg = Synapse.initSync(tmpDir);
     await cg.indexAll();
 
     // The anon class is extracted and contains the override.
@@ -840,9 +840,9 @@ describe('Go gRPC stub→impl synthesis', () => {
         '}\n'
     );
 
-    let cg: CodeGraph | undefined;
+    let cg: Synapse | undefined;
     try {
-      cg = CodeGraph.initSync(tmpDir);
+      cg = Synapse.initSync(tmpDir);
       await cg.indexAll();
 
       const stubSend = cg
@@ -883,9 +883,9 @@ describe('Go gRPC stub→impl synthesis', () => {
         'func (m msgClient) MultiSend() {}\n'
     );
 
-    let cg: CodeGraph | undefined;
+    let cg: Synapse | undefined;
     try {
-      cg = CodeGraph.initSync(tmpDir);
+      cg = Synapse.initSync(tmpDir);
       await cg.indexAll();
 
       const stub = cg

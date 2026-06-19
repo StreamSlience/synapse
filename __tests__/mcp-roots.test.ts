@@ -1,11 +1,11 @@
-/**
+﻿/**
  * MCP project-resolution regression tests (issue #196).
  *
  * When an MCP client launches the server outside the project directory AND
  * doesn't pass a `rootUri`/`workspaceFolders` in `initialize`, the server used
  * to fall straight back to `process.cwd()` — which for many IDE clients is the
  * wrong directory. Every tool call without an explicit `projectPath` then
- * failed with a misleading "CodeGraph not initialized. Run 'codegraph init'."
+ * failed with a misleading "Synapse not initialized. Run 'synapse init'."
  *
  * The fix: when no explicit path is provided, the server asks the client for
  * its workspace root via the spec-blessed `roots/list` request (if the client
@@ -20,9 +20,9 @@ import { spawn, ChildProcessWithoutNullStreams } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { CodeGraph } from '../src';
+import { Synapse } from '../src';
 
-const BIN = path.resolve(__dirname, '../dist/bin/codegraph.js');
+const BIN = path.resolve(__dirname, '../dist/bin/synapse.js');
 
 function spawnServer(cwd: string): ChildProcessWithoutNullStreams {
   // --no-watch keeps the test deterministic and avoids watcher startup noise.
@@ -75,13 +75,13 @@ function send(child: ChildProcessWithoutNullStreams, msg: object): void {
 const CLIENT_INFO = { name: 'test', version: '0.0.0' };
 
 describe('MCP project resolution via roots/list (issue #196)', () => {
-  let cwdDir: string;     // where the server is launched — has NO .codegraph
+  let cwdDir: string;     // where the server is launched — has NO .synapse
   let projectDir: string; // the real indexed project the client reports
   let child: ChildProcessWithoutNullStreams | null = null;
 
   beforeEach(() => {
-    cwdDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-mcp-cwd-'));
-    projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-mcp-proj-'));
+    cwdDir = fs.mkdtempSync(path.join(os.tmpdir(), 'synapse-mcp-cwd-'));
+    projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'synapse-mcp-proj-'));
   });
 
   afterEach(() => {
@@ -94,7 +94,7 @@ describe('MCP project resolution via roots/list (issue #196)', () => {
   });
 
   it('resolves the project from the client roots/list when no rootUri is sent', async () => {
-    const cg = await CodeGraph.init(projectDir);
+    const cg = await Synapse.init(projectDir);
     cg.close();
 
     child = spawnServer(cwdDir);
@@ -109,7 +109,7 @@ describe('MCP project resolution via roots/list (issue #196)', () => {
     send(child, { jsonrpc: '2.0', method: 'notifications/initialized' });
 
     // First tool call (no projectPath) drives the server to ask us for roots.
-    send(child, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'codegraph_status', arguments: {} } });
+    send(child, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'synapse_status', arguments: {} } });
 
     const rootsReq = await waitForMessage(messages, (m) => m.method === 'roots/list', 5000);
     expect(typeof rootsReq.id).toBe('string'); // server-initiated id
@@ -121,8 +121,8 @@ describe('MCP project resolution via roots/list (issue #196)', () => {
     // The status call now succeeds against the resolved project.
     const resp = await waitForMessage(messages, (m) => m.id === 1, 8000);
     const text = resp.result.content[0].text as string;
-    expect(text).toContain('CodeGraph Status');
-    expect(text).not.toContain('No CodeGraph project is loaded');
+    expect(text).toContain('Synapse Status');
+    expect(text).not.toContain('No Synapse project is loaded');
   }, 20000);
 
   it('returns an actionable error when there is no rootUri and no roots capability', async () => {
@@ -136,11 +136,11 @@ describe('MCP project resolution via roots/list (issue #196)', () => {
     await waitForMessage(messages, (m) => m.id === 0 && !!m.result, 5000);
     send(child, { jsonrpc: '2.0', method: 'notifications/initialized' });
 
-    send(child, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'codegraph_status', arguments: {} } });
+    send(child, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'synapse_status', arguments: {} } });
     const resp = await waitForMessage(messages, (m) => m.id === 1, 8000);
     const text = resp.result.content[0].text as string;
 
-    expect(text).toContain('No CodeGraph project is loaded');
+    expect(text).toContain('No Synapse project is loaded');
     expect(text).toContain('projectPath');
     expect(text).toContain('--path');
     // Names the directory it actually searched (the wrong cwd) so the user can
@@ -151,7 +151,7 @@ describe('MCP project resolution via roots/list (issue #196)', () => {
   }, 20000);
 
   it('honors an explicit rootUri without asking the client for roots', async () => {
-    const cg = await CodeGraph.init(projectDir);
+    const cg = await Synapse.init(projectDir);
     cg.close();
 
     child = spawnServer(cwdDir);
@@ -169,11 +169,11 @@ describe('MCP project resolution via roots/list (issue #196)', () => {
     await waitForMessage(messages, (m) => m.id === 0 && !!m.result, 5000);
     send(child, { jsonrpc: '2.0', method: 'notifications/initialized' });
 
-    send(child, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'codegraph_status', arguments: {} } });
+    send(child, { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'synapse_status', arguments: {} } });
     const resp = await waitForMessage(messages, (m) => m.id === 1, 8000);
     const text = resp.result.content[0].text as string;
 
-    expect(text).toContain('CodeGraph Status');
+    expect(text).toContain('Synapse Status');
     // rootUri is a stronger signal than roots — we never needed to ask.
     expect(messages.some((m) => m.method === 'roots/list')).toBe(false);
   }, 20000);

@@ -1,5 +1,5 @@
-/**
- * codegraph_node FILE READ mode: a `file` with no `symbol` reads that file like
+﻿/**
+ * synapse_node FILE READ mode: a `file` with no `symbol` reads that file like
  * the Read tool — current source with `<n>\t<line>` numbering (byte-for-byte
  * Read's shape), narrowable with offset/limit — plus a one-line blast-radius
  * header. `symbolsOnly` returns the structural map instead. Config/data files
@@ -9,12 +9,12 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import CodeGraph from '../src/index';
+import Synapse from '../src/index';
 import { ToolHandler } from '../src/mcp/tools';
 
-describe('codegraph_node file-view (Read replacement)', () => {
+describe('synapse_node file-view (Read replacement)', () => {
   let dir: string;
-  let cg: CodeGraph;
+  let cg: Synapse;
   let h: ToolHandler;
 
   beforeEach(async () => {
@@ -42,7 +42,7 @@ describe('codegraph_node file-view (Read replacement)', () => {
         Array.from({ length: 2000 }, (_, i) => `  const v${i} = ${i};`).join('\n') +
         '\n  return 0;\n}\n',
     );
-    cg = CodeGraph.initSync(dir, { config: { include: ['**/*.ts', '**/*.properties'], exclude: [] } });
+    cg = Synapse.initSync(dir, { config: { include: ['**/*.ts', '**/*.properties'], exclude: [] } });
     await cg.indexAll();
     h = new ToolHandler(cg);
   });
@@ -53,7 +53,7 @@ describe('codegraph_node file-view (Read replacement)', () => {
   });
 
   const text = async (args: Record<string, unknown>): Promise<string> =>
-    (await h.execute('codegraph_node', args)).content.map((c) => c.text).join('\n');
+    (await h.execute('synapse_node', args)).content.map((c) => c.text).join('\n');
 
   it('reads a whole file like Read by default — `<n>\\t<line>` lines (no pad), imports + gaps included', async () => {
     const out = await text({ file: 'b.ts' }); // no includeCode needed — content is the default

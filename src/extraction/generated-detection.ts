@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Generated-file detection for symbol-disambiguation down-ranking.
  *
  * When a query like "Send" matches 17 symbols across protobuf scaffolding,
@@ -9,7 +9,7 @@
  * have no body to trace from, so the agent ends up reading source anyway.
  *
  * This helper is a pure path-based classifier consulted at disambiguation
- * time (findSymbol / findAllSymbols / codegraph_search formatting), NOT
+ * time (findSymbol / findAllSymbols / synapse_search formatting), NOT
  * a hard filter — generated nodes are still in the graph and remain
  * reachable; they just rank LAST when there's a real implementation
  * with the same name.

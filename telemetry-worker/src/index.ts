@@ -1,7 +1,7 @@
-/**
- * codegraph telemetry ingest — telemetry.getcodegraph.com
+﻿/**
+ * synapse telemetry ingest — telemetry.getsynapse.com
  *
- * This file is public on purpose: it is the exact code that receives codegraph's
+ * This file is public on purpose: it is the exact code that receives synapse's
  * anonymous usage telemetry, so anyone can audit what is (and is not) stored.
  * The schema contract lives in docs/design/telemetry.md.
  *
@@ -20,14 +20,14 @@ const TOKEN_RE = /^[A-Za-z0-9_.:+-]+$/;
 // Human-ish labels: MCP clientInfo names like "Claude Code", "cursor-vscode/1.2".
 const LABEL_RE = /^[A-Za-z0-9_.:+/ @()-]+$/;
 
-const INFO_TEXT = `codegraph anonymous-telemetry ingest.
+const INFO_TEXT = `synapse anonymous-telemetry ingest.
 
 What gets collected (and what never does) is documented field-by-field:
-https://github.com/colbymchenry/codegraph/blob/main/docs/design/telemetry.md
+https://github.com/colbymchenry/synapse/blob/main/docs/design/telemetry.md
 This endpoint's full source:
-https://github.com/colbymchenry/codegraph/tree/main/telemetry-worker
+https://github.com/colbymchenry/synapse/tree/main/telemetry-worker
 
-Disable any time: codegraph telemetry off  |  CODEGRAPH_TELEMETRY=0  |  DO_NOT_TRACK=1
+Disable any time: synapse telemetry off  |  SYNAPSE_TELEMETRY=0  |  DO_NOT_TRACK=1
 `;
 
 type JsonObject = Record<string, unknown>;
@@ -105,7 +105,7 @@ const EVENTS: Record<string, { required: readonly string[]; props: Record<string
 
 /** Envelope fields shared by every event in a batch (sanitized, all optional). */
 const ENVELOPE_PROPS: Record<string, Sanitize> = {
-  codegraph_version: token(32),
+  synapse_version: token(32),
   os: token(16),
   arch: token(16),
   node_major: nonNegInt(99),
@@ -156,7 +156,7 @@ function sanitizeEvent(raw: unknown, machineId: string, common: JsonObject): Pos
       // Anonymous events: no person profiles, no geo enrichment.
       $process_person_profile: false,
       $geoip_disable: true,
-      $lib: 'codegraph-telemetry-worker',
+      $lib: 'synapse-telemetry-worker',
     },
   };
   const ts = clampTimestamp(e.ts);

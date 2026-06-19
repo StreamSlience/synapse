@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Last-resort handlers for uncaught exceptions and unhandled rejections.
  *
  * Reaching one of these means a fault escaped every boundary (per-request
@@ -82,12 +82,12 @@ export function installFatalHandlers(deps: FatalHandlerDeps = {}): void {
   const write = deps.write ?? writeStderr;
 
   target.on('uncaughtException', (error: unknown) => {
-    write(`[CodeGraph] Uncaught exception: ${describeFatal(error)}\n`);
+    write(`[Synapse] Uncaught exception: ${describeFatal(error)}\n`);
     exit(1);
   });
 
   target.on('unhandledRejection', (reason: unknown) => {
-    write(`[CodeGraph] Unhandled rejection: ${describeFatal(reason)}\n`);
+    write(`[Synapse] Unhandled rejection: ${describeFatal(reason)}\n`);
     exit(1);
   });
 }
