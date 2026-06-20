@@ -1,219 +1,144 @@
-﻿---
+---
 name: add-lang
-description: Add tree-sitter language support to synapse end-to-end — wire the grammar + extractor, write tests, then benchmark extraction quality and retrieval value on 3 popular real-world repos. Use when the user runs /add-lang <language> or asks to add/support a new language (e.g. Lua, Elixir, Zig, OCaml) in synapse.
+description: 端到端地为 synapse 添加 tree-sitter 语言支持——接入语法 + 提取器、编写测试，然后在 3 个热门真实仓库上对提取质量和检索价值进行基准测试。当用户运行 /add-lang <language> 或要求在 synapse 中添加/支持新语言（如 Lua、Elixir、Zig、OCaml）时使用。
 ---
 
-# Add a language to Synapse
+# 向 Synapse 添加一门语言
 
-Wire a new tree-sitter language into synapse's extraction pipeline, prove it
-extracts real symbols on popular repos, and prove it beats no-synapse for an
-agent. Runs **fully autonomously** — pick repos, benchmark, update docs, then
-report. **Never commit, push, publish, or tag** (house rule); leave all changes
-for the user to review.
+将新的 tree-sitter 语言接入 synapse 的提取流水线，证明它能在热门仓库上提取真实符号，并证明它优于不使用 synapse 的方案。**全程自主运行**——自行选择仓库、执行基准测试、更新文档，然后汇报结果。**绝不提交、推送、发布或打标签**（团队规范）；所有变更留给用户审查。
 
-The argument is the language token used throughout the `Language` union, e.g.
-`lua`, `elixir`, `zig`. If none was given, ask which language. Use the lowercase
-single-token form everywhere (`csharp`, not `c#`).
+参数是贯穿 `Language` 联合类型的语言 token，例如 `lua`、`elixir`、`zig`。如果未提供，请询问使用哪种语言。全程使用小写单 token 形式（`csharp`，而非 `c#`）。
 
-## Prerequisites
-- Run from the synapse repo root. `node`, `git`, `gh`, and a logged-in
-  `claude` CLI (the benchmark spawns real `claude -p` runs).
-- The benchmark uses the local dev build — Step 8 builds + links it on PATH.
+## 前置条件
+- 在 synapse 仓库根目录下运行。需要 `node`、`git`、`gh` 以及已登录的 `claude` CLI（基准测试会派生真实的 `claude -p` 运行）。
+- 基准测试使用本地开发构建——第 8 步会构建并将其链接到 PATH。
 
-## Workflow
+## 工作流程
 
-Copy this checklist and work through it in order:
+复制此检查清单并按顺序完成：
 ```
-- [ ] 1. Resolve language; bail early if already supported (just benchmark)
-- [ ] 2. Find a grammar + health-check it (ABI / heap corruption)
-- [ ] 3. Discover the grammar's AST node types (dump-ast.mjs)
-- [ ] 4. Wire the language (4 files; sometimes a 5th core touch)
-- [ ] 5. Build + verify-extraction loop until PASS
-- [ ] 6. Add extraction tests; make them green
-- [ ] 7. Auto-pick 3 popular repos by size tier; add to corpus.json
-- [ ] 8. Benchmark all 3: extraction + with/without A/B
-- [ ] 9. Update README + CHANGELOG
-- [ ] 10. Report; do NOT commit
+- [ ] 1. 确认语言；若已支持则直接跳到基准测试
+- [ ] 2. 寻找语法并进行健康检查（ABI / 堆损坏）
+- [ ] 3. 探索语法的 AST 节点类型（dump-ast.mjs）
+- [ ] 4. 接入语言（4 个文件；有时需要额外修改核心文件）
+- [ ] 5. 构建 + 验证提取循环，直到 PASS
+- [ ] 6. 添加提取测试；使其通过
+- [ ] 7. 自动选取 3 个热门仓库（按规模分级）；添加到 corpus.json
+- [ ] 8. 对 3 个仓库进行基准测试：提取 + 有无 synapse 的 A/B 对比
+- [ ] 9. 更新 README + CHANGELOG
+- [ ] 10. 汇报结果；不要提交
 ```
 
-### Step 1 — Resolve + short-circuit
+### 第 1 步 — 确认语言并短路
 
-Check whether the language is already wired: look for the token in the
-`LANGUAGES` const (`src/types.ts`) and the `EXTRACTORS` map
-(`src/extraction/languages/index.ts`). If it is already supported (e.g.
-`typescript`, `rust`), **skip Steps 2–6** and go straight to benchmarking
-(Steps 7–8) to validate/measure it — note in the report that no code changed.
+检查该语言是否已接入：在 `LANGUAGES` 常量（`src/types.ts`）和 `EXTRACTORS` 映射（`src/extraction/languages/index.ts`）中查找该 token。如果已支持（如 `typescript`、`rust`），**跳过第 2–6 步**，直接进行基准测试（第 7–8 步）以验证/测量——在报告中注明代码未作修改。
 
-### Step 2 — Find a grammar, then health-check it
+### 第 2 步 — 寻找语法并进行健康检查
 
 ```bash
 ls node_modules/tree-sitter-wasms/out/ | grep -i <lang>   # csharp -> c_sharp
 ```
-- **Present** → likely off-the-shelf; `grammars.ts` resolves it from
-  `tree-sitter-wasms` automatically. (Many languages: elixir, zig, ocaml,
-  solidity, toml, yaml, …)
-- **Absent** → vendor a `.wasm` into `src/extraction/wasm/` (like `pascal` /
-  `scala` / `lua`) and add the token to the vendored branch in Step 4.
+- **存在** → 很可能是开箱即用的；`grammars.ts` 会自动从 `tree-sitter-wasms` 中解析它（许多语言都如此：elixir、zig、ocaml、solidity、toml、yaml……）。
+- **不存在** → 将 `.wasm` 文件放入 `src/extraction/wasm/`（如 `pascal`/`scala`/`lua`），并在第 4 步中将该 token 加入 vendored 分支。
 
-**Always health-check before writing an extractor — a *present* grammar can
-still be unusable:**
+**在编写提取器之前务必进行健康检查——存在的语法仍可能不可用：**
 ```bash
 node scripts/add-lang/check-grammar.mjs <lang> path/to/valid-sample.<ext>
 ```
-It prints the grammar's ABI version and parses a valid sample many times in a
-multi-grammar runtime. If it **FAILs** (ERROR trees on valid code — an old ABI
-corrupting the shared WASM heap, which silently drops nested calls/imports on
-every file after the first; e.g. the tree-sitter-wasms **Lua** grammar is ABI 13
-and fails), do NOT use that wasm. **Vendor a newer (ABI 14/15) build instead:**
+该脚本会打印语法的 ABI 版本，并在多语法运行时中多次解析一个有效的样本文件。如果**失败**（对有效代码产生 ERROR 树——旧版 ABI 损坏了共享的 WASM 堆，会在第一个文件之后悄悄丢弃嵌套的调用/导入；例如 tree-sitter-wasms 的 **Lua** 语法是 ABI 13 并会失败），则不要使用该 wasm。**改为 vendor 一个更新的（ABI 14/15）构建：**
 ```bash
-npm pack @tree-sitter-grammars/tree-sitter-<lang>   # often ships a prebuilt *.wasm
-# or build one: npx tree-sitter build --wasm   (needs Docker/emscripten)
+npm pack @tree-sitter-grammars/tree-sitter-<lang>   # 通常附带预构建的 *.wasm
+# 或自行构建：npx tree-sitter build --wasm   （需要 Docker/emscripten）
 cp <the>.wasm src/extraction/wasm/tree-sitter-<lang>.wasm
 ```
-then add the token to the vendored branch in Step 4 and re-run check-grammar on
-the vendored path until it PASSes. **If you cannot obtain a healthy wasm, STOP
-and tell the user.**
+然后在第 4 步中将该 token 加入 vendored 分支，并对 vendored 路径重新运行 check-grammar，直到通过。**如果无法获得健康的 wasm，停止并告知用户。**
 
-### Step 3 — Discover AST node types
+### 第 3 步 — 探索 AST 节点类型
 
-Get a representative source file (write a small sample covering functions,
-classes/structs, imports, enums; or `curl` a raw file from a known repo), then:
+获取一个具有代表性的源文件（编写一个涵盖函数、类/结构体、导入、枚举的小样本；或从已知仓库 `curl` 一个原始文件），然后：
 ```bash
 node scripts/add-lang/dump-ast.mjs <lang> path/to/sample.<ext>
-# vendored grammar: pass the wasm path instead of the token
+# vendored 语法：传入 wasm 路径而非 token
 node scripts/add-lang/dump-ast.mjs src/extraction/wasm/tree-sitter-<lang>.wasm sample.<ext>
 ```
-The frequency table + field names (`name:`, `parameters:`, `body:`,
-`return_type:`) tell you what to map. Open the existing extractor closest to the
-language's paradigm as a model: `rust.ts`/`scala.ts` (functional, traits),
-`java.ts`/`csharp.ts` (OO), `python.ts`/`ruby.ts` (scripting), `go.ts`
-(top-level methods + receivers).
+频率表 + 字段名（`name:`、`parameters:`、`body:`、`return_type:`）会告诉你需要映射哪些内容。参考与该语言范式最接近的现有提取器作为模板：`rust.ts`/`scala.ts`（函数式、trait）、`java.ts`/`csharp.ts`（OO）、`python.ts`/`ruby.ts`（脚本）、`go.ts`（顶层方法 + receiver）。
 
-### Step 4 — Wire the language (4 files)
+### 第 4 步 — 接入语言（4 个文件）
 
-These are exact, fragile wiring — match the existing style precisely:
+这些是精确且易碎的接入操作——严格匹配现有风格：
 
-1. **`src/types.ts`** — TWO edits:
-   - add `'<lang>',` to the `LANGUAGES` const (before `'unknown'`);
-   - add `'**/*.<ext>',` to `DEFAULT_CONFIG.include`. **Don't skip this** — it's
-     the file-scan allowlist; without the glob, `synapse init` finds **0
-     files** even though detection/extraction are wired.
-2. **`src/extraction/grammars.ts`** — three maps:
-   - `WASM_GRAMMAR_FILES`: `<lang>: 'tree-sitter-<lang>.wasm',`
-   - `EXTENSION_MAP`: each file extension → `'<lang>'` (e.g. `'.lua': 'lua',`)
-   - `getLanguageDisplayName`: `<lang>: '<Display Name>',`
-   - **vendored only**: add `<lang>` to the
-     `(lang === 'pascal' || lang === 'scala' || …)` wasm-path branch.
-3. **`src/extraction/languages/<lang>.ts`** — new file exporting
-   `export const <lang>Extractor: LanguageExtractor = { … }`. Map the node types
-   from Step 3. Required fields: `functionTypes`, `classTypes`, `methodTypes`,
-   `interfaceTypes`, `structTypes`, `enumTypes`, `typeAliasTypes`,
-   `importTypes`, `callTypes`, `variableTypes`, `nameField`, `bodyField`,
-   `paramsField`. Add hooks as the grammar needs them (`getSignature`,
-   `getVisibility`, `isExported`, `extractImport`, `visitNode`, `getReceiverType`,
-   `interfaceKind`, `enumMemberTypes`, etc. — see
-   `src/extraction/tree-sitter-types.ts`).
-4. **`src/extraction/languages/index.ts`** — `import { <lang>Extractor } from
-   './<lang>';` and add `<lang>: <lang>Extractor,` to `EXTRACTORS`.
+1. **`src/types.ts`** — 两处修改：
+   - 在 `LANGUAGES` 常量中添加 `'<lang>',`（放在 `'unknown'` 之前）；
+   - 在 `DEFAULT_CONFIG.include` 中添加 `'**/*.<ext>',`。**不要跳过**——这是文件扫描白名单；没有该 glob，即使检测/提取已接入，`synapse init` 也会找到 **0 个文件**。
+2. **`src/extraction/grammars.ts`** — 三个映射：
+   - `WASM_GRAMMAR_FILES`：`<lang>: 'tree-sitter-<lang>.wasm',`
+   - `EXTENSION_MAP`：每个文件扩展名 → `'<lang>'`（例如 `'.lua': 'lua',`）
+   - `getLanguageDisplayName`：`<lang>: '<Display Name>',`
+   - **仅 vendored**：将 `<lang>` 添加到 `(lang === 'pascal' || lang === 'scala' || …)` 的 wasm 路径分支中。
+3. **`src/extraction/languages/<lang>.ts`** — 新文件，导出 `export const <lang>Extractor: LanguageExtractor = { … }`。映射第 3 步中发现的节点类型。必填字段：`functionTypes`、`classTypes`、`methodTypes`、`interfaceTypes`、`structTypes`、`enumTypes`、`typeAliasTypes`、`importTypes`、`callTypes`、`variableTypes`、`nameField`、`bodyField`、`paramsField`。根据语法需要添加钩子（`getSignature`、`getVisibility`、`isExported`、`extractImport`、`visitNode`、`getReceiverType`、`interfaceKind`、`enumMemberTypes` 等——见 `src/extraction/tree-sitter-types.ts`）。
+4. **`src/extraction/languages/index.ts`** — `import { <lang>Extractor } from './<lang>';` 并在 `EXTRACTORS` 中添加 `<lang>: <lang>Extractor,`。
 
-**Sometimes a 5th, core touch in `src/extraction/tree-sitter.ts`** — variable
-extraction has per-language branches in `extractVariable` (the generic fallback
-only finds direct `identifier`/`variable_declarator` children). If the grammar
-nests declared names (e.g. Lua's `variable_declaration → variable_list`), add a
-`} else if (this.language === '<lang>')` branch there, mirroring the existing
-ts/python/go ones. Import forms that aren't a distinct node (Lua/Ruby `require`
-is a *call*) are handled in the extractor's `visitNode` hook instead.
+**有时需要对 `src/extraction/tree-sitter.ts` 进行第 5 处核心修改**——变量提取在 `extractVariable` 中有按语言分支的逻辑（通用回退只能找到直接的 `identifier`/`variable_declarator` 子节点）。如果语法中声明的名称有嵌套结构（例如 Lua 的 `variable_declaration → variable_list`），在那里添加一个 `} else if (this.language === '<lang>')` 分支，参照现有的 ts/python/go 分支。不是独立节点的导入形式（Lua/Ruby 的 `require` 是一个*调用*）则在提取器的 `visitNode` 钩子中处理。
 
-### Step 5 — Build + verify loop
+### 第 5 步 — 构建 + 验证循环
 
 ```bash
-npm run build            # tsc + copy-assets (copies any vendored *.wasm into dist/)
+npm run build            # tsc + copy-assets（将所有 vendored *.wasm 复制到 dist/）
 ```
-Index a small sample repo and check extraction:
+对一个小型样本仓库建立索引并检查提取结果：
 ```bash
 ( cd <sample-repo> && synapse init -i )
 node scripts/add-lang/verify-extraction.mjs <sample-repo> <lang>
 ```
-`verify-extraction.mjs` fails (exit 1) if the language isn't detected or only
-`file`/`import` nodes were produced — the classic symptom of wrong node-type
-names. On FAIL or a thin WARN: re-run `dump-ast.mjs` on a richer file, fix the
-mappings in `<lang>.ts`, `npm run build`, re-index, re-verify. **Repeat until
-PASS.**
+如果语言未被检测到，或只生成了 `file`/`import` 节点——这是节点类型名称错误的典型症状——`verify-extraction.mjs` 会失败（退出码 1）。遇到 FAIL 或 WARN 较多时：对更丰富的文件重新运行 `dump-ast.mjs`，修正 `<lang>.ts` 中的映射，`npm run build`，重新建索引，重新验证。**循环直到 PASS。**
 
-### Step 6 — Tests
+### 第 6 步 — 测试
 
-Add to `__tests__/extraction.test.ts`, modeled on the `Rust Extraction` block:
-- a `detectLanguage` assertion in `describe('Language Detection')`
-- a `describe('<Lang> Extraction')` block asserting functions/classes/imports
-  are extracted from an inline source string.
+在 `__tests__/extraction.test.ts` 中添加测试，参照 `Rust Extraction` 代码块：
+- 在 `describe('Language Detection')` 中添加一个 `detectLanguage` 断言
+- 添加一个 `describe('<Lang> Extraction')` 代码块，断言能从内联源码字符串中提取函数/类/导入
 ```bash
 npx vitest run __tests__/extraction.test.ts
 ```
-Green before continuing.
+全部通过后再继续。
 
-### Step 7 — Auto-pick 3 repos + corpus
+### 第 7 步 — 自动选取 3 个仓库并更新 corpus
 
-Pick **without asking**. Find candidates, then curate 3 that are genuinely
-`<lang>`-dominant, one per size tier:
+**无需询问**，直接选取。寻找候选仓库，然后筛选出 3 个真正以 `<lang>` 为主的仓库，每个规模一个：
 ```bash
 gh search repos --language=<lang> --sort=stars --limit 40 \
   --json fullName,stargazerCount,description
 ```
-Tiers (match `corpus.json`): **Small** <~150 files · **Medium** ~150–1500 ·
-**Large** >~1500. Skip repos that are tagged `<lang>` but mostly another
-language. Write one cross-file architecture **question** per repo (the kind that
-needs tracing across files). Add a `"<Language>"` block to
-`.claude/skills/agent-eval/corpus.json` (fields: `name`, `repo`, `size`,
-`files`, `question`) so `/agent-eval` can reuse them.
+规模分级（与 `corpus.json` 对应）：**Small** 文件数 <~150 · **Medium** ~150–1500 · **Large** >~1500。跳过标记为 `<lang>` 但实际主要使用另一种语言的仓库。为每个仓库编写一个跨文件架构**问题**（需要跨文件追踪的类型）。在 `.claude/skills/agent-eval/corpus.json` 中添加一个 `"<Language>"` 块（字段：`name`、`repo`、`size`、`files`、`question`），以便 `/agent-eval` 复用。
 
-### Step 8 — Benchmark all 3 (extraction + A/B)
+### 第 8 步 — 对全部 3 个仓库进行基准测试（提取 + A/B）
 
-Make the dev build the synapse on PATH **once**, then loop:
+**一次性**将开发构建设置为 PATH 上的 synapse，然后循环执行：
 ```bash
 npm run build && ./scripts/local-install.sh
 scripts/add-lang/bench.sh <lang> <name> <url> "<question>" headless   # ×3
 ```
-`bench.sh` clones (shared `/tmp/synapse-corpus`), wipes + indexes, runs
-`verify-extraction.mjs`, then the with/without retrieval A/B via
-`scripts/agent-eval/run-all.sh` (skips the paid A/B if extraction is broken).
-Read each `parse-run.mjs` summary printed by `run-all.sh`: tool calls, file
-`Read`s, Grep/Bash, synapse-tool calls, duration, and **cost** — for both the
-`with` and `without` arms. After the loop, restore the dev link if needed:
-`./scripts/local-install.sh`.
+`bench.sh` 会克隆仓库（共享 `/tmp/synapse-corpus`）、清空并重新建索引、运行 `verify-extraction.mjs`，然后通过 `scripts/agent-eval/run-all.sh` 运行有/无检索的 A/B 对比（如果提取失败则跳过付费 A/B）。读取 `run-all.sh` 打印的每个 `parse-run.mjs` 摘要：工具调用次数、文件 `Read` 次数、Grep/Bash 次数、synapse 工具调用次数、耗时和**成本**——`with` 和 `without` 两个 arm 均需记录。循环结束后，如有需要请恢复开发链接：`./scripts/local-install.sh`。
 
-### Step 9 — Docs + CHANGELOG
+### 第 9 步 — 文档 + CHANGELOG
 
-- **README.md**: add `<Lang>` to the "19+ Languages" feature bullet, and add a
-  row to the **Supported Languages** table:
-  `| <Lang> | \`.ext\` | Full support (classes, methods, …) |`.
-- **CHANGELOG.md**: add an `## [Unreleased]` section at the top (above the
-  latest version) with `### Added` → a user-perspective bullet, e.g.
-  *"Synapse now indexes **<Lang>** (`.ext`) — functions, classes, imports, and
-  call edges."* If `## [Unreleased]` already exists, append under it. (It's
-  folded into the next versioned block at release time.)
+- **README.md**：在"19+ Languages"功能要点中添加 `<Lang>`，并在**支持的语言**表格中添加一行：
+  `| <Lang> | \`.ext\` | 完整支持（类、方法……） |`。
+- **CHANGELOG.md**：在顶部（最新版本之上）添加 `## [Unreleased]` 节，写入 `### Added` → 一条面向用户的条目，例如：
+  *"Synapse 现已支持索引 **<Lang>**（`.ext`）——函数、类、导入和调用边。"* 如果 `## [Unreleased]` 已存在，则在其下追加。（发布时会自动折叠到下一个版本块中。）
 
-### Step 10 — Report (do NOT commit)
+### 第 10 步 — 汇报（不要提交）
 
-Summarize for review:
-- **Files changed**: the 4 wiring edits + new extractor + tests + README +
-  CHANGELOG + corpus.json (+ any vendored `.wasm`).
-- **Extraction** per repo: files / nodes / edges / `verify-extraction` result.
-- **A/B** per repo: `with` vs `without` (tool calls, file Reads, cost) and a
-  one-line verdict — did synapse reduce effort, and did both arms reach a
-  correct answer?
-- **Gaps / follow-ups** (node types not yet mapped, resolution edges missing,
-  framework routes, etc.).
+整理供审查的摘要：
+- **修改的文件**：4 处接入修改 + 新提取器 + 测试 + README + CHANGELOG + corpus.json（+ 任何 vendored `.wasm`）。
+- **每个仓库的提取结果**：文件数 / 节点数 / 边数 / `verify-extraction` 结果。
+- **每个仓库的 A/B 对比**：`with` 与 `without`（工具调用次数、文件 Read 次数、成本）以及一句话结论——synapse 是否降低了工作量，两个 arm 是否都得到了正确答案？
+- **不足与后续工作**（尚未映射的节点类型、缺失的解析边、框架路由等）。
 
-Hand the changes to the user. **Do not** run `git commit`/`push` or publish —
-releases go through the GitHub Actions Release workflow.
+将变更交给用户。**不要**运行 `git commit`/`push` 或发布——发布通过 GitHub Actions Release workflow 进行。
 
-## Notes
-- The A/B spawns real **paid** `claude -p` runs (opus, `--max-budget-usd`),
-  2 arms × 3 repos. The corpus dir `/tmp/synapse-corpus` is shared with
-  `/agent-eval`, so clones are reused across runs.
-- Any new `*.wasm` must live in `src/extraction/wasm/` — `copy-assets` (run by
-  `npm run build`) ships it; otherwise it won't be in `dist/`.
-- An index must be served by the **same** binary that built it. Step 8 builds +
-  links the dev build first, so this holds.
-- If a grammar can't be obtained, or extraction can't reach PASS, **STOP and
-  report** — don't ship a half-wired language.
+## 注意事项
+- A/B 测试会派生真实的**付费** `claude -p` 运行（opus，`--max-budget-usd`），2 个 arm × 3 个仓库。语料库目录 `/tmp/synapse-corpus` 与 `/agent-eval` 共享，克隆的仓库可跨运行复用。
+- 任何新的 `*.wasm` 都必须放在 `src/extraction/wasm/` 中——`copy-assets`（由 `npm run build` 调用）会将其打包；否则不会出现在 `dist/` 中。
+- 索引必须由**构建它的同一个**二进制文件提供服务。第 8 步会先构建并链接开发构建，以确保这一点成立。
+- 如果无法获取语法，或提取无法达到 PASS，**停止并汇报**——不要发布半接入的语言。
