@@ -5,35 +5,35 @@ alwaysApply: true
 <!-- SYNAPSE_START -->
 ## Synapse
 
-This project has a Synapse MCP server (`synapse_*` tools) configured. Synapse is a tree-sitter-parsed knowledge graph of every symbol, edge, and file. Reads are sub-millisecond and return structural information grep cannot.
+本项目已配置 Synapse MCP 服务器（`synapse_*` 工具）。Synapse 是基于 tree-sitter 解析的知识图谱，涵盖每个符号、边和文件。读取耗时低于毫秒，返回 grep 无法获取的结构化信息。
 
-### When to prefer synapse over native search
+### 何时优先使用 synapse 而非原生搜索
 
-Use synapse for **structural** questions — what calls what, what would break, where is X defined, what is X's signature. Use native grep/read only for **literal text** queries (string contents, comments, log messages) or after you already have a specific file open.
+对于**结构性**问题，使用 synapse——谁调用了谁、修改后会影响什么、X 在哪里定义、X 的签名是什么。只有在进行**字面文本**查询（字符串内容、注释、日志消息）或已打开特定文件时，才使用原生 grep/read。
 
-| Question | Tool |
+| 问题 | 工具 |
 |---|---|
-| "Where is X defined?" / "Find symbol named X" | `synapse_search` |
-| "What calls function Y?" | `synapse_callers` |
-| "What does Y call?" | `synapse_callees` |
-| "How does X reach/become Y? / trace the flow from X to Y" | `synapse_trace` (one call = the whole path, incl. callback/React/JSX dynamic hops) |
-| "What would break if I changed Z?" | `synapse_impact` |
-| "Show me Y's signature / source / docstring" | `synapse_node` |
-| "Give me focused context for a task/area" | `synapse_context` |
-| "See several related symbols' source at once" | `synapse_explore` |
-| "What files exist under path/" | `synapse_files` |
-| "Is the index healthy?" | `synapse_status` |
+| "X 在哪里定义？" / "查找名为 X 的符号" | `synapse_search` |
+| "什么调用了函数 Y？" | `synapse_callers` |
+| "Y 调用了什么？" | `synapse_callees` |
+| "X 如何到达/变成 Y？/ 追踪从 X 到 Y 的流程" | `synapse_trace`（一次调用 = 完整路径，含 callback/React/JSX 动态跳转） |
+| "修改 Z 会导致什么崩溃？" | `synapse_impact` |
+| "显示 Y 的签名 / 源码 / 文档注释" | `synapse_node` |
+| "为某个任务/区域提供聚焦上下文" | `synapse_context` |
+| "同时查看多个相关符号的源码" | `synapse_explore` |
+| "path/ 下有哪些文件" | `synapse_files` |
+| "索引是否健康？" | `synapse_status` |
 
-### Rules of thumb
+### 使用原则
 
-- **Answer directly — don't delegate exploration.** For "how does X work" / architecture questions, answer with 2-3 synapse calls: `synapse_context` first, then ONE `synapse_explore` for the source of the symbols it surfaces. For a specific **flow** ("how does X reach Y") start with `synapse_trace` from→to — one call returns the whole path with dynamic hops bridged — then ONE `synapse_explore` for the bodies; don't rebuild the path with `synapse_search` + `synapse_callers`. Synapse IS the pre-built index, so spawning a separate file-reading sub-task/agent — or running a grep + read loop — repeats work synapse already did and costs more for the same answer.
-- **Trust synapse results.** They come from a full AST parse. Do NOT re-verify them with grep — that's slower, less accurate, and wastes context.
-- **Don't grep first** when looking up a symbol by name. `synapse_search` is faster and returns kind + location + signature in one call.
-- **Don't chain `synapse_search` + `synapse_node`** when you just want context — `synapse_context` is one call.
-- **Don't loop `synapse_node` over many symbols** — one `synapse_explore` call returns several symbols' source grouped in a single capped call, while each separate node/Read call re-reads the whole context and costs far more.
-- **Index lag — check the staleness banner, don't guess a wait.** When a synapse response starts with "⚠️ Some files referenced below were edited since the last index sync…", the listed files are pending re-index — Read those specific files for accurate content. Files NOT in that banner are fresh and synapse is authoritative for them. `synapse_status` also lists pending files under "Pending sync".
+- **直接回答——不要将探索工作外包。** 对于"X 是如何工作的"/架构类问题，用 2–3 次 synapse 调用回答：先用 `synapse_context`，再用一次 `synapse_explore` 查看浮现符号的源码。对于具体的**流程**问题（"X 如何到达 Y"），从 `synapse_trace` from→to 开始——一次调用即返回含动态跳转的完整路径——再用一次 `synapse_explore` 查看函数体；不要用 `synapse_search` + `synapse_callers` 重建路径。Synapse 本身就是预构建的索引，另起一个读文件的子任务/agent 或运行 grep + read 循环，只是在重复 synapse 已完成的工作，花费更多却得到同样的答案。
+- **信任 synapse 的结果。** 它们来自完整的 AST 解析。不要用 grep 重新验证——那样更慢、更不准确，且浪费上下文。
+- **查找符号时不要先 grep。** `synapse_search` 更快，一次调用即返回类型 + 位置 + 签名。
+- **不要串联 `synapse_search` + `synapse_node`** 来获取上下文——`synapse_context` 一次调用即可。
+- **不要对多个符号循环调用 `synapse_node`**——一次 `synapse_explore` 调用可在单次有限制的调用中返回多个符号的源码，而每次单独的 node/Read 调用都会重新读取完整上下文，代价高得多。
+- **索引延迟——检查过期提示横幅，不要凭空猜测等待时间。** 当 synapse 响应以"⚠️ Some files referenced below were edited since the last index sync…"开头时，列出的文件正在等待重新索引——Read 这些特定文件以获取准确内容。未出现在该横幅中的文件是最新的，synapse 对其具有权威性。`synapse_status` 也会在"Pending sync"下列出待处理文件。
 
-### If `.synapse/` doesn't exist
+### 如果 `.synapse/` 不存在
 
-The MCP server returns "not initialized." Ask the user: *"I notice this project doesn't have Synapse initialized. Want me to run `synapse init -i` to build the index?"*
+MCP 服务器会返回"not initialized"。请询问用户：*"我注意到这个项目还没有初始化 Synapse，要我运行 `synapse init -i` 来构建索引吗？"*
 <!-- SYNAPSE_END -->
