@@ -1,45 +1,32 @@
-﻿# synapse telemetry ingest worker
+# synapse 遥测数据采集 Worker
 
-The first-party endpoint behind `telemetry.getsynapse.com`. This directory is in the
-public repo **on purpose**: it is the exact code that receives synapse's anonymous usage
-telemetry, so anyone can audit what is stored. The schema contract (every event, every
-field, and everything that is never collected) is in
-[`docs/design/telemetry.md`](../docs/design/telemetry.md).
+`telemetry.getsynapse.com` 背后的第一方端点。该目录**有意**放在公开仓库中：这正是接收 Synapse 匿名使用遥测数据的完整代码，任何人都可以审计其存储内容。Schema 契约（每个事件、每个字段，以及永远不会采集的内容）详见 [`docs/design/telemetry.md`](../docs/design/telemetry.md)。
 
-What it does, in one breath: validates incoming batches against a strict allowlist (unknown
-events dropped, unknown properties stripped), never reads or forwards the client IP,
-rate-limits per machine ID, and forwards to PostHog off the response path. It ships nowhere
-with the npm package — the engine's `files` allowlist excludes it.
+一句话概括其功能：对传入的批量数据按严格白名单进行校验（未知事件直接丢弃，未知属性自动剥除），从不读取或转发客户端 IP，按机器 ID 进行限速，并在响应路径之外将数据转发至 PostHog。它不会随 npm 包一起发布——引擎的 `files` 白名单已将其排除。
 
-## Endpoint contract
+## 端点契约
 
-- `POST /v1/events` — JSON body: envelope (`machine_id` UUID, `synapse_version`, `os`,
-  `arch`, `node_major`, `ci`, `schema_version`) + `events: [{event, ts?, props?}]`.
-  Responds `204` when accepted (including events dropped by the allowlist), honest `4xx`
-  for malformed/oversized/rate-limited requests. Clients treat every response as final —
-  no retries.
-- `GET /` — plain-text pointer to the docs and the off-switches.
+- `POST /v1/events` — JSON 请求体：信封（`machine_id` UUID、`synapse_version`、`os`、`arch`、`node_major`、`ci`、`schema_version`）+ `events: [{event, ts?, props?}]`。接受时响应 `204`（包括被白名单丢弃的事件），对格式错误、超大或被限速的请求返回诚实的 `4xx`。客户端将每次响应视为最终结果——不重试。
+- `GET /` — 纯文本，指向文档和关闭开关。
 
-## Deploy
+## 部署
 
-Prereqs: the `getsynapse.com` zone on the deploying Cloudflare account (the custom
-domain route auto-provisions DNS + cert), wrangler ≥ 4.36 (the `ratelimits` binding).
+前提条件：部署所用 Cloudflare 账号上需有 `getsynapse.com` Zone（自定义域名路由会自动配置 DNS 和证书），wrangler ≥ 4.36（需要 `ratelimits` binding）。
 
 ```bash
 cd telemetry-worker
 npm install
-npx wrangler login                      # once
-npx wrangler secret put POSTHOG_KEY     # the phc_… project write key — never committed
+npx wrangler login                      # 首次执行一次
+npx wrangler secret put POSTHOG_KEY     # phc_… 项目写入密钥——不要提交到仓库
 npm run deploy
 ```
 
-The PostHog project itself must have **"Discard client IP data"** enabled — defense in
-depth on top of this worker never forwarding IPs (`$geoip_disable` is also set per event).
+PostHog 项目本身必须启用 **"Discard client IP data"**——这是在 Worker 从不转发 IP 之上的纵深防御（每个事件也会设置 `$geoip_disable`）。
 
-## Local dev & checks
+## 本地开发与检查
 
 ```bash
-cp .dev.vars.example .dev.vars   # placeholder key; also feeds `wrangler types`
+cp .dev.vars.example .dev.vars   # 占位密钥；同时供 `wrangler types` 使用
 npm run check                    # wrangler types + tsc --noEmit + deploy --dry-run
 npm run dev                      # http://localhost:8787
 
@@ -53,8 +40,6 @@ curl -i localhost:8787/v1/events -H 'content-type: application/json' -d '{
 }'
 ```
 
-## Changing the schema
+## 变更 Schema
 
-The allowlist in `src/index.ts` mirrors `docs/design/telemetry.md` (and the user-facing
-`TELEMETRY.md`). A field is added by one PR touching all of them together — that is the
-whole point of the design.
+`src/index.ts` 中的白名单与 `docs/design/telemetry.md`（以及面向用户的 `TELEMETRY.md`）保持镜像同步。新增字段须通过同一个 PR 同时修改所有相关文件——这正是该设计的核心意图。
