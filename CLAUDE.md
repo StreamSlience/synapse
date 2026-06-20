@@ -29,7 +29,7 @@ npx vitest run __tests__/extraction.test.ts -t "TypeScript"
 
 `copy-assets`（由 `build` 调用）将 `src/db/schema.sql` 和所有 `src/extraction/wasm/*.wasm` 文件复制到 `dist/`。**任何新的 SQL 或语法 wasm 都必须复制，否则不会被打包发布。**
 
-Node 引擎要求：`>=18.0.0 <25.0.0`。在 Node 25.x 上会强制退出（参见 `src/bin/node-version-check.ts`）。
+Node 引擎要求：`>=20.0.0 <27.0.0`。在 Node 25.x 上会强制退出（参见 `src/bin/node-version-check.ts`）。
 
 ## 架构
 

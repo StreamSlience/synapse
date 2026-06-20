@@ -65,7 +65,7 @@ const importESM = new Function('specifier', 'return import(specifier)') as
 // 的用户，可通过环境变量覆盖此行为。
 const nodeVersion = process.versions.node;
 const nodeMajor = parseInt(nodeVersion.split('.')[0] ?? '0', 10);
-if (nodeMajor >= 25) {
+if (nodeMajor === 25) {
   process.stderr.write(buildNode25BlockBanner(nodeVersion) + '\n');
   if (!process.env.SYNAPSE_ALLOW_UNSAFE_NODE) {
     process.exit(1);

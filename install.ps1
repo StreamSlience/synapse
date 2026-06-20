@@ -13,7 +13,7 @@
 #   SYNAPSE_INSTALL_DIR  install location (default: %LOCALAPPDATA%\synapse)
 
 $ErrorActionPreference = 'Stop'
-$repo = 'colbymchenry/synapse'
+$repo = 'StreamSlience/synapse'
 $installDir = if ($env:SYNAPSE_INSTALL_DIR) { $env:SYNAPSE_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'synapse' }
 
 # 1. Detect architecture -> target matching the release archives.
