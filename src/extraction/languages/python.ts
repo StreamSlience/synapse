@@ -4,14 +4,14 @@ import type { LanguageExtractor } from '../tree-sitter-types';
 export const pythonExtractor: LanguageExtractor = {
   functionTypes: ['function_definition'],
   classTypes: ['class_definition'],
-  methodTypes: ['function_definition'], // Methods are functions inside classes
+  methodTypes: ['function_definition'], // 方法是类内部的函数
   interfaceTypes: [],
   structTypes: [],
   enumTypes: [],
   typeAliasTypes: [],
   importTypes: ['import_statement', 'import_from_statement'],
   callTypes: ['call'],
-  variableTypes: ['assignment'], // Python uses assignment for variable declarations
+  variableTypes: ['assignment'], // Python 使用赋值语句声明变量
   nameField: 'name',
   bodyField: 'body',
   paramsField: 'parameters',
@@ -31,7 +31,7 @@ export const pythonExtractor: LanguageExtractor = {
     return prev?.type === 'async';
   },
   isStatic: (node) => {
-    // Check for @staticmethod decorator
+    // 检查 @staticmethod 装饰器
     const prev = node.previousNamedSibling;
     if (prev?.type === 'decorator') {
       const text = prev.text;
@@ -47,7 +47,7 @@ export const pythonExtractor: LanguageExtractor = {
         return { moduleName: source.substring(moduleNode.startIndex, moduleNode.endIndex), signature: importText };
       }
     }
-    // import_statement creates multiple imports - return null for core fallback
+    // import_statement 创建多个 import——返回 null 交由核心处理
     return null;
   },
 };

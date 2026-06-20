@@ -3,12 +3,12 @@ import { getChildByField, getNodeText } from '../tree-sitter-helpers';
 import type { LanguageExtractor } from '../tree-sitter-types';
 
 /**
- * Find the function NAME's `qualified_identifier` (`Foo::bar`) inside a
- * declarator, skipping the `parameter_list` — a parameter with a qualified type
- * (`const std::string& x`) must NOT be mistaken for the method name. Without the
- * skip, a plain free function `std::string TableFileName(const std::string&...)`
- * was named `string` (from the parameter type), so calls to it never resolved
- * and its file looked like nothing depended on it.
+ * 在 declarator 内查找函数名称的 `qualified_identifier`（`Foo::bar`），
+ * 跳过 `parameter_list`——带限定类型的参数（`const std::string& x`）
+ * 绝不能被误认为是方法名。若不跳过，像
+ * `std::string TableFileName(const std::string&...)` 这样的普通自由函数
+ * 会被命名为 `string`（来自参数类型），导致对它的调用无法解析，
+ * 其所在文件看起来没有任何依赖方。
  */
 function findDeclaratorQualifiedId(declarator: SyntaxNode): SyntaxNode | undefined {
   const queue: SyntaxNode[] = [declarator];
@@ -17,8 +17,8 @@ function findDeclaratorQualifiedId(declarator: SyntaxNode): SyntaxNode | undefin
     if (current.type === 'qualified_identifier') return current;
     for (let i = 0; i < current.namedChildCount; i++) {
       const child = current.namedChild(i);
-      // Don't descend into parameters or the trailing return type — their types
-      // (`const std::string&`, `-> std::string`) aren't the function name.
+      // 不要深入参数列表或尾置返回类型——它们的类型
+      // （`const std::string&`、`-> std::string`）不是函数名。
       if (child && child.type !== 'parameter_list' && child.type !== 'trailing_return_type') {
         queue.push(child);
       }
@@ -46,9 +46,8 @@ function extractCppReceiverType(node: SyntaxNode, source: string): string | unde
 }
 
 /**
- * Built-in / non-class return types that can never be a method receiver. We
- * store no `returnType` for these so resolution never tries to resolve a method
- * on `void` / `int` / etc.
+ * 内置/非类返回类型，永远不能作为方法接收者。
+ * 对这些类型不存储 `returnType`，以免解析器尝试在 `void` / `int` 等类型上解析方法。
  */
 const CPP_NON_CLASS_RETURN = new Set([
   'void', 'bool', 'char', 'short', 'int', 'long', 'float', 'double', 'unsigned',
@@ -58,16 +57,16 @@ const CPP_NON_CLASS_RETURN = new Set([
 ]);
 
 /**
- * Normalize a C++ return type to the bare class name a method could be called
- * on. Unwraps smart-pointer / optional wrappers to their element type
- * (`std::unique_ptr<Widget>` → `Widget`) so a factory's `->method()` resolves on
- * the pointee. Strips cv-qualifiers, `&`/`*`, namespace qualifiers, and other
- * template args. Returns undefined for primitives / void / `auto` / empty.
+ * 将 C++ 返回类型规范化为可以在其上调用方法的裸类名。
+ * 解包智能指针 / optional 包装器到其元素类型
+ *（`std::unique_ptr<Widget>` → `Widget`），使工厂的 `->method()` 可以在
+ * 被指向对象上解析。去除 cv 限定符、`&`/`*`、命名空间限定符及其他模板参数。
+ * 对基本类型 / void / `auto` / 空值返回 undefined。
  */
 export function normalizeCppReturnType(raw: string): string | undefined {
   let t = raw.trim();
   if (!t) return undefined;
-  // Unwrap smart pointers / optional to their pointee (the thing you call `->` on).
+  // 解包智能指针 / optional 到其被指向对象（即调用 `->` 的对象）。
   const wrapper = t.match(/\b(?:std\s*::\s*)?(?:unique_ptr|shared_ptr|weak_ptr|optional)\s*<\s*([^,>]+?)\s*>/);
   if (wrapper && wrapper[1]) t = wrapper[1];
   t = t
@@ -85,9 +84,9 @@ export function normalizeCppReturnType(raw: string): string | undefined {
 }
 
 /**
- * A function/method's return type lives in the `function_definition`'s `type`
- * field (`Metrics& Metrics::instance()` → `Metrics`). Constructors, destructors,
- * and conversion operators have no `type` field → undefined.
+ * 函数/方法的返回类型位于 `function_definition` 的 `type` 字段中
+ *（`Metrics& Metrics::instance()` → `Metrics`）。构造函数、析构函数
+ * 和转换运算符没有 `type` 字段，返回 undefined。
  */
 function extractCppReturnType(node: SyntaxNode, source: string): string | undefined {
   const typeNode = getChildByField(node, 'type');
@@ -110,18 +109,17 @@ export const cExtractor: LanguageExtractor = {
   nameField: 'declarator',
   bodyField: 'body',
   paramsField: 'parameters',
-  // A `const`/`static const` file-scope declaration carries a `type_qualifier`
-  // child reading "const" — extract those as `constant`, plain globals as
-  // `variable`.
+  // `const`/`static const` 文件作用域声明带有值为 "const" 的 `type_qualifier` 子节点——
+  // 将其提取为 `constant`，普通全局变量提取为 `variable`。
   isConst: (node) =>
     node.namedChildren.some(
       (c: SyntaxNode) => c.type === 'type_qualifier' && c.text === 'const'
     ),
   getReturnType: extractCppReturnType,
   resolveTypeAliasKind: (node, _source) => {
-    // C typedef: `typedef enum { ... } name;` or `typedef struct { ... } name;`
-    // The inner enum_specifier/struct_specifier is anonymous, but we want the typedef name
-    // to become the enum/struct node name.
+    // C typedef：`typedef enum { ... } name;` 或 `typedef struct { ... } name;`
+    // 内部的 enum_specifier/struct_specifier 是匿名的，但我们希望 typedef 名称
+    // 成为 enum/struct 节点的名称。
     for (let i = 0; i < node.namedChildCount; i++) {
       const child = node.namedChild(i);
       if (!child) continue;
@@ -132,7 +130,7 @@ export const cExtractor: LanguageExtractor = {
   },
   extractImport: (node, source) => {
     const importText = source.substring(node.startIndex, node.endIndex).trim();
-    // C includes: #include <stdio.h>, #include "myheader.h"
+    // C includes：#include <stdio.h>，#include "myheader.h"
     const systemLib = node.namedChildren.find((c: SyntaxNode) => c.type === 'system_lib_string');
     if (systemLib) {
       return { moduleName: getNodeText(systemLib, source).replace(/^<|>$/g, ''), signature: importText };
@@ -156,7 +154,7 @@ export const cppExtractor: LanguageExtractor = {
   structTypes: ['struct_specifier'],
   enumTypes: ['enum_specifier'],
   enumMemberTypes: ['enumerator'],
-  typeAliasTypes: ['type_definition', 'alias_declaration'], // typedef and using
+  typeAliasTypes: ['type_definition', 'alias_declaration'], // typedef 和 using
   importTypes: ['preproc_include'],
   callTypes: ['call_expression'],
   variableTypes: ['declaration'],
@@ -167,7 +165,7 @@ export const cppExtractor: LanguageExtractor = {
   getReceiverType: extractCppReceiverType,
   getReturnType: extractCppReturnType,
   getVisibility: (node) => {
-    // Check for access specifier in parent
+    // 检查父节点中的访问说明符
     const parent = node.parent;
     if (parent) {
       for (let i = 0; i < parent.childCount; i++) {
@@ -183,7 +181,7 @@ export const cppExtractor: LanguageExtractor = {
     return undefined;
   },
   resolveTypeAliasKind: (node, _source) => {
-    // C++ typedef: `typedef enum { ... } name;` or `typedef struct { ... } name;`
+    // C++ typedef：`typedef enum { ... } name;` 或 `typedef struct { ... } name;`
     for (let i = 0; i < node.namedChildCount; i++) {
       const child = node.namedChild(i);
       if (!child) continue;
@@ -193,17 +191,17 @@ export const cppExtractor: LanguageExtractor = {
     return undefined;
   },
   isMisparsedFunction: (name) => {
-    // C++ macros like NLOHMANN_JSON_NAMESPACE_BEGIN cause tree-sitter to misparse
-    // namespace blocks as function_definitions (e.g. name = "namespace detail").
-    // Also filter C++ keywords that tree-sitter occasionally misinterprets as
-    // function/method names (e.g. switch statements inside macro-confused scopes).
+    // C++ 宏（如 NLOHMANN_JSON_NAMESPACE_BEGIN）会导致 tree-sitter 将
+    // namespace 块误解析为 function_definitions（例如 name = "namespace detail"）。
+    // 同样过滤 C++ 关键字，tree-sitter 偶尔在宏混淆的作用域内将其误解析为
+    // function/method 名称（例如 switch 语句）。
     if (name.startsWith('namespace')) return true;
     const cppKeywords = ['switch', 'if', 'for', 'while', 'do', 'case', 'return'];
     return cppKeywords.includes(name);
   },
   extractImport: (node, source) => {
     const importText = source.substring(node.startIndex, node.endIndex).trim();
-    // C++ includes: #include <iostream>, #include "myheader.h"
+    // C++ includes：#include <iostream>，#include "myheader.h"
     const systemLib = node.namedChildren.find((c: SyntaxNode) => c.type === 'system_lib_string');
     if (systemLib) {
       return { moduleName: getNodeText(systemLib, source).replace(/^<|>$/g, ''), signature: importText };

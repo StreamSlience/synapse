@@ -1,19 +1,18 @@
 ﻿#!/usr/bin/env node
-// Analyze the tool-surface ablation (/tmp/arms/<repo>/<arm>-r<n>.jsonl).
-// Compares arms A–E on trace adoption, Read/Grep fallback, synapse payload,
-// round-trips, and duration — averaged across runs per arm.
+// 分析工具面消融结果（/tmp/arms/<repo>/<arm>-r<n>.jsonl）。
+// 对比 A–E 各组在 trace 采用率、Read/Grep 回退、synapse 负载、
+// 往返次数和耗时上的表现——按每组跨运行取平均值。
 //
-// The decisive signal is READS: if removing a tool raises Reads on a question
-// class, that tool was load-bearing for it (not redundant). If removing it
-// changes nothing, it was redundant.
+// 决定性信号是 READS：移除某工具后读取次数增加，说明该工具在这类问题上是关键的；
+// 移除后无变化，则说明它是冗余的。
 //
-//   A control       all tools            no steering   (baseline)
-//   B steer         all tools            trace-first   (adoption)
-//   C no-explore    hide explore         trace-first   (is explore redundant?)
-//   D trace-centric hide explore+context trace-first   (is the survey pair redundant?)
-//   E control-probe hide explore+context trace-first   (NON-flow Q — should degrade)
+//   A control       所有工具            无引导   （基线）
+//   B steer         所有工具            trace 优先   （采用率）
+//   C no-explore    隐藏 explore         trace 优先   （explore 是否冗余？）
+//   D trace-centric 隐藏 explore+context trace 优先   （调查工具对是否冗余？）
+//   E control-probe 隐藏 explore+context trace 优先   （非流程问题——应退化）
 //
-// Usage: node scripts/agent-eval/parse-arms.mjs [/tmp/arms]
+// 用法：node scripts/agent-eval/parse-arms.mjs [/tmp/arms]
 import { readFileSync, readdirSync, existsSync, statSync } from 'fs';
 import { join } from 'path';
 
@@ -52,7 +51,7 @@ function parse(file) {
   };
 }
 
-// repo -> arm -> [runs]
+// repo -> 组 -> [运行列表]
 const data = {};
 if (!existsSync(ROOT)) { console.error(`no ${ROOT}`); process.exit(1); }
 for (const repo of readdirSync(ROOT)) {
@@ -71,7 +70,7 @@ const pad = (s, n) => String(s).padEnd(n);
 const ARMS = ['A', 'H', 'I', 'B', 'F', 'G', 'C', 'D', 'E'];
 const LABEL = { A: 'A all/none(old)', H: 'H body-trace/none', I: 'I bodytrace+dest', B: 'B all/steer(thin)', F: 'F all/steer(body)', G: 'G ported(noprompt)', C: 'C no-explore', D: 'D trace-centric', E: 'E nonflow-probe' };
 
-// ---- per repo × arm ----
+// ---- 每个 repo × 组 ----
 console.log('\n=== PER REPO × ARM (avg over runs) ===');
 console.log(pad('repo', 22), pad('arm', 16), 'tools', 'trace', pad('reads', 6), pad('cgOutK', 7), pad('turns', 6), 'dur');
 for (const repo of Object.keys(data).sort()) {
@@ -89,7 +88,7 @@ for (const repo of Object.keys(data).sort()) {
   }
 }
 
-// ---- aggregate per arm (flow arms A–D over the flow repos; E shown apart) ----
+// ---- 按组聚合（流程组 A–D 跨流程代码库；E 单独显示）----
 console.log('\n=== AGGREGATE PER ARM (mean across repos) ===');
 console.log(pad('arm', 16), pad('adoption', 9), pad('reads', 7), pad('greps', 7), pad('cgOutK', 8), pad('turns', 7), pad('dur', 6), 'cost');
 for (const arm of ARMS) {
@@ -111,6 +110,6 @@ for (const arm of ARMS) {
   );
 }
 
-console.log('\nRead the signal: B vs A = does steering alone fix adoption + cut payload.');
-console.log('C vs B = is explore redundant (reads should NOT jump). D vs C = is context redundant.');
-console.log('E = non-flow under trace-centric; reads SHOULD jump (proves survey tools are load-bearing).');
+console.log('\n解读信号：B vs A = 单靠引导是否能修复采用率并降低负载。');
+console.log('C vs B = explore 是否冗余（读取次数不应上升）。D vs C = context 是否冗余。');
+console.log('E = trace 中心模式下的非流程问题；读取次数应上升（证明调查工具有实际作用）。');

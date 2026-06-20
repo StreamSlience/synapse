@@ -1,7 +1,7 @@
 /**
- * React Framework Resolver
+ * React 框架解析器
  *
- * Handles React and Next.js patterns.
+ * 处理 React 和 Next.js 模式。
  */
 
 import { Node } from '../../types';
@@ -12,7 +12,7 @@ export const reactResolver: FrameworkResolver = {
   languages: ['javascript', 'typescript'],
 
   detect(context: ResolutionContext): boolean {
-    // Check for React in package.json
+    // 检查 package.json 中是否包含 React
     const packageJson = context.readFile('package.json');
     if (packageJson) {
       try {
@@ -22,24 +22,22 @@ export const reactResolver: FrameworkResolver = {
           return true;
         }
       } catch {
-        // Invalid JSON
+        // JSON 格式无效
       }
     }
 
-    // Check for .jsx/.tsx files
+    // 检查是否存在 .jsx/.tsx 文件
     const allFiles = context.getAllFiles();
     return allFiles.some((f) => f.endsWith('.jsx') || f.endsWith('.tsx'));
   },
 
   resolve(ref: UnresolvedRef, context: ResolutionContext): ResolvedRef | null {
-    // Pattern 1: Component references (PascalCase). Only from JSX-capable
-    // files — a component is USED in markup, which only parses in .tsx/.jsx.
-    // Without this gate, every PascalCase TYPE reference in plain .ts files
-    // went through component resolution: in a monorepo with same-named
-    // classes per package (#764, amplication), a `.ts` GraphQL-types file's
-    // own `Account` type alias lost to an arbitrary `Account` CLASS in
-    // another package (the framework's 0.8 outranked the name-matcher's
-    // proximity-correct 0.7).
+    // Pattern 1：组件引用（PascalCase）。仅来自支持 JSX 的文件——组件在标记中
+    // 被使用，而标记只在 .tsx/.jsx 中解析。若无此限制，普通 .ts 文件中每个
+    // PascalCase 类型引用都会走组件解析：在同名类按包分布的 monorepo（#764，
+    // amplication）中，一个 `.ts` GraphQL 类型文件自身的 `Account` 类型别名
+    // 会输给另一个包中任意一个 `Account` 类（框架的 0.8 优先级高于名称匹配器
+    // 的邻近正确 0.7）。
     if (
       (ref.language === 'tsx' || ref.language === 'jsx') &&
       isPascalCase(ref.referenceName) &&
@@ -56,7 +54,7 @@ export const reactResolver: FrameworkResolver = {
       }
     }
 
-    // Pattern 2: Hook references (use*)
+    // Pattern 2：Hook 引用（use*）
     if (ref.referenceName.startsWith('use') && ref.referenceName.length > 3) {
       const result = resolveHook(ref.referenceName, context);
       if (result) {
@@ -69,7 +67,7 @@ export const reactResolver: FrameworkResolver = {
       }
     }
 
-    // Pattern 3: Context references
+    // Pattern 3：Context 引用
     if (ref.referenceName.endsWith('Context') || ref.referenceName.endsWith('Provider')) {
       const result = resolveContext(ref.referenceName, context);
       if (result) {
@@ -90,16 +88,16 @@ export const reactResolver: FrameworkResolver = {
     const references: UnresolvedRef[] = [];
     const now = Date.now();
 
-    // Extract component definitions
-    // function Component() or const Component = () =>
+    // 提取组件定义
+    // function Component() 或 const Component = () =>
     const componentPatterns = [
-      // Function components
+      // 函数式组件
       /(?:export\s+)?function\s+([A-Z][a-zA-Z0-9]*)\s*\(/g,
-      // Arrow function components
+      // 箭头函数组件
       /(?:export\s+)?(?:const|let)\s+([A-Z][a-zA-Z0-9]*)\s*=\s*(?:\([^)]*\)|[a-zA-Z_][a-zA-Z0-9_]*)\s*=>/g,
-      // forwardRef components
+      // forwardRef 组件
       /(?:export\s+)?(?:const|let)\s+([A-Z][a-zA-Z0-9]*)\s*=\s*(?:React\.)?forwardRef/g,
-      // memo components
+      // memo 组件
       /(?:export\s+)?(?:const|let)\s+([A-Z][a-zA-Z0-9]*)\s*=\s*(?:React\.)?memo/g,
     ];
 
@@ -109,7 +107,7 @@ export const reactResolver: FrameworkResolver = {
         const [fullMatch, name] = match;
         const line = content.slice(0, match.index).split('\n').length;
 
-        // Check if it returns JSX (rough heuristic)
+        // 检查是否返回 JSX（粗略启发式）
         const afterMatch = content.slice(match.index + fullMatch.length, match.index + fullMatch.length + 500);
         const hasJSX = afterMatch.includes('<') && (afterMatch.includes('/>') || afterMatch.includes('</'));
 
@@ -132,7 +130,7 @@ export const reactResolver: FrameworkResolver = {
       }
     }
 
-    // Extract custom hooks
+    // 提取自定义 Hook
     const hookPattern = /(?:export\s+)?(?:function|const|let)\s+(use[A-Z][a-zA-Z0-9]*)\s*[=(]/g;
     let hookMatch;
     while ((hookMatch = hookPattern.exec(content)) !== null) {
@@ -155,10 +153,10 @@ export const reactResolver: FrameworkResolver = {
       });
     }
 
-    // React Router: <Route path="/x" component={Comp}/> (v5) or
-    // <Route path="/x" element={<Comp/>}/> (v6). Attributes appear in any order,
-    // and element={...} contains a nested `>`, so scan a window after each
-    // <Route rather than trying to match the whole (possibly multi-line) tag.
+    // React Router：<Route path="/x" component={Comp}/> (v5) 或
+    // <Route path="/x" element={<Comp/>}/> (v6)。属性可以任意顺序出现，
+    // 且 element={...} 包含嵌套的 `>`，因此对每个 <Route 后的窗口进行扫描，
+    // 而不是尝试匹配完整（可能跨行）的标签。
     const routeTagRegex = /<Route\b/g;
     let routeMatch: RegExpExecArray | null;
     while ((routeMatch = routeTagRegex.exec(content)) !== null) {
@@ -197,10 +195,10 @@ export const reactResolver: FrameworkResolver = {
       }
     }
 
-    // React Router data-router (v6.4+): createBrowserRouter([{ path, element }]).
-    // Only scan files that use the data-router API, then pull each route object's
-    // `path` + `element={<Comp/>}` / `Component: Comp` (a forward window confirms
-    // it's a route object, not a stray `path:` field).
+    // React Router data-router（v6.4+）：createBrowserRouter([{ path, element }])。
+    // 仅扫描使用 data-router API 的文件，然后提取每个路由对象的
+    // `path` + `element={<Comp/>}` / `Component: Comp`（前向窗口确认
+    // 这是路由对象而非普通的 `path:` 字段）。
     if (/\b(?:createBrowserRouter|createHashRouter|createMemoryRouter|createRoutesFromElements)\b/.test(content)) {
       const objPathRe = /\bpath\s*:\s*['"]([^'"]*)['"]/g;
       let om: RegExpExecArray | null;
@@ -238,9 +236,9 @@ export const reactResolver: FrameworkResolver = {
       }
     }
 
-    // Extract Next.js pages/routes (pages directory convention)
+    // 提取 Next.js 页面/路由（pages 目录约定）
     if (filePath.includes('pages/') || filePath.includes('app/')) {
-      // Default export in pages becomes a route
+      // pages 中的默认导出即为路由
       if (content.includes('export default')) {
         const routePath = filePathToRoute(filePath);
         if (routePath) {
@@ -269,14 +267,14 @@ export const reactResolver: FrameworkResolver = {
 };
 
 /**
- * Check if string is PascalCase
+ * 检查字符串是否为 PascalCase
  */
 function isPascalCase(str: string): boolean {
   return /^[A-Z][a-zA-Z0-9]*$/.test(str);
 }
 
 /**
- * Check if name is a built-in type
+ * 检查名称是否为内置类型
  */
 function isBuiltInType(name: string): boolean {
   return BUILT_IN_TYPES.has(name);
@@ -291,7 +289,7 @@ const BUILT_IN_TYPES = new Set([
 const COMPONENT_KINDS = new Set(['component', 'function', 'class']);
 
 /**
- * Resolve a component reference using name-based lookup
+ * 使用基于名称的查找解析组件引用
  */
 function resolveComponent(
   name: string,
@@ -304,26 +302,25 @@ function resolveComponent(
   const components = candidates.filter((n) => COMPONENT_KINDS.has(n.kind));
   if (components.length === 0) return null;
 
-  // Prefer same directory
+  // 优先选择同目录下的候选
   const fromDir = fromFile.substring(0, fromFile.lastIndexOf('/'));
   const sameDir = components.filter((n) => n.filePath.startsWith(fromDir));
   if (sameDir.length > 0) return sameDir[0]!.id;
 
-  // Prefer component directories
+  // 优先选择组件目录下的候选
   const COMPONENT_DIRS = ['/components/', '/src/components/', '/app/components/', '/pages/', '/src/pages/', '/views/', '/src/views/'];
   const preferred = components.filter((n) =>
     COMPONENT_DIRS.some((d) => n.filePath.includes(d))
   );
   if (preferred.length > 0) return preferred[0]!.id;
 
-  // No positional signal: only an UNAMBIGUOUS name may resolve. Returning
-  // components[0] here picked an arbitrary same-named class anywhere in the
-  // repo (#764) — let the name-matcher's proximity scoring decide instead.
+  // 无位置信号：仅允许解析无歧义的名称。此处返回 components[0]
+  // 会在整个仓库中选取任意同名类（#764）——交由名称匹配器的邻近性评分来决定。
   return components.length === 1 ? components[0]!.id : null;
 }
 
 /**
- * Resolve a custom hook reference using name-based lookup
+ * 使用基于名称的查找解析自定义 Hook 引用
  */
 function resolveHook(name: string, context: ResolutionContext): string | null {
   const candidates = context.getNodesByName(name);
@@ -332,7 +329,7 @@ function resolveHook(name: string, context: ResolutionContext): string | null {
   const hooks = candidates.filter((n) => n.kind === 'function' && n.name.startsWith('use'));
   if (hooks.length === 0) return null;
 
-  // Prefer hooks directories
+  // 优先选择 hooks 目录下的候选
   const HOOK_DIRS = ['/hooks/', '/src/hooks/', '/lib/hooks/', '/utils/hooks/'];
   const preferred = hooks.filter((n) =>
     HOOK_DIRS.some((d) => n.filePath.includes(d))
@@ -343,12 +340,12 @@ function resolveHook(name: string, context: ResolutionContext): string | null {
 }
 
 /**
- * Resolve a context reference using name-based lookup
+ * 使用基于名称的查找解析 Context 引用
  */
 function resolveContext(name: string, context: ResolutionContext): string | null {
   const candidates = context.getNodesByName(name);
   if (candidates.length === 0) {
-    // Try without Context/Provider suffix
+    // 尝试去掉 Context/Provider 后缀再查找
     const baseName = name.replace(/Context$|Provider$/, '');
     if (baseName !== name) {
       const baseCandidates = context.getNodesByName(baseName);
@@ -357,7 +354,7 @@ function resolveContext(name: string, context: ResolutionContext): string | null
     return null;
   }
 
-  // Prefer context directories
+  // 优先选择 context 目录下的候选
   const CONTEXT_DIRS = ['/context/', '/contexts/', '/src/context/', '/src/contexts/', '/providers/', '/src/providers/'];
   const preferred = candidates.filter((n) =>
     CONTEXT_DIRS.some((d) => n.filePath.includes(d))
@@ -368,7 +365,7 @@ function resolveContext(name: string, context: ResolutionContext): string | null
 }
 
 /**
- * Convert file path to Next.js route
+ * 将文件路径转换为 Next.js 路由
  */
 function filePathToRoute(filePath: string): string | null {
   // pages/index.tsx -> /
@@ -377,16 +374,16 @@ function filePathToRoute(filePath: string): string | null {
   // app/page.tsx -> /
   // app/about/page.tsx -> /about
 
-  // Only real page-component files are routes. Exclude non-page extensions
-  // (.mjs/.json/.cjs), config files (next.config.ts, vite.config.ts…), and
-  // Next.js special files (_app/_document). This also stops a `*.config.mjs`
-  // with `export default` in a dir like `nextjs-pages/` from being a "route".
+  // 只有真正的页面组件文件才是路由。排除非页面扩展名
+  // (.mjs/.json/.cjs)、配置文件（next.config.ts、vite.config.ts……）以及
+  // Next.js 特殊文件（_app/_document）。这也防止了 `nextjs-pages/` 目录下
+  // 带 `export default` 的 `*.config.mjs` 被误认为"路由"。
   const base = filePath.split('/').pop() ?? '';
   if (!/\.(tsx?|jsx?)$/.test(base)) return null;
   if (base.startsWith('_') || /\.config\.[a-z]+$/.test(base)) return null;
 
-  // Match pages/ and app/ as PATH SEGMENTS (not a substring — `nextjs-pages/`
-  // must not count as a `pages/` router dir).
+  // 将 pages/ 和 app/ 作为路径片段匹配（而非子串——`nextjs-pages/`
+  // 不应被视为 `pages/` 路由目录）。
   if (/(?:^|\/)pages\//.test(filePath)) {
     let route = filePath
       .replace(/^.*pages\//, '/')
@@ -399,7 +396,7 @@ function filePathToRoute(filePath: string): string | null {
   }
 
   if (/(?:^|\/)app\//.test(filePath)) {
-    // App router - only page.tsx files are routes
+    // App router - 只有 page.tsx 文件才是路由
     if (!filePath.includes('page.')) {
       return null;
     }

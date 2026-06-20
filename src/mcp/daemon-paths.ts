@@ -1,21 +1,19 @@
 ﻿/**
- * Daemon socket + lockfile path helpers — issue #411.
+ * 守护进程 socket + 锁文件路径辅助函数 — issue #411。
  *
- * One shared `synapse serve --mcp` daemon per project root means we need a
- * stable, project-keyed rendezvous between cooperating processes. The IPC
- * surface area is just two file paths:
+ * 每个项目根目录共享一个 `synapse serve --mcp` 守护进程，这意味着我们需要
+ * 一个稳定的、以项目为键的会合点，供协作进程使用。IPC 的接口面只有两个文件路径：
  *
- *   - `daemon.sock` — Unix domain socket / named pipe the daemon listens on.
- *   - `daemon.pid` — atomic-create lockfile holding the daemon's pid + version.
+ *   - `daemon.sock` — 守护进程监听的 Unix 域 socket / 命名管道。
+ *   - `daemon.pid` — 原子创建的锁文件，保存守护进程的 pid + 版本信息。
  *
- * Both live under `.synapse/` so the project-scoped uninstall (`synapse
- * uninit`) sweeps them up for free.
+ * 两者都存放在 `.synapse/` 下，因此项目范围的卸载（`synapse uninit`）
+ * 可以顺带清理它们。
  *
- * Special-case: Unix domain socket paths have a hard length limit (~104 on
- * macOS, ~108 on Linux); when the in-project path exceeds it we fall back to
- * an absolute-path hash under `os.tmpdir()`. The pidfile always stays in the
- * project (it doesn't have a length limit) — and acts as the authoritative
- * pointer to the socket path the daemon chose.
+ * 特殊情况：Unix 域 socket 路径有硬性长度限制（macOS 约 104，Linux 约 108）；
+ * 当项目内路径超过该限制时，回退到 `os.tmpdir()` 下的绝对路径哈希。
+ * pidfile 始终保存在项目内（无长度限制），并作为守护进程所选 socket 路径的
+ * 权威指针。
  */
 
 import * as crypto from 'crypto';
@@ -23,18 +21,17 @@ import * as os from 'os';
 import * as path from 'path';
 import { getSynapseDir } from '../directory';
 
-/** Soft upper bound for in-project socket paths. */
+/** 项目内 socket 路径的软上限。 */
 const POSIX_SOCKET_PATH_LIMIT = 100;
 
-/** Short stable identifier for a project root — used in tmpdir/pipe names. */
+/** 项目根目录的简短稳定标识符 — 用于 tmpdir/管道名称。 */
 function projectHash(projectRoot: string): string {
   return crypto.createHash('sha256').update(path.resolve(projectRoot)).digest('hex').slice(0, 16);
 }
 
 /**
- * Compute the socket / named-pipe path the daemon should listen on (and the
- * proxy should connect to) for `projectRoot`. Deterministic given a project
- * root, so independent processes converge without coordination.
+ * 计算守护进程应监听（代理应连接）的 socket / 命名管道路径，以 `projectRoot` 为键。
+ * 给定项目根目录时结果确定，因此独立进程无需协调即可汇聚到同一路径。
  */
 export function getDaemonSocketPath(projectRoot: string): string {
   if (process.platform === 'win32') {
@@ -42,17 +39,17 @@ export function getDaemonSocketPath(projectRoot: string): string {
   }
   const inProject = path.join(getSynapseDir(projectRoot), 'daemon.sock');
   if (inProject.length <= POSIX_SOCKET_PATH_LIMIT) return inProject;
-  // Long project paths (deep monorepos, Bazel out dirs) need tmpdir fallback
-  // or `bind` returns EADDRINUSE / ENAMETOOLONG. Hash keeps it project-scoped.
+  // 超长的项目路径（深层 monorepo、Bazel 输出目录）需要回退到 tmpdir，
+  // 否则 `bind` 会返回 EADDRINUSE / ENAMETOOLONG。哈希保证路径仍与项目绑定。
   return path.join(os.tmpdir(), `synapse-${projectHash(projectRoot)}.sock`);
 }
 
-/** Absolute path to the daemon pid lockfile for `projectRoot`. */
+/** `projectRoot` 对应的守护进程 pid 锁文件的绝对路径。 */
 export function getDaemonPidPath(projectRoot: string): string {
   return path.join(getSynapseDir(projectRoot), 'daemon.pid');
 }
 
-/** Structured contents of the pid lockfile. */
+/** pid 锁文件的结构化内容。 */
 export interface DaemonLockInfo {
   pid: number;
   version: string;
@@ -61,17 +58,17 @@ export interface DaemonLockInfo {
 }
 
 /**
- * Serialize a {@link DaemonLockInfo} for writing to the pidfile. JSON for
- * human readability — operators occasionally `cat` this when debugging.
+ * 将 {@link DaemonLockInfo} 序列化以写入 pidfile。使用 JSON 格式以便人工读取
+ * — 运维人员调试时偶尔会 `cat` 该文件。
  */
 export function encodeLockInfo(info: DaemonLockInfo): string {
   return JSON.stringify(info, null, 2) + '\n';
 }
 
 /**
- * Parse a pidfile body. Tolerant of old-format pidfiles (plain decimal pid) so
- * a 0.10.x daemon doesn't trip over a 0.9.x lockfile if that ever happens —
- * we treat such a lockfile as "process is unknown version, refuse to share."
+ * 解析 pidfile 内容。对旧格式 pidfile（纯十进制 pid）具有容忍性，
+ * 以防 0.10.x 守护进程遭遇 0.9.x 锁文件——此类锁文件被视为
+ * "进程版本未知，拒绝共享"。
  */
 export function decodeLockInfo(raw: string): DaemonLockInfo | null {
   const trimmed = raw.trim();
@@ -89,7 +86,7 @@ export function decodeLockInfo(raw: string): DaemonLockInfo | null {
     }
     return null;
   } catch {
-    // Fall through to legacy plain-pid handling.
+    // 回退到旧版纯 pid 格式处理。
   }
   const pid = Number(trimmed);
   if (Number.isFinite(pid) && pid > 0) {

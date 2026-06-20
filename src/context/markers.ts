@@ -1,19 +1,16 @@
 /**
- * Stable sentinel strings shared between the context builder (which emits them
- * into its markdown) and the MCP layer (which detects them to adjust framing).
+ * 在上下文构建器（负责将其输出到 markdown）与 MCP 层（负责检测它以调整措辞）
+ * 之间共享的稳定哨兵字符串。
  *
- * Intentionally a dependency-free leaf module: the MCP tool layer imports this
- * to recognise a low-confidence response, and routing that recognition through
- * the full context module would drag its dependencies onto the cold-start path.
- * Keep this file import-free.
+ * 这是一个无依赖的叶模块，MCP 工具层通过导入它来识别低置信度响应。
+ * 若将该识别逻辑路由到完整的上下文模块，会将其依赖拖入冷启动路径。
+ * 请保持本文件无任何导入。
  */
 
 /**
- * Heading that leads the honest low-confidence handoff appended to a context
- * response when the query resolved only to weak/isolated matches. The MCP layer
- * checks for it to suppress the contradictory "this is comprehensive, don't call
- * explore" small-repo footer. Changing the text is a breaking sentinel change —
- * both the emitter (`ContextBuilder`) and the detector (`src/mcp/tools.ts`)
- * import this constant, so they stay in sync automatically.
+ * 当查询仅解析到弱/孤立匹配时，追加到上下文响应末尾的诚实低置信度交接标题。
+ * MCP 层检测到它后，会抑制那条矛盾的"此结果很全面，不必再调用 explore"
+ * 的小型代码库页脚。修改此文本属于破坏性哨兵变更——发射器（`ContextBuilder`）
+ * 和检测器（`src/mcp/tools.ts`）都导入此常量，因此它们会自动保持同步。
  */
 export const LOW_CONFIDENCE_MARKER = '### ⚠️ Low-confidence match';

@@ -1,8 +1,8 @@
 ﻿/**
- * Context Builder
+ * 上下文构建器
  *
- * Builds rich context for tasks by combining FTS search with graph traversal.
- * Outputs structured context ready to inject into Claude.
+ * 结合 FTS 搜索与图遍历，为任务构建丰富的上下文。
+ * 输出结构化上下文，可直接注入 Claude。
  */
 
 import * as fs from 'fs';
@@ -29,22 +29,22 @@ import { isTestFile, extractSearchTerms, scorePathRelevance, getStemVariants, is
 import { LOW_CONFIDENCE_MARKER } from './markers';
 
 /**
- * Extract likely symbol names from a natural language query
+ * 从自然语言查询中提取可能的符号名
  *
- * Identifies potential code symbols using patterns:
- * - CamelCase: UserService, signInWithGoogle
- * - snake_case: user_service, sign_in
- * - SCREAMING_SNAKE: MAX_RETRIES
- * - dot.notation: app.isPackaged (extracts both sides)
- * - Single words that look like identifiers (no spaces, not common English words)
+ * 使用以下模式识别潜在代码符号：
+ * - CamelCase：UserService、signInWithGoogle
+ * - snake_case：user_service、sign_in
+ * - SCREAMING_SNAKE：MAX_RETRIES
+ * - dot.notation：app.isPackaged（两侧都提取）
+ * - 看起来像标识符的单词（无空格、非常见英文词）
  *
- * @param query - Natural language query
- * @returns Array of potential symbol names
+ * @param query - 自然语言查询
+ * @returns 潜在符号名数组
  */
 function extractSymbolsFromQuery(query: string): string[] {
   const symbols = new Set<string>();
 
-  // Extract CamelCase identifiers (2+ chars, starts with letter)
+  // 提取 CamelCase 标识符（2 个字符以上，以字母开头）
   const camelCasePattern = /\b([A-Z][a-z]+(?:[A-Z][a-z]*)*|[a-z]+(?:[A-Z][a-z]*)+)\b/g;
   let match;
   while ((match = camelCasePattern.exec(query)) !== null) {
@@ -53,7 +53,7 @@ function extractSymbolsFromQuery(query: string): string[] {
     }
   }
 
-  // Extract snake_case identifiers
+  // 提取 snake_case 标识符
   const snakeCasePattern = /\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\b/gi;
   while ((match = snakeCasePattern.exec(query)) !== null) {
     if (match[1] && match[1].length >= 3) {
@@ -61,7 +61,7 @@ function extractSymbolsFromQuery(query: string): string[] {
     }
   }
 
-  // Extract SCREAMING_SNAKE_CASE
+  // 提取 SCREAMING_SNAKE_CASE 标识符
   const screamingPattern = /\b([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)\b/g;
   while ((match = screamingPattern.exec(query)) !== null) {
     if (match[1]) {
@@ -69,7 +69,7 @@ function extractSymbolsFromQuery(query: string): string[] {
     }
   }
 
-  // Extract ALL_CAPS acronyms (2+ chars, e.g., REST, HTTP, LRU, API)
+  // 提取全大写缩写词（2 个字符以上，例如 REST、HTTP、LRU、API）
   const acronymPattern = /\b([A-Z]{2,})\b/g;
   while ((match = acronymPattern.exec(query)) !== null) {
     if (match[1]) {
@@ -77,11 +77,11 @@ function extractSymbolsFromQuery(query: string): string[] {
     }
   }
 
-  // Extract dot.notation and split into parts (e.g., "app.isPackaged" -> ["app", "isPackaged"])
+  // 提取点号连接的标识符并拆分为各部分（例如 "app.isPackaged" -> ["app", "isPackaged"]）
   const dotPattern = /\b([a-zA-Z][a-zA-Z0-9]*(?:\.[a-zA-Z][a-zA-Z0-9]*)+)\b/g;
   while ((match = dotPattern.exec(query)) !== null) {
     if (match[1]) {
-      // Add both the full path and individual parts
+      // 同时添加完整路径和各个部分
       symbols.add(match[1]);
       const parts = match[1].split('.');
       for (const part of parts) {
@@ -92,8 +92,8 @@ function extractSymbolsFromQuery(query: string): string[] {
     }
   }
 
-  // Extract plain lowercase identifiers (3+ chars, not already matched)
-  // Catches symbol names like "undo", "redo", "history", "render", "parse"
+  // 提取纯小写标识符（3 个字符以上，且尚未匹配）
+  // 可捕获如 "undo"、"redo"、"history"、"render"、"parse" 等符号名
   const lowercasePattern = /\b([a-z][a-z0-9]{2,})\b/g;
   while ((match = lowercasePattern.exec(query)) !== null) {
     if (match[1]) {
@@ -101,7 +101,7 @@ function extractSymbolsFromQuery(query: string): string[] {
     }
   }
 
-  // Filter out common English words that aren't likely symbol names
+  // 过滤掉不太可能是符号名的常见英文单词
   const commonWords = new Set([
     'the', 'and', 'for', 'with', 'from', 'this', 'that', 'have', 'been',
     'will', 'would', 'could', 'should', 'does', 'done', 'make', 'made',
@@ -116,7 +116,7 @@ function extractSymbolsFromQuery(query: string): string[] {
     'more', 'most', 'very', 'being', 'having', 'doing',
     'system', 'need', 'needs', 'want', 'wants', 'like', 'look',
     'change', 'changes', 'changed', 'changing',
-    // Common English nouns/verbs that match thousands of unrelated code symbols
+    // 与大量不相关代码符号匹配的常见英文名词/动词
     'layer', 'handle', 'handles', 'handling', 'incoming', 'outgoing',
     'data', 'flow', 'flows', 'level', 'levels', 'request', 'requests',
     'response', 'responses', 'implement', 'implements', 'implementation',
@@ -133,28 +133,28 @@ function extractSymbolsFromQuery(query: string): string[] {
 }
 
 /**
- * Default options for context building
+ * 上下文构建的默认选项
  *
- * Tuned for minimal context usage while still providing useful results:
- * - Fewer nodes and code blocks by default
- * - Smaller code block size limit
- * - Shallower traversal
+ * 在保证实用性的前提下，经过调优以最小化上下文消耗：
+ * - 默认更少的节点和代码块
+ * - 更小的代码块大小限制
+ * - 更浅的图遍历深度
  */
 const DEFAULT_BUILD_OPTIONS: Required<BuildContextOptions> = {
-  maxNodes: 20,           // Reduced from 50 - most tasks don't need 50 symbols
-  maxCodeBlocks: 5,       // Reduced from 10 - only show most relevant code
-  maxCodeBlockSize: 1500, // Reduced from 2000
+  maxNodes: 20,           // 从 50 降低——大多数任务不需要 50 个符号
+  maxCodeBlocks: 5,       // 从 10 降低——仅展示最相关的代码
+  maxCodeBlockSize: 1500, // 从 2000 降低
   includeCode: true,
   format: 'markdown',
-  searchLimit: 3,         // Reduced from 5 - fewer entry points
-  traversalDepth: 1,      // Reduced from 2 - shallower graph expansion
+  searchLimit: 3,         // 从 5 降低——减少入口点数量
+  traversalDepth: 1,      // 从 2 降低——更浅的图扩展
   minScore: 0.3,
 };
 
 /**
- * Node kinds that provide high information value in context results.
- * Imports/exports are excluded because they have near-zero information density -
- * they tell you something exists, not how it works.
+ * 在上下文结果中具有高信息价值的节点类型。
+ * 排除了导入/导出，因为它们的信息密度几乎为零——
+ * 它们只说明某物存在，而不说明其工作方式。
  */
 const HIGH_VALUE_NODE_KINDS: NodeKind[] = [
   'function', 'method', 'class', 'interface', 'type_alias', 'struct', 'trait',
@@ -162,27 +162,26 @@ const HIGH_VALUE_NODE_KINDS: NodeKind[] = [
 ];
 
 /**
- * Default options for finding relevant context
+ * 查找相关上下文的默认选项
  */
 const DEFAULT_FIND_OPTIONS: Required<FindRelevantContextOptions> = {
-  searchLimit: 3,        // Reduced from 5
-  traversalDepth: 1,     // Reduced from 2
-  maxNodes: 20,          // Reduced from 50
+  searchLimit: 3,        // 从 5 降低
+  traversalDepth: 1,     // 从 2 降低
+  maxNodes: 20,          // 从 50 降低
   minScore: 0.3,
   edgeKinds: [],
-  nodeKinds: HIGH_VALUE_NODE_KINDS, // Filter out imports/exports by default
+  nodeKinds: HIGH_VALUE_NODE_KINDS, // 默认过滤掉导入/导出
 };
 
-// Re-export the low-confidence sentinel (defined in a dependency-free leaf so
-// the MCP layer can import it without pulling this module's deps onto the
-// cold-start path). Builder code below uses the imported binding directly.
+// 重新导出低置信度哨兵值（定义在无依赖的叶子模块中，
+// 使 MCP 层可以导入它，而不会将本模块的依赖拖入冷启动路径）。
+// 下方构建器代码直接使用导入的绑定。
 export { LOW_CONFIDENCE_MARKER } from './markers';
 
 /**
- * Context Builder
+ * 上下文构建器
  *
- * Coordinates semantic search and graph traversal to build
- * comprehensive context for tasks.
+ * 协调语义搜索与图遍历，为任务构建全面的上下文。
  */
 export class ContextBuilder {
   private projectRoot: string;
@@ -200,18 +199,18 @@ export class ContextBuilder {
   }
 
   /**
-   * Build context for a task
+   * 为任务构建上下文
    *
-   * Pipeline:
-   * 1. Parse task input (string or {title, description})
-   * 2. Run semantic search to find entry points
-   * 3. Expand graph around entry points
-   * 4. Extract code blocks for key nodes
-   * 5. Format output for Claude
+   * 流水线：
+   * 1. 解析任务输入（字符串或 {title, description}）
+   * 2. 运行语义搜索以找到入口点
+   * 3. 围绕入口点扩展图
+   * 4. 提取关键节点的代码块
+   * 5. 为 Claude 格式化输出
    *
-   * @param input - Task description or object with title/description
-   * @param options - Build options
-   * @returns TaskContext (structured) or formatted string
+   * @param input - 任务描述或包含 title/description 的对象
+   * @param options - 构建选项
+   * @returns TaskContext（结构化对象）或格式化字符串
    */
   async buildContext(
     input: TaskInput,
@@ -219,10 +218,10 @@ export class ContextBuilder {
   ): Promise<TaskContext | string> {
     const opts = { ...DEFAULT_BUILD_OPTIONS, ...options };
 
-    // Parse input
+    // 解析输入
     const query = typeof input === 'string' ? input : `${input.title}${input.description ? `: ${input.description}` : ''}`;
 
-    // Find relevant context (semantic search + graph expansion)
+    // 查找相关上下文（语义搜索 + 图扩展）
     const subgraph = await this.findRelevantContext(query, {
       searchLimit: opts.searchLimit,
       traversalDepth: opts.traversalDepth,
@@ -230,21 +229,21 @@ export class ContextBuilder {
       minScore: opts.minScore,
     });
 
-    // Get entry points (nodes from semantic search)
+    // 获取入口点（来自语义搜索的节点）
     const entryPoints = this.getEntryPoints(subgraph);
 
-    // Extract code blocks for key nodes
+    // 提取关键节点的代码块
     const codeBlocks = opts.includeCode
       ? await this.extractCodeBlocks(subgraph, opts.maxCodeBlocks, opts.maxCodeBlockSize)
       : [];
 
-    // Get related files
+    // 获取相关文件
     const relatedFiles = this.getRelatedFiles(subgraph);
 
-    // Generate summary
+    // 生成摘要
     const summary = this.generateSummary(query, subgraph, entryPoints);
 
-    // Calculate stats
+    // 计算统计数据
     const stats = {
       nodeCount: subgraph.nodes.size,
       edgeCount: subgraph.edges.length,
@@ -263,7 +262,7 @@ export class ContextBuilder {
       stats,
     };
 
-    // Return formatted output or raw context
+    // 返回格式化输出或原始上下文
     if (opts.format === 'markdown') {
       return formatContextAsMarkdown(context)
         + this.buildCallPathsSection(subgraph)
@@ -276,11 +275,10 @@ export class ContextBuilder {
   }
 
   /**
-   * Honest handoff appended when retrieval confidence is low (the query matched
-   * mostly common words). Instead of the usual "this covers the surface" framing
-   * — which, when wrong, sends the agent off to Read/Grep — it admits the
-   * uncertainty and routes the agent to the precise tools (explore with real
-   * symbol names, search, or files to browse the closest areas we *did* surface).
+   * 当检索置信度较低时（查询主要匹配到常见词）追加的诚实衔接提示。
+   * 与通常的"这已覆盖相关内容"措辞不同——那种说法一旦有误会让智能体
+   * 转去 Read/Grep——此处直接承认不确定性，并将智能体引导至精确工具
+   * （用真实符号名调用 explore、使用 search，或浏览我们确实找到的最近区域的文件）。
    */
   private buildLowConfidenceNote(entryPoints: Node[]): string {
     const dirs: string[] = [];
@@ -306,16 +304,15 @@ export class ContextBuilder {
   }
 
   /**
-   * Surface short call-paths among the symbols this context already found,
-   * derived in-memory from the subgraph's `calls` edges (no extra queries).
+   * 在本次上下文已找到的符号中呈现短调用路径，
+   * 直接从子图的 `calls` 边在内存中推导（无需额外查询）。
    *
-   * This bakes the value of path-finding INTO the always-loaded `context` tool.
-   * Agents reliably read context's output but do NOT discover/adopt a standalone
-   * trace tool (in deferred-MCP harnesses they only ToolSearch-select tools they
-   * already know). Delivering the flow here means "how does X reach Y" is
-   * answered without the agent needing to find, load, or choose a new tool.
-   * Chains stop where the static call graph ends (e.g. dynamic dispatch) — that
-   * truncation is honest, and the agent can synapse_node the last hop to bridge.
+   * 这将路径查找的价值内嵌到始终加载的 `context` 工具中。
+   * 智能体能可靠地读取 context 的输出，但不会发现/采用独立的 trace 工具
+   * （在延迟加载 MCP 的环境中，它们只会 ToolSearch 已知工具）。
+   * 在此交付流程意味着"X 如何到达 Y"无需智能体寻找、加载或选择新工具即可作答。
+   * 调用链在静态调用图结束处截断（例如动态分发）——
+   * 该截断是诚实的，智能体可用 synapse_node 在最后一跳处桥接。
    */
   private buildCallPathsSection(subgraph: Subgraph): string {
     const adj = new Map<string, string[]>();
@@ -330,12 +327,12 @@ export class ContextBuilder {
 
     const MAX_HOPS = 6;
     const chains: string[][] = [];
-    let budget = 2000; // bound DFS work on dense subgraphs
+    let budget = 2000; // 限制 DFS 在稠密子图上的工作量
     const dfs = (id: string, path: string[], seen: Set<string>): void => {
       if (budget-- <= 0) return;
       const next = (adj.get(id) ?? []).filter((t) => !seen.has(t));
       if (next.length === 0 || path.length >= MAX_HOPS) {
-        if (path.length >= 3) chains.push([...path]); // >=3 nodes = a real flow, not a single call
+        if (path.length >= 3) chains.push([...path]); // >=3 个节点 = 真实的流程，而非单次调用
         return;
       }
       for (const t of next) {
@@ -351,11 +348,10 @@ export class ContextBuilder {
     for (const s of starts) dfs(s, [s], new Set([s]));
     if (chains.length === 0) return '';
 
-    // Keep only chains that connect TWO OR MORE query-relevant symbols (roots).
-    // A chain from a root into an arbitrary callee (render → onMagicFrameGenerate)
-    // is structurally valid but tangential to the question; requiring ≥2 roots
-    // keeps the chain anchored to what the user actually asked about. Rank by
-    // #roots then length, and drop any that are a sub-path of a longer kept chain.
+    // 仅保留连接两个或更多与查询相关符号（根节点）的链。
+    // 从根节点到任意被调用者（render → onMagicFrameGenerate）的链在结构上有效，
+    // 但与问题关联不大；要求 ≥2 个根节点可让链锚定在用户真正关心的内容上。
+    // 按根节点数量再按长度排名，并丢弃较长保留链的子路径。
     const rootSet = new Set(subgraph.roots);
     const rootCount = (c: string[]): number => c.reduce((n, id) => n + (rootSet.has(id) ? 1 : 0), 0);
     const relevant = chains.filter((c) => rootCount(c) >= 2);
@@ -370,10 +366,9 @@ export class ContextBuilder {
     if (kept.length === 0) return '';
     const name = (id: string): string => subgraph.nodes.get(id)?.name ?? id;
 
-    // Synthesized (dynamic-dispatch) hops are real `calls` edges but invisible to
-    // static parsing — mark them inline so the agent sees WHERE the callback was
-    // wired up (`registered @file:line`) instead of grepping for it. Keyed by
-    // "source>target".
+    // 合成（动态分发）跳转是真实的 `calls` 边，但对静态解析不可见——
+    // 将其内联标注，让智能体看到回调在哪里连线（`registered @file:line`），
+    // 而无需 grep 搜索。以 "source>target" 为键。
     const synthByPair = new Map<string, string>();
     for (const e of subgraph.edges) {
       if (e.kind !== 'calls' || e.provenance !== 'heuristic') continue;
@@ -416,18 +411,18 @@ export class ContextBuilder {
   }
 
   /**
-   * Find relevant subgraph for a query
+   * 为查询查找相关子图
    *
-   * Uses hybrid search combining exact symbol lookup with semantic search:
-   * 1. Extract potential symbol names from query
-   * 2. Look up exact matches for those symbols (high confidence)
-   * 3. Use semantic search for concept matching
-   * 4. Merge results, prioritizing exact matches
-   * 5. Traverse graph from entry points
+   * 使用混合搜索，将精确符号查找与语义搜索相结合：
+   * 1. 从查询中提取潜在符号名
+   * 2. 查找这些符号的精确匹配（高置信度）
+   * 3. 使用语义搜索进行概念匹配
+   * 4. 合并结果，优先采用精确匹配
+   * 5. 从入口点遍历图
    *
-   * @param query - Natural language query
-   * @param options - Search and traversal options
-   * @returns Subgraph of relevant nodes and edges
+   * @param query - 自然语言查询
+   * @param options - 搜索和遍历选项
+   * @returns 相关节点和边的子图
    */
   async findRelevantContext(
     query: string,
@@ -435,44 +430,44 @@ export class ContextBuilder {
   ): Promise<Subgraph> {
     const opts = { ...DEFAULT_FIND_OPTIONS, ...options };
 
-    // Start with empty subgraph
+    // 从空子图开始
     const nodes = new Map<string, Node>();
     const edges: Edge[] = [];
     const roots: string[] = [];
 
-    // Handle empty query - return empty subgraph
+    // 处理空查询——返回空子图
     if (!query || query.trim().length === 0) {
       return { nodes, edges, roots };
     }
 
-    // === HYBRID SEARCH ===
+    // === 混合搜索 ===
 
-    // Step 1: Extract potential symbol names from query
+    // 第 1 步：从查询中提取潜在符号名
     const symbolsFromQuery = extractSymbolsFromQuery(query);
     logDebug('Extracted symbols from query', { query, symbols: symbolsFromQuery });
 
-    // Step 2: Look up exact matches for extracted symbols
+    // 第 2 步：查找提取到的符号的精确匹配
     let exactMatches: SearchResult[] = [];
     if (symbolsFromQuery.length > 0) {
       try {
-        // Get more results so we can apply co-location boosting before trimming
+        // 获取更多结果，以便在截断前应用共现位置提升
         exactMatches = this.queries.findNodesByExactName(symbolsFromQuery, {
           limit: Math.ceil(opts.searchLimit * 5),
           kinds: opts.nodeKinds && opts.nodeKinds.length > 0 ? opts.nodeKinds : undefined,
         });
 
-        // Co-location boost: when multiple extracted symbols appear in the same file,
-        // those results are much more likely to be what the user is looking for.
-        // E.g., "scrapeLoop" + "run" both in scrape/scrape.go → boost both.
+        // 共现位置提升：当多个提取到的符号出现在同一文件时，
+        // 这些结果更有可能正是用户所需。
+        // 例如 "scrapeLoop" + "run" 都在 scrape/scrape.go → 两者都提升。
         if (exactMatches.length > 1) {
-          // Build a map of files → how many distinct symbol names matched in that file
+          // 构建 文件 → 匹配到该文件的不同符号名数量 的映射
           const fileSymbolCounts = new Map<string, Set<string>>();
           for (const r of exactMatches) {
             const names = fileSymbolCounts.get(r.node.filePath) || new Set();
             names.add(r.node.name.toLowerCase());
             fileSymbolCounts.set(r.node.filePath, names);
           }
-          // Boost results in files where multiple query symbols co-occur
+          // 对多个查询符号共现的文件中的结果进行提升
           exactMatches = exactMatches.map(r => {
             const symbolCount = fileSymbolCounts.get(r.node.filePath)?.size || 1;
             return {
@@ -483,7 +478,7 @@ export class ContextBuilder {
           exactMatches.sort((a, b) => b.score - a.score);
         }
 
-        // Trim back to reasonable size
+        // 截断回合理大小
         exactMatches = exactMatches.slice(0, Math.ceil(opts.searchLimit * 2));
         logDebug('Exact symbol matches', { count: exactMatches.length });
       } catch (error) {
@@ -491,14 +486,14 @@ export class ContextBuilder {
       }
     }
 
-    // Step 2b: Search for extracted symbols as definition (class/interface) prefixes.
-    // When the user writes "REST", "bulk", or "allocation", they usually mean classes
-    // like RestController, BulkRequest, AllocationService — not nodes named exactly that.
-    // Also tries stem variants: "caching" → "cache" finds Cache, CacheBuilder.
+    // 第 2b 步：将提取到的符号作为定义（class/interface）的前缀进行搜索。
+    // 当用户写 "REST"、"bulk" 或 "allocation" 时，通常指的是
+    // RestController、BulkRequest、AllocationService 等类，而非同名节点。
+    // 同时尝试词干变体：如 "caching" → "cache" 可找到 Cache、CacheBuilder。
     if (symbolsFromQuery.length > 0) {
       const definitionKinds: NodeKind[] = ['class', 'interface', 'struct', 'trait',
         'protocol', 'enum', 'type_alias'];
-      // Expand symbols with stem variants for broader definition matching
+      // 用词干变体扩展符号，以进行更广泛的定义匹配
       const expandedSymbols = new Set(symbolsFromQuery);
       for (const sym of symbolsFromQuery) {
         for (const variant of getStemVariants(sym)) {
@@ -506,10 +501,10 @@ export class ContextBuilder {
         }
       }
       for (const sym of expandedSymbols) {
-        // Title-case the symbol: "REST" → "Rest", "bulk" → "Bulk", "allocation" → "Allocation"
+        // 将符号首字母大写：如 "REST" → "Rest"、"bulk" → "Bulk"、"allocation" → "Allocation"
         const titleCased = sym.charAt(0).toUpperCase() + sym.slice(1).toLowerCase();
-        if (titleCased === sym) continue; // already title-case (e.g., "Engine") — handled by exact match
-        // Fetch more results since popular prefixes have many matches
+        if (titleCased === sym) continue; // 已是首字母大写（如 "Engine"）——由精确匹配处理
+        // 获取更多结果，因为常见前缀匹配数量众多
         const prefixResults = this.queries.searchNodes(titleCased, {
           limit: 30,
           kinds: definitionKinds,
@@ -517,9 +512,9 @@ export class ContextBuilder {
         const matched: SearchResult[] = [];
         for (const r of prefixResults) {
           if (r.node.name.toLowerCase().startsWith(titleCased.toLowerCase())) {
-            // Favor shorter names: "AllocationService" (18 chars) over
-            // "AllocationBalancingRoundMetrics" (31 chars). Core classes tend
-            // to have concise names; test/helper classes are verbose.
+            // 偏向更短的名称：如 "AllocationService"（18 个字符）优于
+            // "AllocationBalancingRoundMetrics"（31 个字符）。核心类倾向于
+            // 使用简洁的名称，而测试/辅助类名称更冗长。
             const brevityBonus = Math.max(0, 10 - (r.node.name.length - titleCased.length) / 3);
             matched.push({ ...r, score: r.score + 15 + brevityBonus });
           }
@@ -536,20 +531,20 @@ export class ContextBuilder {
       exactMatches = exactMatches.slice(0, Math.ceil(opts.searchLimit * 3));
     }
 
-    // Step 3: Run text search for natural language term matching
-    // This catches file-name and node-name matches that semantic search may miss,
-    // which is critical for template-heavy codebases (e.g., Liquid/Shopify themes)
-    // where file names are the primary identifiers.
+    // 第 3 步：运行文本搜索以匹配自然语言词汇
+    // 可捕获语义搜索可能遗漏的文件名和节点名匹配，
+    // 这对以模板为主的代码库（如 Liquid/Shopify 主题）至关重要——
+    // 在这些代码库中，文件名是主要标识符。
     let textResults: SearchResult[] = [];
     try {
       const searchTerms = extractSearchTerms(query);
       if (searchTerms.length > 0) {
-        // Search each term individually to get broader coverage,
-        // then boost results that match multiple terms
+        // 逐个搜索每个词以获得更广的覆盖，
+        // 再对匹配多个词的结果进行提升
         const termResultsMap = new Map<string, { result: SearchResult; termHits: number }>();
-        // When no explicit kind filter is set, exclude imports — they flood FTS
-        // results with qualified name matches (e.g., "REST" matches 445K import paths)
-        // but are almost never what exploration queries want.
+        // 未设置显式类型过滤时，排除导入——它们会用限定名匹配
+        // 淹没 FTS 结果（如 "REST" 匹配 445K 条导入路径），
+        // 但几乎永远不是探索性查询想要的内容。
         const searchKinds = opts.nodeKinds && opts.nodeKinds.length > 0
           ? opts.nodeKinds
           : ['file', 'module', 'class', 'struct', 'interface', 'trait', 'protocol',
@@ -571,7 +566,7 @@ export class ContextBuilder {
             }
           }
         }
-        // Boost results matching multiple terms and sort
+        // 对匹配多个词的结果进行提升并排序
         textResults = Array.from(termResultsMap.values())
           .map(({ result, termHits }) => ({
             ...result,
@@ -585,13 +580,13 @@ export class ContextBuilder {
       logDebug('Text search failed', { query, error: String(error) });
     }
 
-    // Step 4: Merge results, taking the max score when duplicates appear
-    // across search channels. Exact matches may have lower scores than FTS
-    // results for the same node — use the best score from any channel.
+    // 第 4 步：合并结果，当跨搜索通道出现重复时取最高分。
+    // 精确匹配的分数可能低于 FTS 对同一节点的结果——
+    // 使用任意通道中的最佳分数。
     const resultById = new Map<string, SearchResult>();
     let searchResults: SearchResult[] = [];
 
-    // Add exact matches first
+    // 首先添加精确匹配
     for (const result of exactMatches) {
       const existing = resultById.get(result.node.id);
       if (existing) {
@@ -602,7 +597,7 @@ export class ContextBuilder {
       }
     }
 
-    // Add text search results, upgrading scores for duplicates
+    // 添加文本搜索结果，对重复项升级分数
     for (const result of textResults) {
       const existing = resultById.get(result.node.id);
       if (existing) {
@@ -616,7 +611,7 @@ export class ContextBuilder {
     const queryLower = query.toLowerCase();
     const isTestQuery = queryLower.includes('test') || queryLower.includes('spec');
 
-    // Deprioritize test files early so they don't take multi-term boost slots
+    // 提前降低测试文件的优先级，防止其占用多词提升的名额
     if (!isTestQuery) {
       for (const result of searchResults) {
         if (isTestFile(result.node.filePath)) {
@@ -625,23 +620,20 @@ export class ContextBuilder {
       }
     }
 
-    // Iter7 — Core-directory boost. On projects with one file that holds
-    // the dense majority of internal call edges (e.g. sinatra's
-    // `lib/sinatra/base.rb` at 85% of all in-file edges), the agent's
-    // task usually asks about the framework's core. Without this boost,
-    // ranking favors small focused extension files (e.g. text search
-    // picks `sinatra-contrib/lib/sinatra/multi_route.rb`'s 10-line
-    // `route` method over `base.rb`'s `route!` because the extension
-    // file's `route` matches the query verbatim AND the file is small,
-    // dwarfing the longer name `route!` in a 1500-line file). Boost
-    // results that share a directory prefix with the dominant file's
-    // directory so the core file's siblings outrank sibling-package
-    // extensions.
+    // Iter7——核心目录提升。对于拥有一个文件集中了绝大多数内部调用边的项目
+    // （例如 sinatra 的 `lib/sinatra/base.rb` 占所有内部边的 85%），
+    // 智能体的任务通常围绕框架核心展开。没有这个提升时，排名会倾向于
+    // 小型聚焦的扩展文件（例如文本搜索会选中
+    // `sinatra-contrib/lib/sinatra/multi_route.rb` 中的 10 行 `route` 方法，
+    // 而非 `base.rb` 中的 `route!`——因为扩展文件的 `route` 精确匹配查询词，
+    // 且文件很小，使 1500 行文件中较长的 `route!` 黯然失色）。
+    // 对与主导文件目录同前缀的结果进行提升，使核心文件的同级文件排名
+    // 高于同级包中的扩展文件。
     try {
       const dominant = this.queries.getDominantFile?.();
       if (dominant && dominant.edgeCount >= 3 * dominant.nextEdgeCount) {
-        // Take the directory of the dominant file (everything up to the
-        // last slash). For `lib/sinatra/base.rb` → `lib/sinatra/`.
+        // 取主导文件的目录（最后一个斜杠之前的部分）。
+        // 如 `lib/sinatra/base.rb` → `lib/sinatra/`。
         const slash = dominant.filePath.lastIndexOf('/');
         if (slash > 0) {
           const coreDir = dominant.filePath.slice(0, slash + 1);
@@ -653,21 +645,20 @@ export class ContextBuilder {
         }
       }
     } catch {
-      // SQL failure — fall through, scoring works without the boost
+      // SQL 查询失败——继续，评分在没有此提升的情况下仍然有效
     }
 
-    // Step 5a: Multi-term co-occurrence re-ranking (applied BEFORE truncation).
-    // For multi-word queries like "search execution from request to shard",
-    // nodes matching 2+ query terms in their name or path are far more relevant
-    // than nodes matching just one generic term. Without this, "ExecutionUtils"
-    // (matches only "execution") fills budget slots meant for "ShardSearchRequest"
-    // (matches "shard" + "search" + "request").
+    // 第 5a 步：多词共现重排（在截断前应用）。
+    // 对于 "search execution from request to shard" 等多词查询，
+    // 在名称或路径中匹配 2 个以上查询词的节点，比仅匹配一个通用词的节点
+    // 相关性高得多。没有这个步骤，"ExecutionUtils"（仅匹配 "execution"）
+    // 会抢占本应分给 "ShardSearchRequest"（匹配 "shard"+"search"+"request"）的名额。
     const queryTermsForBoost = extractSearchTerms(query);
     if (queryTermsForBoost.length >= 2) {
-      // Group terms that are substrings of each other (stem variants of the same
-      // root word). "indexed", "indexe", "index" should count as ONE concept match,
-      // not three. Without this, stem variants inflate matchCount and give false
-      // multi-term boosts to symbols matching one root word multiple times.
+      // 将互为子串的词归为一组（同一词根的词干变体）。
+      // "indexed"、"indexe"、"index" 应算作 ONE 个概念匹配，
+      // 而非三个。否则词干变体会虚增 matchCount，对仅匹配一个词根
+      // 多次的符号给出错误的多词提升。
       const termGroups: string[][] = [];
       const sorted = [...queryTermsForBoost].sort((a, b) => b.length - a.length);
       const assigned = new Set<string>();
@@ -685,18 +676,17 @@ export class ContextBuilder {
         termGroups.push(group);
       }
 
-      // Build a set of exact-match node IDs so we can exempt them from dampening.
-      // When the query is "LiveEditMode DevServerPreview", these are specific
-      // symbols the user asked for — dampening them because they only match 1
-      // term group is counter-productive.
+      // 构建精确匹配节点 ID 集合，以便在降权时对其豁免。
+      // 当查询为 "LiveEditMode DevServerPreview" 时，这些是用户明确点名的符号——
+      // 因为它们只匹配 1 个词组就对其降权是适得其反的。
       const exactMatchIds = new Set(exactMatches.map(r => r.node.id));
 
-      // ...but only exempt exact matches the user *named as an identifier*
-      // (camelCase/snake_case/acronym). A plain dictionary word that happens to
-      // exact-match an unrelated symbol — query "flat object" → a constant named
-      // FLAT — must NOT be exempt, or the +exact-name bonus floats it to the top
-      // of a prose query with zero corroboration from any other term. Classify by
-      // the QUERY token (what the user typed), not the matched symbol's name.
+      // ……但只豁免用户*以标识符形式命名*的精确匹配
+      // （camelCase/snake_case/缩写词）。一个恰好精确匹配
+      // 无关符号的普通词——如查询 "flat object" → 常量 FLAT——
+      // 绝不应豁免，否则 +精确名称奖励会将其浮到查询顶部，
+      // 而无任何其他词的佐证。按查询词令牌（用户输入的内容）分类，
+      // 而非匹配到的符号名称。
       const distinctiveTokens = new Set(
         symbolsFromQuery.filter(isDistinctiveIdentifier).map(s => s.toLowerCase())
       );
@@ -707,10 +697,9 @@ export class ContextBuilder {
       );
 
       for (const result of searchResults) {
-        // Check term matches in name (substring) and path DIRECTORIES (exact).
-        // Directory segments must match exactly — "search" matches directory
-        // "search/" but NOT "elasticsearch/". The class name is checked
-        // separately via substring match on the node name.
+        // 检查名称中的词匹配（子串）和路径目录中的词匹配（精确）。
+        // 目录段必须精确匹配——"search" 匹配目录 "search/"
+        // 但不匹配 "elasticsearch/"。类名通过节点名的子串匹配单独检查。
         const nameLower = result.node.name.toLowerCase();
         const dirSegments = path.dirname(result.node.filePath).toLowerCase().split('/');
         let matchCount = 0;
@@ -723,35 +712,33 @@ export class ContextBuilder {
           if (groupMatches) matchCount++;
         }
         if (matchCount >= 2) {
-          // Multiplicative boost — 2 terms → 2x, 3 terms → 2.5x
+          // 乘法提升——2 个词 → 2x，3 个词 → 2.5x
           result.score *= 1 + matchCount * 0.5;
         } else if (distinctiveExactMatchIds.has(result.node.id)) {
-          // Exact match on a distinctive identifier the user explicitly named —
-          // keep full score (e.g. "LiveEditMode DevServerPreview").
+          // 对用户明确命名的标识符的精确匹配——保持全分（如 "LiveEditMode DevServerPreview"）
         } else if (exactMatchIds.has(result.node.id)) {
-          // Exact match on a COMMON word (e.g. "flat" → FLAT): high-scoring noise
-          // inflated by the +exact-name bonus, corroborated by no other query
-          // term. Demote hard so corroborated matches win.
+          // 对常见词的精确匹配（如 "flat" → FLAT）：被 +精确名称奖励虚增的高分噪声，
+          // 无任何其他查询词佐证。大幅降权，让有佐证的匹配胜出。
           result.score *= 0.3;
         } else {
-          // Mild dampen for generic single-term matches — they might be generic
-          // but could also be the right result (e.g., "Protocol" class for an IPC query).
+          // 对通用单词匹配的温和降权——它们可能是通用的，
+          // 但也可能是正确结果（如 IPC 查询的 "Protocol" 类）。
           result.score *= 0.6;
         }
       }
       searchResults.sort((a, b) => b.score - a.score);
     }
 
-    // Step 5b: CamelCase-boundary matching via LIKE query.
-    // FTS can't find "Search" inside "TransportSearchAction" (one FTS token).
-    // LIKE reliably finds these substring matches. Results are appended with
-    // guaranteed slots so they don't compete with higher-scoring prefix matches.
+    // 第 5b 步：通过 LIKE 查询进行 CamelCase 边界匹配。
+    // FTS 无法在 "TransportSearchAction"（一个 FTS 令牌）中找到 "Search"。
+    // LIKE 能可靠地找到这些子串匹配。结果以保证名额追加，
+    // 不与分数更高的前缀匹配竞争。
     if (symbolsFromQuery.length > 0) {
       const camelDefinitionKinds: NodeKind[] = ['class', 'interface', 'struct', 'trait',
         'protocol', 'enum', 'type_alias'];
       const camelSearchedTerms = new Set<string>();
       const searchIdSet = new Set(searchResults.map(r => r.node.id));
-      // Track per-node term hits for multi-term boosting
+      // 跟踪每个节点的词命中数，用于多词提升
       const camelNodeTerms = new Map<string, { result: SearchResult; termCount: number }>();
       const maxCamelPerTerm = Math.ceil(opts.searchLimit / 2);
 
@@ -762,24 +749,23 @@ export class ContextBuilder {
         if (camelSearchedTerms.has(termKey)) continue;
         camelSearchedTerms.add(termKey);
 
-        // Fetch a large batch — popular terms like "Search" in Elasticsearch
-        // have hundreds of substring matches. The LIKE scan cost is the same
-        // regardless of LIMIT (SQLite scans all matches to sort), so we fetch
-        // generously and let path-relevance scoring pick the best ones.
+        // 获取大批量结果——Elasticsearch 中的 "Search" 等热门词有数百个子串匹配。
+        // LIKE 扫描成本与 LIMIT 无关（SQLite 扫描所有匹配后排序），
+        // 因此大量获取，让路径相关性评分选出最佳结果。
         const likeResults = this.queries.findNodesByNameSubstring(titleCased, {
           limit: 200,
           kinds: camelDefinitionKinds,
           excludePrefix: true,
         });
 
-        // Filter to CamelCase boundaries, score by path relevance, and take top N
+        // 过滤到 CamelCase 边界，按路径相关性评分，并取前 N 个
         const termCandidates: SearchResult[] = [];
         for (const r of likeResults) {
           const name = r.node.name;
           const idx = name.indexOf(titleCased);
           if (idx <= 0) continue;
-          // Accept CamelCase boundary (lowercase before match) OR
-          // acronym boundary (uppercase before match, e.g., RPCProtocol)
+          // 接受 CamelCase 边界（匹配前为小写）或
+          // 缩写词��界（匹配前为大写，如 RPCProtocol）
           if (!/[a-zA-Z]/.test(name.charAt(idx - 1))) continue;
           if (searchIdSet.has(r.node.id)) continue;
           if (isTestFile(r.node.filePath) && !isTestQuery) continue;
@@ -790,10 +776,9 @@ export class ContextBuilder {
         }
         termCandidates.sort((a, b) => b.score - a.score);
 
-        // Widen the per-term pool for accumulation so multi-term co-occurrences
-        // can be discovered. A class matching 3 query terms at CamelCase boundaries
-        // is far more relevant than one matching just 1, but it needs to survive
-        // the per-term cut for EACH term to accumulate its count.
+        // 扩大每词的积累池，以发现多词共现情况。
+        // 在 CamelCase 边界匹配 3 个查询词的类，远比仅匹配 1 个词的类更相关，
+        // 但它需要在每个词的截断中存活，才能积累其计数。
         const accumPerTerm = maxCamelPerTerm * 4;
         for (const r of termCandidates.slice(0, accumPerTerm)) {
           const existing = camelNodeTerms.get(r.node.id);
@@ -808,15 +793,14 @@ export class ContextBuilder {
         }
       }
 
-      // Append CamelCase matches with multi-term boost.
-      // These are structurally important (class names containing query terms at
-      // CamelCase boundaries) but score much lower than FTS results. Scale their
-      // scores up so multi-term CamelCase matches can compete with FTS results.
+      // 追加带多词提升的 CamelCase 匹配。
+      // 这些匹配在结构上很重要（类名在 CamelCase 边界包含查询词），
+      // 但分数远低于 FTS 结果。放大分数，使多词 CamelCase 匹配
+      // 能与 FTS 结果竞争。
       const camelResults: SearchResult[] = [];
       for (const [, info] of camelNodeTerms) {
-        // Multi-term CamelCase matches are extremely relevant — a class matching
-        // 3+ query terms in its name (e.g., ExtensionHostProcess) is almost
-        // certainly what the user wants. Scale aggressively.
+        // 多词 CamelCase 匹配极为相关——名称中匹配 3 个以上查询词的类
+        // （如 ExtensionHostProcess）几乎肯定是用户想要的。积极放大分数。
         info.result.score = info.result.score * (1 + info.termCount) + (info.termCount - 1) * 30;
         camelResults.push(info.result);
       }
@@ -827,15 +811,13 @@ export class ContextBuilder {
         searchIdSet.add(r.node.id);
       }
 
-      // Step 5c: Compound term matching — find classes whose name contains 2+
-      // query terms at ANY position (not just CamelCase boundaries).
-      // The CamelCase step above requires idx > 0, which misses classes that
-      // START with a query term (e.g., "SearchShardsRequest" starts with "Search").
-      // For multi-word queries, a class matching multiple query terms in its name
-      // is almost certainly relevant regardless of position.
+      // 第 5c 步：复合词匹配——查找名称在任意位置（不仅限于 CamelCase 边界）
+      // 包含 2 个以上查询词的类。上面的 CamelCase 步骤要求 idx > 0，
+      // 会遗漏以查询词开头的类（如 "SearchShardsRequest" 以 "Search" 开头）。
+      // 对于多词查询，名称中匹配多个查询词的类，无论位置如何几乎都是相关的。
       if (symbolsFromQuery.length >= 2) {
-        // Collect ALL LIKE results per term (reusing findNodesByNameSubstring)
-        // but without the CamelCase boundary or prefix exclusion filters.
+        // 收集每个词的所有 LIKE 结果（复用 findNodesByNameSubstring），
+        // 但不使用 CamelCase 边界或前缀排除过滤器。
         const compoundTermMap = new Map<string, { node: Node; terms: Set<string> }>();
         for (const sym of symbolsFromQuery) {
           const titleCased = sym.charAt(0).toUpperCase() + sym.slice(1).toLowerCase();
@@ -859,7 +841,7 @@ export class ContextBuilder {
           }
         }
 
-        // Keep only nodes matching 2+ distinct terms
+        // 仅保留匹配 2 个以上不同词的节点
         const compoundResults: SearchResult[] = [];
         for (const [, entry] of compoundTermMap) {
           if (entry.terms.size >= 2) {
@@ -880,35 +862,33 @@ export class ContextBuilder {
       }
     }
 
-    // Final sort and truncation — all search channels (exact, text, CamelCase,
-    // compound) have now contributed. Sort by score so multi-term matches from
-    // later steps can outrank dampened single-term matches from earlier steps.
+    // 最终排序和截断——所有搜索通道（精确匹配、文本、CamelCase、
+    // 复合词）均已贡献。按分数排序，使后续步骤中的多词匹配
+    // 能超越前面步骤中被降权的单词匹配。
     searchResults.sort((a, b) => b.score - a.score);
     searchResults = searchResults.slice(0, opts.searchLimit * 3);
 
-    // Filter by minimum score
+    // 按最低分数过滤
     let filteredResults = searchResults.filter((r) => r.score >= opts.minScore);
 
-    // Resolve imports/exports to their actual definitions
-    // If someone searches "terminal" and finds `import { TerminalPanel }`,
-    // they want the TerminalPanel class, not the import statement
+    // 将导入/导出解析为其实际定义。
+    // 当有人搜索 "terminal" 并找到 `import { TerminalPanel }` 时，
+    // 他们想要的是 TerminalPanel 类，而非导入语句。
     filteredResults = this.resolveImportsToDefinitions(filteredResults);
 
-    // Cap entry points so traversal budget isn't spread too thin.
-    // With 36 entry points and maxNodes=120, each gets only 3 nodes — useless.
-    // Cap to searchLimit so each entry point gets a meaningful traversal budget.
+    // 限制入口点数量，避免遍历预算过于分散。
+    // 36 个入口点加上 maxNodes=120，每个只能获得 3 个节点——毫无意义。
+    // 限制为 searchLimit，使每个入口点获得有意义的遍历预算。
     if (filteredResults.length > opts.searchLimit) {
       filteredResults = filteredResults.slice(0, opts.searchLimit);
     }
 
-    // Confidence signal for the honest-handoff footer (consumed in buildContext).
-    // A multi-term prose query that resolves only to isolated common-word matches
-    // — no entry point corroborated by 2+ distinct query terms, and none a
-    // distinctive identifier the user explicitly named — is LOW confidence: the
-    // results are best-effort, not a located answer, so the agent should be told
-    // to drill in with explore/trace rather than trust the list as comprehensive.
-    // Single-keyword and symbol-name queries are exempt (their single match IS the
-    // answer), so the handoff never fires on them.
+    // 诚实衔接尾注（由 buildContext 使用）的置信度信号。
+    // 一个多词散文查询，若只解析到孤立的常用词匹配——
+    // 没有被 2 个以上不同查询词佐证的入口点，且没有用户明确命名的
+    // 标识性标识符——则为低置信度：结果是尽力而为，而非已定位的答案，
+    // 应告知智能体用 explore/trace 深入查找，而非将列表视为全面答案。
+    // 单关键词和符号名查询豁免（其单一匹配就是答案），因此衔接提示不会对其触发。
     let confidence: 'high' | 'low' = 'high';
     const confTerms = extractSearchTerms(query, { stems: false }).filter(t => t.length >= 3);
     if (confTerms.length >= 2 && filteredResults.length > 0) {
@@ -930,17 +910,16 @@ export class ContextBuilder {
       if (!anyStrong) confidence = 'low';
     }
 
-    // Add entry points to subgraph
+    // 将入口点添加到子图
     for (const result of filteredResults) {
       nodes.set(result.node.id, result.node);
       roots.push(result.node.id);
     }
 
-    // Expand type hierarchy for class/interface entry points.
-    // BFS often exhausts its per-entry-point budget on contained methods
-    // before reaching extends/implements neighbors. This dedicated step
-    // ensures subclasses and superclasses always appear in results.
-    // Budget: up to maxNodes/4 hierarchy nodes to avoid flooding.
+    // 展开 class/interface 入口点的类型层次结构。
+    // BFS 往往在到达 extends/implements 邻居之前，就将每个入口点的预算
+    // 耗尽在其包含的方法上。这个专用步骤确保子类和父类始终出现在结果中。
+    // 预算：最多 maxNodes/4 个层次结构节点，避免泛滥。
     const typeHierarchyKinds = new Set<string>(['class', 'interface', 'struct', 'trait', 'protocol']);
     const maxHierarchyNodes = Math.ceil(opts.maxNodes / 4);
     let hierarchyNodesAdded = 0;
@@ -965,8 +944,8 @@ export class ContextBuilder {
       }
     }
 
-    // Pass 2: expand hierarchy of newly-discovered parent types to find siblings.
-    // E.g., InternalEngine → Engine (parent, from pass 1) → ReadOnlyEngine (sibling).
+    // 第 2 遍：展开新发现父类型的层次结构以找到兄弟类型。
+    // 例如 InternalEngine → Engine（父类，来自第 1 遍）→ ReadOnlyEngine（兄弟类）。
     if (hierarchyNodesAdded > 0) {
       const pass2Candidates = [...nodes.values()].filter(
         n => typeHierarchyKinds.has(n.kind) && !roots.includes(n.id)
@@ -993,7 +972,7 @@ export class ContextBuilder {
       }
     }
 
-    // Traverse from each entry point
+    // 从每个入口点出发进行遍历
     for (const result of filteredResults) {
       const traversalResult = this.traverser.traverseBFS(result.node.id, {
         maxDepth: opts.traversalDepth,
@@ -1003,14 +982,14 @@ export class ContextBuilder {
         limit: Math.ceil(opts.maxNodes / Math.max(1, filteredResults.length)),
       });
 
-      // Merge nodes
+      // 合并节点
       for (const [id, node] of traversalResult.nodes) {
         if (!nodes.has(id)) {
           nodes.set(id, node);
         }
       }
 
-      // Merge edges (avoid duplicates)
+      // 合并边（避免重复）
       for (const edge of traversalResult.edges) {
         const exists = edges.some(
           (e) => e.source === edge.source && e.target === edge.target && e.kind === edge.kind
@@ -1021,11 +1000,11 @@ export class ContextBuilder {
       }
     }
 
-    // Trim to max nodes if needed
+    // 必要时截断到最大节点数
     let finalNodes = nodes;
     let finalEdges = edges;
     if (nodes.size > opts.maxNodes) {
-      // Prioritize entry points and their direct neighbors
+      // 优先保留入口点及其直接邻居
       const priorityIds = new Set(roots);
       for (const edge of edges) {
         if (priorityIds.has(edge.source)) {
@@ -1036,7 +1015,7 @@ export class ContextBuilder {
         }
       }
 
-      // Keep priority nodes, then fill remaining slots
+      // 保留优先节点，再填充剩余名额
       finalNodes = new Map<string, Node>();
       for (const id of priorityIds) {
         const node = nodes.get(id);
@@ -1045,7 +1024,7 @@ export class ContextBuilder {
         }
       }
 
-      // Fill remaining from other nodes
+      // 从其他节点填充剩余名额
       for (const [id, node] of nodes) {
         if (finalNodes.size >= opts.maxNodes) break;
         if (!finalNodes.has(id)) {
@@ -1053,17 +1032,17 @@ export class ContextBuilder {
         }
       }
 
-      // Filter edges to only include kept nodes
+      // 只保留已选节点之间的边
       finalEdges = edges.filter(
         (e) => finalNodes.has(e.source) && finalNodes.has(e.target)
       );
     }
 
-    // Per-file diversity cap: prevent any single file from monopolizing the
-    // node budget. When BFS traverses from a method, it follows `contains`
-    // to the parent class, then back down to all sibling methods. With
-    // multiple entry points in the same class, one file can consume 30-40%
-    // of maxNodes. Cap each file to ~20% to ensure cross-file diversity.
+    // 单文件多样性上限：防止任何一个文件独占节点预算。
+    // 当 BFS 从一个方法出发时，会沿 `contains` 追溯到父类，
+    // 再往下到所有兄弟方法。若同一个类有多个入口点，
+    // 一个文件可能消耗 30-40% 的 maxNodes。
+    // 将每个文件限制为约 20%，以确保跨文件的多样性。
     const maxPerFile = Math.max(5, Math.ceil(opts.maxNodes * 0.2));
     const fileCounts = new Map<string, string[]>();
     for (const [id, node] of finalNodes) {
@@ -1074,7 +1053,7 @@ export class ContextBuilder {
     const rootSet = new Set(roots);
     for (const [, nodeIds] of fileCounts) {
       if (nodeIds.length <= maxPerFile) continue;
-      // Sort: entry points first, then classes/interfaces, then others
+      // 排序：入口点优先，其次是 class/interface，最后是其他
       const kindPriority: Record<string, number> = {
         class: 3, interface: 3, struct: 3, trait: 3, protocol: 3, enum: 3,
         method: 1, function: 1, property: 0, field: 0, variable: 0,
@@ -1086,16 +1065,15 @@ export class ContextBuilder {
         const bKind = kindPriority[finalNodes.get(b)!.kind] ?? 0;
         return (bRoot + bKind) - (aRoot + aKind);
       });
-      // Remove excess nodes (keep the highest-priority ones)
+      // 移除多余节点（保留优先级最高的）
       for (const id of nodeIds.slice(maxPerFile)) {
         finalNodes.delete(id);
       }
     }
-    // Non-production node cap: limit test/sample/integration/example files to
-    // at most 15% of the budget. Many codebases have dozens of near-identical
-    // test implementations (e.g., 6 Guard classes in integration tests) that
-    // individually survive score dampening but collectively flood the result.
-    // Test entry points are NOT exempt — they should be evicted too.
+    // 非生产节点上限：将测试/样本/集成/示例文件限制在预算的 15% 以内。
+    // 许多代码库有数十个几乎相同的测试实现（如集成测试中的 6 个 Guard 类），
+    // 它们单独都能通过评分降权，但合在一起会淹没结果。
+    // 测试文件入口点不豁免——同样应被驱逐。
     if (!isTestQuery) {
       const maxNonProd = Math.max(3, Math.ceil(opts.maxNodes * 0.15));
       const nonProdIds: string[] = [];
@@ -1107,20 +1085,20 @@ export class ContextBuilder {
       if (nonProdIds.length > maxNonProd) {
         for (const id of nonProdIds.slice(maxNonProd)) {
           finalNodes.delete(id);
-          // Also remove from roots — test file entry points shouldn't anchor results
+          // 同样从根节点中移除——测试文件入口点不应作为锚点
           const rootIdx = roots.indexOf(id);
           if (rootIdx !== -1) roots.splice(rootIdx, 1);
         }
       }
     }
 
-    // Re-filter edges after per-file and non-production caps
+    // 在单文件上限和非生产上限之后重新过滤边
     finalEdges = finalEdges.filter(
       (e) => finalNodes.has(e.source) && finalNodes.has(e.target)
     );
 
-    // Edge recovery: BFS with many entry points leaves most nodes disconnected.
-    // Discover edges between already-selected nodes to recover connectivity.
+    // 边恢复：拥有大量入口点的 BFS 会使大多数节点失去连接。
+    // 在已选节点之间发现边，以恢复连通性。
     const recoveryKinds: EdgeKind[] = ['calls', 'extends', 'implements', 'references', 'overrides'];
     const recoveredEdges = this.queries.findEdgesBetweenNodes(
       [...finalNodes.keys()],
@@ -1141,12 +1119,12 @@ export class ContextBuilder {
   }
 
   /**
-   * Get the source code for a node
+   * 获取节点的源代码
    *
-   * Reads the file and extracts the code between startLine and endLine.
+   * 读取文件并提取 startLine 到 endLine 之间的代码。
    *
-   * @param nodeId - ID of the node
-   * @returns Code string or null if not found
+   * @param nodeId - 节点 ID
+   * @returns 代码字符串，若未找到则为 null
    */
   async getCode(nodeId: string): Promise<string | null> {
     const node = this.queries.getNodeById(nodeId);
@@ -1158,13 +1136,13 @@ export class ContextBuilder {
   }
 
   /**
-   * Extract code from a node's source file
+   * 从节点的源文件中提取代码
    */
   private async extractNodeCode(node: Node): Promise<string | null> {
-    // SECURITY (#383): a config-leaf node's on-disk line is `key = <secret>`.
-    // Return the KEY only — never read the value off disk. This closes the
-    // includeCode / buildContext code-block path, mirroring the explore source
-    // renderer; an agent that genuinely needs a value can read the file itself.
+    // 安全性（#383）：配置叶节点在磁盘上的行格式为 `key = <secret>`。
+    // 仅返回键名——绝不从磁盘读取值。这关闭了 includeCode / buildContext
+    // 代码块路径，与 explore 源码渲染器保持一致；
+    // 真正需要该值的智能体可以自行读取文件。
     if (isConfigLeafNode(node)) {
       return node.signature || node.qualifiedName || node.name;
     }
@@ -1179,7 +1157,7 @@ export class ContextBuilder {
       const content = fs.readFileSync(filePath, 'utf-8');
       const lines = content.split('\n');
 
-      // Extract lines (1-indexed to 0-indexed)
+      // 提取行（从 1 开始的索引转为 0 开始的索引）
       const startIdx = Math.max(0, node.startLine - 1);
       const endIdx = Math.min(lines.length, node.endLine);
 
@@ -1191,7 +1169,7 @@ export class ContextBuilder {
   }
 
   /**
-   * Get entry points from a subgraph (the root nodes)
+   * 从子图中获取入口点（根节点）
    */
   private getEntryPoints(subgraph: Subgraph): Node[] {
     return subgraph.roots
@@ -1200,7 +1178,7 @@ export class ContextBuilder {
   }
 
   /**
-   * Extract code blocks for key nodes in the subgraph
+   * 提取子图中关键节点的代码块
    */
   private async extractCodeBlocks(
     subgraph: Subgraph,
@@ -1209,10 +1187,10 @@ export class ContextBuilder {
   ): Promise<CodeBlock[]> {
     const blocks: CodeBlock[] = [];
 
-    // Prioritize entry points, then functions/methods
+    // 优先入口点，其次是函数/方法
     const priorityNodes: Node[] = [];
 
-    // First: entry points
+    // 首先：入口点
     for (const id of subgraph.roots) {
       const node = subgraph.nodes.get(id);
       if (node) {
@@ -1220,7 +1198,7 @@ export class ContextBuilder {
       }
     }
 
-    // Then: functions and methods
+    // 其次：函数和方法
     for (const node of subgraph.nodes.values()) {
       if (!subgraph.roots.includes(node.id)) {
         if (node.kind === 'function' || node.kind === 'method') {
@@ -1229,7 +1207,7 @@ export class ContextBuilder {
       }
     }
 
-    // Then: classes
+    // 最后：类
     for (const node of subgraph.nodes.values()) {
       if (!subgraph.roots.includes(node.id)) {
         if (node.kind === 'class') {
@@ -1238,15 +1216,15 @@ export class ContextBuilder {
       }
     }
 
-    // Extract code for priority nodes
+    // 提取优先节点的代码
     for (const node of priorityNodes) {
       if (blocks.length >= maxBlocks) break;
 
       const code = await this.extractNodeCode(node);
       if (code) {
-        // Truncate if too long. Language-neutral marker (no `//` — not a
-        // comment in Python, Ruby, etc.); this renders inside a fenced
-        // source block whose language varies.
+        // 过长时截断。使用语言中立的标记（不用 `//`——
+        // 在 Python、Ruby 等语言中不是注释）；此标记在
+        // 语言各异的围栏代码块内渲染。
         const truncated = code.length > maxBlockSize
           ? code.slice(0, maxBlockSize) + '\n... (truncated) ...'
           : code;
@@ -1266,7 +1244,7 @@ export class ContextBuilder {
   }
 
   /**
-   * Get unique files from a subgraph
+   * 从子图中获取去重后的文件列表
    */
   private getRelatedFiles(subgraph: Subgraph): string[] {
     const files = new Set<string>();
@@ -1277,7 +1255,7 @@ export class ContextBuilder {
   }
 
   /**
-   * Generate a summary of the context
+   * 生成上下文的摘要
    */
   private generateSummary(_query: string, subgraph: Subgraph, entryPoints: Node[]): string {
     const nodeCount = subgraph.nodes.size;
@@ -1297,14 +1275,14 @@ export class ContextBuilder {
   }
 
   /**
-   * Resolve import/export nodes to their actual definitions
+   * 将导入/导出节点解析为其实际定义
    *
-   * When search returns `import { TerminalPanel }`, users want the TerminalPanel
-   * class definition, not the import statement. This follows the `imports` edge
-   * to find and return the actual definition instead.
+   * 当搜索返回 `import { TerminalPanel }` 时，用户想要的是
+   * TerminalPanel 类定义，而非导入语句。此方法沿 `imports` 边
+   * 查找并返回实际定义。
    *
-   * @param results - Search results that may include import/export nodes
-   * @returns Results with imports resolved to definitions where possible
+   * @param results - 可能包含导入/导出节点的搜索结果
+   * @returns 将导入解析为定义后的结果（尽可能解析）
    */
   private resolveImportsToDefinitions(results: SearchResult[]): SearchResult[] {
     const resolved: SearchResult[] = [];
@@ -1313,7 +1291,7 @@ export class ContextBuilder {
     for (const result of results) {
       const { node, score } = result;
 
-      // If it's not an import/export, keep it as-is
+      // 若不是导入/导出，保持原样
       if (node.kind !== 'import' && node.kind !== 'export') {
         if (!seenIds.has(node.id)) {
           seenIds.add(node.id);
@@ -1322,9 +1300,9 @@ export class ContextBuilder {
         continue;
       }
 
-      // For imports/exports, try to find what they reference
-      // Imports have outgoing 'imports' edges to the definition
-      // Exports have outgoing 'exports' edges to the definition
+      // 对于导入/导出，尝试找到它们所引用的内容
+      // 导入具有指向定义的出向 'imports' 边
+      // 导出具有指向定义的出向 'exports' 边
       const edgeKind = node.kind === 'import' ? 'imports' : 'exports';
       const outgoingEdges = this.queries.getOutgoingEdges(node.id, [edgeKind as EdgeKind]);
 
@@ -1332,11 +1310,11 @@ export class ContextBuilder {
       for (const edge of outgoingEdges) {
         const targetNode = this.queries.getNodeById(edge.target);
         if (targetNode && !seenIds.has(targetNode.id)) {
-          // Found the definition - use it instead of the import
+          // 找到定义——用它代替导入
           seenIds.add(targetNode.id);
           resolved.push({
             node: targetNode,
-            score: score, // Preserve the original score
+            score: score, // 保留原始分数
           });
           foundDefinition = true;
           logDebug('Resolved import to definition', {
@@ -1347,7 +1325,7 @@ export class ContextBuilder {
         }
       }
 
-      // If we couldn't resolve the import, skip it (it's low-value on its own)
+      // 若无法解析导入，跳过它（单独存在时价值很低）
       if (!foundDefinition) {
         logDebug('Skipping unresolved import', { name: node.name, file: node.filePath });
       }
@@ -1358,7 +1336,7 @@ export class ContextBuilder {
 }
 
 /**
- * Create a context builder
+ * 创建上下文构建器
  */
 export function createContextBuilder(
   projectRoot: string,
@@ -1368,5 +1346,5 @@ export function createContextBuilder(
   return new ContextBuilder(projectRoot, queries, traverser);
 }
 
-// Re-export formatter
+// 重新导出格式化器
 export { formatContextAsMarkdown, formatContextAsJson } from './formatter';

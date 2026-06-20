@@ -1,9 +1,7 @@
 ﻿/**
- * React Native Fabric / Codegen view components — Phase 6 of the
- * mixed-iOS/RN bridging effort.
+ * React Native Fabric / Codegen 视图组件——iOS/RN 混合桥接工作的第 6 阶段。
  *
- * In the new RN architecture, JS-visible view components are declared via
- * Codegen TS spec files of the shape:
+ * 在新的 RN 架构中，JS 可见的视图组件通过如下形式的 Codegen TypeScript spec 文件声明：
  *
  *   // src/fabric/MyComponentNativeComponent.ts
  *   import { codegenNativeComponent } from 'react-native';
@@ -16,32 +14,26 @@
  *
  *   export default codegenNativeComponent<NativeProps>('MyComponent');
  *
- * Codegen then generates a native ComponentDescriptor that wires the JS
- * component name to a native implementation class — by RN convention,
- * one of `MyComponent`, `MyComponentView`, `MyComponentComponentView`,
- * `MyComponentManager`, `MyComponentViewManager`. The actual implementation
- * lives in ObjC++ (.mm) on iOS or Kotlin/Java on Android.
+ * Codegen 随后生成一个原生 ComponentDescriptor，将 JS 组件名称与原生实现类绑定——
+ * 按 RN 惯例，实现类为以下之一：`MyComponent`、`MyComponentView`、
+ * `MyComponentComponentView`、`MyComponentManager`、`MyComponentViewManager`。
+ * 实际实现在 iOS 的 ObjC++（.mm）或 Android 的 Kotlin/Java 中。
  *
- * Without bridging, JSX `<MyComponent color="red"/>` in a consumer app has
- * nothing in the graph to land on — the JS-visible name `MyComponent` isn't
- * a node anywhere (only `MyComponentView` is, in the .mm), and the JSX
- * synthesizer matches strictly by name.
+ * 若不做桥接，消费方应用中的 JSX `<MyComponent color="red"/>` 在图谱中将无处落地——
+ * JS 可见名称 `MyComponent` 在任何地方都不是节点（只有 `MyComponentView` 在 .mm 中），
+ * 而 JSX 合成器按名称严格匹配。
  *
- * What this extractor does:
- *   1. Parse the spec file's `codegenNativeComponent<Props>('Name', ...)`
- *      literal — emit a `component` node named `Name`, attributed to the
- *      spec file.
- *   2. Parse the `NativeProps` interface and emit one `property` node per
- *      prop, attributed to the spec file. Props like `onTap` /
- *      `onFinishTransitioning` are JS-callable event-handler bindings;
- *      surfacing them as nodes lets the agent discover the JS surface of
- *      the component.
+ * 此提取器的功能：
+ *   1. 解析 spec 文件中的 `codegenNativeComponent<Props>('Name', ...)` 字面量——
+ *      生成一个以 `Name` 命名的 `component` 节点，归属到 spec 文件。
+ *   2. 解析 `NativeProps` 接口，为每个 prop 生成一个 `property` 节点，
+ *      归属到 spec 文件。`onTap` / `onFinishTransitioning` 等 prop 是
+ *      JS 可调用的事件 handler 绑定；将它们作为节点暴露，让智能体能够
+ *      发现组件的 JS 接口。
  *
- * A companion synthesizer (`fabricNativeImplEdges` in
- * callback-synthesizer.ts) links the emitted component node to its
- * native implementation class via the convention-based name+suffix
- * lookup — that produces the cross-language hop the JSX synthesizer's
- * `<MyComponent>` edges naturally chain through.
+ * 配套合成器（callback-synthesizer.ts 中的 `fabricNativeImplEdges`）
+ * 通过基于惯例的名称+后缀查找，将生成的 component 节点链接到其原生实现类——
+ * 产生跨语言跳转，JSX 合成器的 `<MyComponent>` 边自然链接到该节点。
  */
 import type { Node } from '../../types';
 import {
@@ -53,97 +45,91 @@ const CODEGEN_DECL_RE =
   /codegenNativeComponent\s*(?:<[^>]+>)?\s*\(\s*['"]([A-Za-z_][A-Za-z0-9_]*)['"]/g;
 
 /**
- * Legacy Paper view manager macros — older RN libs (still very common,
- * especially small libs that haven't migrated to Codegen) declare a
- * ViewManager class and expose props via these macros. Both shapes:
+ * 旧版 Paper 视图管理器宏——较老的 RN 库（仍非常常见，尤其是尚未迁移到
+ * Codegen 的小型库）通过声明 ViewManager 类并使用这些宏暴露 prop。两种形式：
  *
  *   RCT_EXPORT_VIEW_PROPERTY(values, NSArray)
  *   RCT_EXPORT_VIEW_PROPERTY(onChange, RCTBubblingEventBlock)
  *   RCT_CUSTOM_VIEW_PROPERTY(text, NSString, RNCMyView) { … }
  *   RCT_REMAP_VIEW_PROPERTY(jsName, nativeKeyPath, NSString)
  *
- * Capture the FIRST argument — that's the JS-visible prop name.
+ * 捕获第一个参数——即 JS 可见的 prop 名称。
  */
 const RCT_VIEW_PROP_RE =
   /\bRCT_(?:EXPORT|CUSTOM|REMAP)_VIEW_PROPERTY\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)/g;
 
 /**
- * ObjC `@implementation Foo` extraction. Used to identify the ViewManager
- * class so we can derive a JS-visible component name (strip the `Manager`
- * suffix and a leading `RCT` prefix, both standard conventions).
+ * ObjC `@implementation Foo` 提取。用于识别 ViewManager 类，
+ * 从而推导 JS 可见的组件名称（去掉 `Manager` 后缀和 `RCT` 前缀，
+ * 两者都是标准惯例）。
  */
 const OBJC_IMPL_RE = /@implementation\s+([A-Za-z_][A-Za-z0-9_]*)/;
 
 /**
- * Derive the JS-visible component name from a native ViewManager class.
- * Strip a trailing `Manager` (and optionally `ViewManager`) — RN's view
- * registry maps `XXXManager` ↔ JS `<XXX/>` by this convention. The
- * leading `RCT` prefix is also stripped (matches what
- * `defaultObjcModuleName` does for RN's legacy bridge modules).
+ * 从原生 ViewManager 类推导 JS 可见的组件名称。
+ * 去掉尾随的 `Manager`（以及可选的 `ViewManager`）——RN 的视图注册表
+ * 通过此惯例将 `XXXManager` ↔ JS `<XXX/>` 对应。
+ * 前导的 `RCT` 前缀也会被去掉（与 RN 旧版 bridge 模块的
+ * `defaultObjcModuleName` 处理方式一致）。
  */
 function deriveComponentNameFromManager(className: string): string {
   let name = className.startsWith('RCT') ? className.slice(3) : className;
-  // Trim ViewManager > Manager > View, in order.
+  // 按顺序去掉 ViewManager > Manager > View。
   if (name.endsWith('ViewManager')) name = name.slice(0, -'ViewManager'.length);
   else if (name.endsWith('Manager')) name = name.slice(0, -'Manager'.length);
   return name;
 }
 
 /**
- * Cheap source-level detector — must contain `codegenNativeComponent` to
- * be worth parsing. The presence of that import is the canonical Fabric
- * spec signal.
+ * 廉价的源码级检测器——必须包含 `codegenNativeComponent` 才值得解析。
+ * 该 import 的存在是规范的 Fabric spec 信号。
  */
 function isFabricSpec(source: string): boolean {
   return source.includes('codegenNativeComponent');
 }
 
 /**
- * Pull the `NativeProps` interface body out of a Fabric spec source.
- * Returns `null` when the interface isn't declared in the expected shape.
+ * 从 Fabric spec 源码中提取 `NativeProps` 接口的函数体。
+ * 当接口未以预期形式声明时返回 `null`。
  */
 function findNativePropsBody(source: string): string | null {
-  // Permissive: `export interface NativeProps [extends X, Y] { … }`.
+  // 宽松匹配：`export interface NativeProps [extends X, Y] { … }`。
   const m = source.match(/export\s+interface\s+NativeProps\b[^{]*\{([\s\S]*?)\n\}/);
   return m?.[1] ?? null;
 }
 
 /**
- * Parse the NativeProps interface body and return prop names.
- * Each prop is `name?: Type;` or `name: Type;` on its own line.
- * We don't care about types — just the JS-visible name.
+ * 解析 NativeProps 接口体并返回 prop 名称列表。
+ * 每个 prop 的形式为独占一行的 `name?: Type;` 或 `name: Type;`。
+ * 我们不关心类型——只需 JS 可见的名称。
  */
 function extractPropNames(body: string): string[] {
   const props: string[] = [];
-  // Anchor to start-of-line (after optional whitespace), then capture an
-  // identifier, then optional `?`, then `:`. Skip lines that look like
-  // method declarations (`name(`) — those are TurboModule spec methods,
-  // not view props.
+  // 锚定到行首（可选空白之后），捕获标识符，然后可选的 `?`，再接 `:`。
+  // 跳过看起来像方法声明的行（`name(`）——那些是 TurboModule spec 方法，
+  // 不是视图 prop。
   const regex = /^\s*([A-Za-z_][A-Za-z0-9_]*)\??\s*:/gm;
   let m: RegExpExecArray | null;
   while ((m = regex.exec(body)) !== null) {
     const name = m[1]!;
-    // Exclude any line that immediately turns into a function-shape (e.g.
-    // `onTap?: () => void` is fine — it's a prop, not a method body —
-    // but a literal `name(arg: T): R` is a method declaration).
+    // 排除紧接着变成函数形式的行（例如 `onTap?: () => void` 没问题——
+    // 它是 prop，不是方法体——但字面量 `name(arg: T): R` 是方法声明）。
     const after = body.slice(m.index + m[0].length, m.index + m[0].length + 80);
-    if (/^\s*\(/.test(after)) continue; // method-shape, skip
+    if (/^\s*\(/.test(after)) continue; // 方法形式，跳过
     props.push(name);
   }
   return props;
 }
 
 /**
- * Extract legacy Paper view-manager declarations from a .m/.mm file.
- * Emits a `component` node named after the JS-visible name (derived from
- * the @implementation class) plus a `property` node per
- * `RCT_EXPORT_VIEW_PROPERTY(name, ...)` macro.
+ * 从 .m/.mm 文件中提取旧版 Paper 视图管理器声明。
+ * 根据 JS 可见名称（从 @implementation 类推导）生成 `component` 节点，
+ * 并为每个 `RCT_EXPORT_VIEW_PROPERTY(name, ...)` 宏生成 `property` 节点。
  *
- * Returns `[]` if the file doesn't look like a ViewManager (no
- * RCT_EXPORT_VIEW_PROPERTY macros).
+ * 若文件不像 ViewManager（无 RCT_EXPORT_VIEW_PROPERTY 宏），返回 `[]`。
  */
 function extractLegacyViewManagerNodes(filePath: string, source: string): Node[] {
-  // Cheap gate: no view-property macros at all → not a view manager.
+  // 廉价门控：完全没有视图属性宏 → 不是 view manager。
   if (!source.includes('RCT_EXPORT_VIEW_PROPERTY') &&
       !source.includes('RCT_CUSTOM_VIEW_PROPERTY') &&
       !source.includes('RCT_REMAP_VIEW_PROPERTY')) {
@@ -152,9 +138,8 @@ function extractLegacyViewManagerNodes(filePath: string, source: string): Node[]
   const implMatch = source.match(OBJC_IMPL_RE);
   if (!implMatch || !implMatch[1]) return [];
   const className = implMatch[1];
-  // Only process actual ViewManagers — classes ending in Manager or
-  // (legacy) ViewManager. Classes with view-property macros that don't
-  // follow the naming convention are unusual; skip to keep precision.
+  // 仅处理真正的 ViewManager——以 Manager 或（旧版）ViewManager 结尾的类。
+  // 含有视图属性宏但不符合命名惯例的类不寻常；跳过以保持精度。
   if (!className.endsWith('Manager') && !className.endsWith('ViewManager')) return [];
   const componentName = deriveComponentNameFromManager(className);
   if (!componentName) return [];
@@ -162,11 +147,10 @@ function extractLegacyViewManagerNodes(filePath: string, source: string): Node[]
   const now = Date.now();
   const nodes: Node[] = [];
 
-  // Component node — same shape as Codegen Fabric's, so the
-  // fabricNativeImplEdges synthesizer linking component → native class
-  // works for legacy too. The native class IS the manager itself in this
-  // case; the convention-based suffix lookup in the synthesizer
-  // (`Manager`, `ViewManager`) will find it.
+  // component 节点——与 Codegen Fabric 的形状相同，因此
+  // fabricNativeImplEdges 合成器（将 component 链接到原生类）
+  // 对旧版同样有效。此情况下原生类就是 manager 本身；
+  // 合成器中基于惯例的后缀查找（`Manager`、`ViewManager`）会找到它。
   const before = source.slice(0, implMatch.index ?? 0);
   const startLine = before.split('\n').length;
   nodes.push({
@@ -186,7 +170,7 @@ function extractLegacyViewManagerNodes(filePath: string, source: string): Node[]
     updatedAt: now,
   });
 
-  // Property nodes per RCT_EXPORT_VIEW_PROPERTY macro.
+  // 每个 RCT_EXPORT_VIEW_PROPERTY 宏对应一个 property 节点。
   const seen = new Set<string>();
   RCT_VIEW_PROP_RE.lastIndex = 0;
   let m: RegExpExecArray | null;
@@ -216,19 +200,17 @@ function extractLegacyViewManagerNodes(filePath: string, source: string): Node[]
 }
 
 /**
- * Java/Kotlin `@ReactProp("name")` extraction. The annotation precedes a
- * setter method on a class that extends `ViewManager` /
- * `SimpleViewManager` (or in Kotlin, `:` syntax).
+ * Java/Kotlin `@ReactProp("name")` 提取。该注解位于继承自 `ViewManager` /
+ * `SimpleViewManager` 的类上的 setter 方法之前（Kotlin 使用 `:` 语法）。
  *
- * Returns `[]` if no @ReactProp annotations are found.
+ * 若未找到 @ReactProp 注解，返回 `[]`。
  */
 function extractJvmViewManagerNodes(filePath: string, source: string): Node[] {
   if (!source.includes('@ReactProp')) return [];
 
-  // Class name — looking for `class FooManager [extends ViewManager...]`
-  // (Java) or `class FooManager : ViewManager...` (Kotlin). Either gates
-  // us into a ViewManager file; non-Manager classes with @ReactProp are
-  // unusual.
+  // 类名——查找 `class FooManager [extends ViewManager...]`（Java）
+  // 或 `class FooManager : ViewManager...`（Kotlin）。两者都能确认
+  // 这是 ViewManager 文件；含有 @ReactProp 的非 Manager 类不寻常。
   const classMatch = source.match(/\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\b/);
   if (!classMatch || !classMatch[1]) return [];
   const className = classMatch[1];
@@ -259,9 +241,9 @@ function extractJvmViewManagerNodes(filePath: string, source: string): Node[] {
     updatedAt: now,
   });
 
-  // @ReactProp("name") followed (after optional modifiers / args) by a
-  // setter declaration. The annotation argument is the JS-visible prop
-  // name. Permissive about the rest — we only need the literal.
+  // @ReactProp("name") 之后（可选修饰符/参数之后）紧跟
+  // setter 声明。注解参数是 JS 可见的 prop 名称。
+  // 对其余部分保持宽松——我们只需要字面量。
   const REACT_PROP_RE = /@ReactProp\s*\(\s*(?:name\s*=\s*)?"([^"]+)"/g;
   const seen = new Set<string>();
   let m: RegExpExecArray | null;
@@ -304,9 +286,9 @@ function extractFabricNodes(filePath: string, source: string): Node[] {
     const startLine = before.split('\n').length;
     const startColumn = before.length - before.lastIndexOf('\n') - 1;
 
-    // The component itself — kind: 'component' so the existing
-    // reactJsxChildEdges synthesizer matches `<MyComponent>` JSX tags to
-    // it (its name+kind filter is the gate).
+    // component 节点本身——kind: 'component'，使现有的
+    // reactJsxChildEdges 合成器能将 `<MyComponent>` JSX 标签匹配到它
+    // （其 name+kind 过滤器是门控条件）。
     const componentId = `fabric-component:${filePath}:${componentName}:${startLine}`;
     nodes.push({
       id: componentId,
@@ -314,8 +296,8 @@ function extractFabricNodes(filePath: string, source: string): Node[] {
       name: componentName,
       qualifiedName: `${filePath}::${componentName}`,
       filePath,
-      // The spec file is .ts or .tsx; use the file's apparent language
-      // by extension. Trim to a known Language value.
+      // spec 文件为 .ts 或 .tsx；按文件扩展名使用其对应语言。
+      // 裁剪为已知的 Language 值。
       language: filePath.endsWith('.tsx') ? 'tsx' : 'typescript',
       startLine,
       endLine: startLine,
@@ -328,11 +310,11 @@ function extractFabricNodes(filePath: string, source: string): Node[] {
     });
   }
 
-  // Props from the NativeProps interface. These are not "method" semantic
-  // — they're JS-visible bindings the consumer sets via JSX attributes —
-  // so use `property` kind. (The JSX synthesizer doesn't currently
-  // produce per-attribute edges, but surfacing the prop names as nodes
-  // lets `synapse_search('onFinishTransitioning')` discover them.)
+  // NativeProps 接口中的 prop。这些不是"方法"语义
+  // ——它们是消费者通过 JSX 属性设置的 JS 可见绑定——
+  // 因此使用 `property` kind。（JSX 合成器目前不生成
+  // 按属性的边，但将 prop 名称作为节点暴露，
+  // 使 `synapse_search('onFinishTransitioning')` 能够发现它们。）
   const body = findNativePropsBody(source);
   if (body) {
     const props = extractPropNames(body);
@@ -366,18 +348,17 @@ export const fabricViewResolver: FrameworkResolver = {
   languages: ['typescript', 'tsx', 'objc', 'java', 'kotlin'],
 
   detect(context) {
-    // Root package.json is the common case. The indexer only tracks
-    // SOURCE files in getAllFiles(), so package.jsons in subpackages
-    // aren't enumerable that way — we have to probe them explicitly via
-    // listDirectories() for monorepos.
+    // 根节点 package.json 是常见情况。索引器在 getAllFiles() 中只跟踪
+    // 源文件，因此子包的 package.json 无法通过该方式枚举——
+    // 对于 monorepo，需要通过 listDirectories() 显式探测。
     const checkPkg = (relativePath: string) => {
       const pkg = context.readFile(relativePath);
       return pkg ? /["']react-native["']\s*:/.test(pkg) : false;
     };
     if (checkPkg('package.json')) return true;
-    // Monorepo escape hatch — react-native-skia and similar workspace
-    // repos have the RN dep only in `packages/<sub>/package.json`. Walk
-    // the common workspace roots one level deep.
+    // Monorepo 逃生舱——react-native-skia 及类似的 workspace 仓库
+    // 仅在 `packages/<sub>/package.json` 中有 RN 依赖。
+    // 向下遍历常见的 workspace 根目录一层。
     const list = context.listDirectories;
     if (!list) return false;
     for (const root of ['packages', 'apps', 'modules', 'libraries']) {
@@ -389,8 +370,8 @@ export const fabricViewResolver: FrameworkResolver = {
   },
 
   extract(filePath, source): FrameworkExtractionResult {
-    // Pick the right extractor by file language. The framework registry
-    // already filters by `languages` so we only see relevant files.
+    // 按文件语言选择正确的提取器。框架注册表已按 `languages` 过滤，
+    // 因此我们只会看到相关文件。
     let nodes: Node[] = [];
     if (filePath.endsWith('.ts') || filePath.endsWith('.tsx')) {
       nodes = extractFabricNodes(filePath, source);
@@ -403,9 +384,8 @@ export const fabricViewResolver: FrameworkResolver = {
   },
 
   resolve() {
-    // The companion synthesizer (`fabricNativeImplEdges`) handles
-    // cross-language edges; standard name resolution handles
-    // <MyComponent> → component-node via the JSX synthesizer.
+    // 配套合成器（`fabricNativeImplEdges`）处理跨语言边；
+    // 标准名称解析通过 JSX 合成器处理 <MyComponent> → component 节点。
     return null;
   },
 };

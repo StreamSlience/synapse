@@ -1,19 +1,16 @@
 #!/usr/bin/env node
-// Verify a tree-sitter grammar wasm is HEALTHY under the project's web-tree-sitter
-// runtime BEFORE writing an extractor. Prints the ABI version and parses a valid
-// sample many times in a multi-grammar context, to catch heap-corruption bugs
-// that silently drop nodes on every parse after the first.
+// 在编写提取器之前，验证 tree-sitter 语法 wasm 在项目的 web-tree-sitter
+// 运行时下是否健康。打印 ABI 版本，并在多语法上下文中多次解析有效样本，
+// 以捕获会在首次解析后静默丢失节点的堆损坏 bug。
 //
-// Why this exists: the tree-sitter-wasms Lua grammar is ABI 13 and corrupts the
-// shared WASM heap under web-tree-sitter 0.25 — Lua extraction degraded on every
-// file after the first (nested calls/imports vanished). The fix was to vendor the
-// upstream ABI-15 wasm. Run this on any new grammar first; if it FAILs, vendor a
-// newer build instead of using the tree-sitter-wasms one.
+// 存在原因：tree-sitter-wasms 的 Lua 语法是 ABI 13，会在 web-tree-sitter 0.25
+// 下损坏共享 WASM 堆——Lua 提取在首个文件之后的每个文件上都退化
+//（嵌套调用/导入消失）。修复方案是使用上游 ABI-15 wasm。
+// 对任何新语法先运行此脚本；若 FAIL 则使用更新的构建而非 tree-sitter-wasms。
 //
-// Usage: node scripts/add-lang/check-grammar.mjs <lang|wasm-path> <valid-sample> [iterations]
-// Exit: 0 healthy, 1 corruption / parse errors, 2 could not run.
-// NOTE: the sample must be SYNTACTICALLY VALID — a broken sample fails for the
-//       wrong reason.
+// 用法：node scripts/add-lang/check-grammar.mjs <lang|wasm-path> <valid-sample> [iterations]
+// 退出码：0 健康，1 损坏/解析错误，2 无法运行。
+// 注意：样本必须语法上有效——损坏的样本会因错误原因而失败。
 
 import { readFileSync, existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -43,8 +40,8 @@ const source = readFileSync(sample, 'utf8');
 try { await Parser.init(); }
 catch { await Parser.init({ locateFile: () => require.resolve('web-tree-sitter/tree-sitter.wasm') }); }
 
-// Load a second, known-good grammar — the corruption surfaces under the
-// multi-grammar runtime that real indexing uses, not a single grammar in isolation.
+// 加载第二个已知无误的语法——损坏在真实索引使用的多语法运行时中
+// 才会暴露，单一语法隔离运行时不会出现。
 try { await Language.load(require.resolve('tree-sitter-wasms/out/tree-sitter-python.wasm')); } catch { /* ok */ }
 
 let language;

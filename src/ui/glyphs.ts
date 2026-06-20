@@ -1,21 +1,20 @@
 ﻿/**
- * Glyph selection for CLI output.
+ * CLI 输出的字形选择。
  *
- * On Windows, console output is interpreted via the active output
- * codepage. PowerShell 5.1 and cmd.exe default to OEM codepages
- * (CP437, CP936, ...), so UTF-8 bytes written to the console render
- * as mojibake (see #168). The shimmer worker is hit hardest because
- * it uses `fs.writeSync(1, ...)` (raw bytes, no TTY-aware encoding
- * conversion) to keep animation smooth while the main thread is
- * blocked in SQLite. To stay readable everywhere, we fall back to
- * ASCII glyphs whenever the terminal is not known to handle UTF-8.
+ * 在 Windows 上，控制台输出通过当前活动输出代码页解释。
+ * PowerShell 5.1 和 cmd.exe 默认使用 OEM 代码页（CP437、CP936 等），
+ * 因此写入控制台的 UTF-8 字节会渲染为乱码（见 #168）。
+ * 微光工作线程受影响最大，因为它使用 `fs.writeSync(1, ...)`（原始字节，
+ * 无 TTY 感知的编码转换）以在主线程阻塞于 SQLite 时保持动画流畅。
+ * 为在任何环境下都保持可读性，当终端不确定支持 UTF-8 时，
+ * 回退到 ASCII 字形。
  *
- * Detection is intentionally simple:
- *   - `SYNAPSE_ASCII=1`  -> ASCII (escape hatch for any terminal)
- *   - `SYNAPSE_UNICODE=1` -> Unicode (opt-in on Windows)
- *   - Windows              -> ASCII by default
- *   - Linux kernel console (`TERM=linux`) -> ASCII
- *   - Everything else      -> Unicode
+ * 检测逻辑故意保持简单：
+ *   - `SYNAPSE_ASCII=1`   -> ASCII（任何终端的逃生舱）
+ *   - `SYNAPSE_UNICODE=1` -> Unicode（Windows 上的手动启用）
+ *   - Windows             -> 默认 ASCII
+ *   - Linux 内核控制台（`TERM=linux`）-> ASCII
+ *   - 其他所有情况        -> Unicode
  */
 
 export function supportsUnicode(): boolean {
@@ -85,7 +84,7 @@ export function getGlyphs(): Glyphs {
   return cached;
 }
 
-/** Reset the cached glyph set. Test-only; production code should call `getGlyphs()`. */
+/** 重置已缓存的字形集。仅供测试使用；生产代码应调用 `getGlyphs()`。 */
 export function _resetGlyphsCache(): void {
   cached = null;
 }

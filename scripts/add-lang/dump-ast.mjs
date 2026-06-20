@@ -1,17 +1,17 @@
 ﻿#!/usr/bin/env node
-// Dump the tree-sitter AST for a sample file so you can write a LanguageExtractor
-// mapping. Loads a grammar .wasm directly via web-tree-sitter (the same runtime
-// synapse uses) — you do NOT need to register the language first.
+// 为样本文件转储 tree-sitter AST，以便编写 LanguageExtractor 映射。
+// 通过 web-tree-sitter（与 synapse 使用的相同运行时）直接加载语法 .wasm——
+// 无需提前注册语言。
 //
-// Usage:
+// 用法：
 //   node scripts/add-lang/dump-ast.mjs <lang|wasm-path> <sample-file> [--depth=N] [--full]
-// Examples:
+// 示例：
 //   node scripts/add-lang/dump-ast.mjs lua sample.lua
 //   node scripts/add-lang/dump-ast.mjs src/extraction/wasm/tree-sitter-zig.wasm a.zig --depth=4
 //
-// Output: an indented AST (named nodes, with field names) followed by a
-// node-type FREQUENCY table. The frequency table is the payoff — it tells you
-// which node types to map to functionTypes / classTypes / importTypes / etc.
+// 输出：带缩进的 AST（命名节点，带字段名），后跟节点类型频率表。
+// 频率表是重点——它告诉你哪些节点类型应映射到
+// functionTypes / classTypes / importTypes 等。
 
 import { readFileSync, existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -24,7 +24,7 @@ const argv = process.argv.slice(2);
 const positional = argv.filter((a) => !a.startsWith('--'));
 const [langOrWasm, sampleFile] = positional;
 const depthFlag = argv.find((a) => a.startsWith('--depth='));
-const showAll = argv.includes('--full'); // also print anonymous (token) nodes
+const showAll = argv.includes('--full'); // 同时打印匿名（token）节点
 const maxDepth = depthFlag ? parseInt(depthFlag.split('=')[1], 10) : (showAll ? Infinity : 8);
 
 if (!langOrWasm || !sampleFile) {
@@ -32,7 +32,7 @@ if (!langOrWasm || !sampleFile) {
 }
 if (!existsSync(sampleFile)) fail(`sample file not found: ${sampleFile}`);
 
-// Language tokens whose tree-sitter-wasms filename differs from the token.
+// tree-sitter-wasms 文件名与 token 不同的语言标识符。
 const WASM_SPECIAL = { csharp: 'c_sharp', 'c#': 'c_sharp' };
 
 function resolveWasm(token) {
@@ -44,7 +44,7 @@ function resolveWasm(token) {
   try {
     return require.resolve(`tree-sitter-wasms/out/tree-sitter-${base}.wasm`);
   } catch {
-    /* not in tree-sitter-wasms — try a vendored copy */
+    /* 不在 tree-sitter-wasms 中——尝试 vendored 副本 */
   }
   const vendored = `src/extraction/wasm/tree-sitter-${base}.wasm`;
   if (existsSync(vendored)) return vendored;
@@ -96,7 +96,7 @@ function walk(node, depth, fieldName) {
 console.log(`\n# AST for ${sampleFile}  (grammar: ${wasmPath.split('/').pop()})\n`);
 walk(tree.rootNode, 0, null);
 
-console.log('\n# Node-type frequency (named nodes) — map the relevant ones in your extractor:\n');
+console.log('\n# 节点类型频率（命名节点）——在提取器中映射相关类型：\n');
 [...freq.entries()]
   .sort((a, b) => b[1] - a[1])
   .forEach(([type, n]) => console.log(`  ${String(n).padStart(5)}  ${type}`));

@@ -17,9 +17,9 @@ export const pascalExtractor: LanguageExtractor = {
   bodyField: 'body',
   paramsField: 'args',
   returnField: 'type',
-  // Pascal/Delphi `function GetInstance: TBar` — the return type is a `typeref`
-  // child. Capture its bare class name for the chained static-factory call
-  // mechanism (#750). A procedure (no return) has no typeref → undefined.
+  // Pascal/Delphi `function GetInstance: TBar`——返回类型是 `typeref` 子节点。
+  // 捕获其裸类名用于链式静态工厂调用机制（#750）。
+  // 过程（无返回值）没有 typeref，返回 undefined。
   getReturnType: (node, source) => {
     const typeref = node.namedChildren.find((c: SyntaxNode) => c.type === 'typeref');
     if (!typeref) return undefined;
@@ -57,7 +57,7 @@ export const pascalExtractor: LanguageExtractor = {
     return undefined;
   },
   isExported: (_node, _source) => {
-    // In Pascal, symbols declared in the interface section are exported
+    // 在 Pascal 中，接口节中声明的符号被导出
     return false;
   },
   isStatic: (node) => {

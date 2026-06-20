@@ -1,5 +1,5 @@
 ﻿#!/usr/bin/env node
-// Parse a Claude Code stream-json run log: tool-call sequence + token usage.
+// 解析 Claude Code stream-json 运行日志：工具调用序列 + token 用量。
 import { readFileSync } from 'fs';
 const file = process.argv[2];
 const lines = readFileSync(file, 'utf8').split('\n').filter(Boolean);

@@ -1,7 +1,7 @@
 /**
- * C# Framework Resolver
+ * C# 框架解析器
  *
- * Handles ASP.NET Core, ASP.NET MVC, and common C# patterns.
+ * 处理 ASP.NET Core、ASP.NET MVC 及常见 C# 模式。
  */
 
 import { Node } from '../../types';
@@ -13,7 +13,7 @@ export const aspnetResolver: FrameworkResolver = {
   languages: ['csharp'],
 
   detect(context: ResolutionContext): boolean {
-    // Check for .csproj files with ASP.NET references
+    // 检查包含 ASP.NET 引用的 .csproj 文件
     const allFiles = context.getAllFiles();
     for (const file of allFiles) {
       if (file.endsWith('.csproj')) {
@@ -28,7 +28,7 @@ export const aspnetResolver: FrameworkResolver = {
       }
     }
 
-    // Check for Program.cs with WebApplication
+    // 检查包含 WebApplication 的 Program.cs
     const programCs = context.readFile('Program.cs');
     if (programCs && (
       programCs.includes('WebApplication') ||
@@ -38,16 +38,15 @@ export const aspnetResolver: FrameworkResolver = {
       return true;
     }
 
-    // Check for Startup.cs (ASP.NET Core signature)
+    // 检查 Startup.cs（ASP.NET Core 特征文件）
     if (context.fileExists('Startup.cs')) {
       return true;
     }
 
-    // ASP.NET signatures in controller/entrypoint SOURCE — covers feature-folder
-    // apps with no `/Controllers/` dir and a subdir `Program.cs` that the
-    // root-only checks above miss (e.g. realworld: Features/*/FooController.cs).
-    // `.csproj` often isn't in the indexed source set, so source-scan is the
-    // reliable signal.
+    // 扫描控制器/入口点源码中的 ASP.NET 特征——覆盖无 `/Controllers/` 目录的
+    // feature-folder 应用，以及上方仅检查根目录时遗漏的子目录 Program.cs
+    // （例如 realworld：Features/*/FooController.cs）。
+    // `.csproj` 通常不在已索引的源文件集合中，因此源码扫描是更可靠的信号。
     for (const file of allFiles) {
       if (!/(?:Controller|Program|Startup)\.cs$/.test(file)) continue;
       const c = context.readFile(file);
@@ -62,7 +61,7 @@ export const aspnetResolver: FrameworkResolver = {
   },
 
   resolve(ref: UnresolvedRef, context: ResolutionContext): ResolvedRef | null {
-    // Pattern 1: Controller references
+    // 模式 1：Controller 引用
     if (ref.referenceName.endsWith('Controller')) {
       const result = resolveByNameAndKind(ref.referenceName, CLASS_KINDS, CONTROLLER_DIRS, context);
       if (result) {
@@ -75,7 +74,7 @@ export const aspnetResolver: FrameworkResolver = {
       }
     }
 
-    // Pattern 2: Service references (dependency injection)
+    // 模式 2：Service 引用（依赖注入）
     if (ref.referenceName.endsWith('Service') || ref.referenceName.startsWith('I') && ref.referenceName.length > 1) {
       const result = resolveByNameAndKind(ref.referenceName, SERVICE_KINDS, SERVICE_DIRS, context);
       if (result) {
@@ -88,7 +87,7 @@ export const aspnetResolver: FrameworkResolver = {
       }
     }
 
-    // Pattern 3: Repository references
+    // 模式 3：Repository 引用
     if (ref.referenceName.endsWith('Repository')) {
       const result = resolveByNameAndKind(ref.referenceName, SERVICE_KINDS, REPO_DIRS, context);
       if (result) {
@@ -101,7 +100,7 @@ export const aspnetResolver: FrameworkResolver = {
       }
     }
 
-    // Pattern 4: Model/Entity references
+    // 模式 4：Model/Entity 引用
     if (/^[A-Z][a-zA-Z]+$/.test(ref.referenceName)) {
       const result = resolveByNameAndKind(ref.referenceName, CLASS_KINDS, MODEL_DIRS, context);
       if (result) {
@@ -114,7 +113,7 @@ export const aspnetResolver: FrameworkResolver = {
       }
     }
 
-    // Pattern 5: ViewModel references
+    // 模式 5：ViewModel 引用
     if (ref.referenceName.endsWith('ViewModel') || ref.referenceName.endsWith('Dto')) {
       const result = resolveByNameAndKind(ref.referenceName, CLASS_KINDS, VIEWMODEL_DIRS, context);
       if (result) {
@@ -137,14 +136,14 @@ export const aspnetResolver: FrameworkResolver = {
     const now = Date.now();
     const safe = stripCommentsForRegex(content, 'csharp');
 
-    // Class-level [Route("api/[controller]")] prefix — joined onto each action.
+    // 类级别 [Route("api/[controller]")] 前缀——拼接到每个 action 路径上。
     let classPrefix = '';
     const cls = /\[Route\s*\(\s*"([^"]+)"[^)]*\)\]\s*(?:\[[^\]]*\]\s*)*(?:public\s+|sealed\s+|abstract\s+|partial\s+)*class\b/.exec(safe);
     if (cls) classPrefix = cls[1]!;
 
-    // [HttpGet], [HttpGet("path")], [HttpPost("path", Name="x")] — BARE or with a
-    // path. (The old regex required a string, so bare attributes — with the route
-    // on the class [Route] — were missed; eShopOnWeb was 24 bare / 2 string.)
+    // [HttpGet]、[HttpGet("path")]、[HttpPost("path", Name="x")] —— 裸特性或带路径。
+    // （旧正则要求必须有字符串，因此裸特性——路由在类级 [Route] 上——会被遗漏；
+    // eShopOnWeb 中有 24 个裸特性 / 2 个带字符串。）
     const attrRegex = /\[(HttpGet|HttpPost|HttpPut|HttpPatch|HttpDelete)(?:\s*\(\s*"([^"]+)"[^)]*\))?\s*\]/g;
     let match: RegExpExecArray | null;
     while ((match = attrRegex.exec(safe)) !== null) {
@@ -168,8 +167,8 @@ export const aspnetResolver: FrameworkResolver = {
       };
       nodes.push(routeNode);
 
-      // Next method declaration (skip stacked attributes; C# puts the return type
-      // before the name). Bounded so we don't grab a far one.
+      // 紧跟的方法声明（跳过堆叠特性；C# 将返回类型放在名称之前）。
+      // 设置上限，避免匹配到很远的声明。
       const tail = safe.slice(match.index + match[0].length, match.index + match[0].length + 600);
       const methodMatch = tail.match(/(?:public|private|protected|internal)\s+[\w<>,\s\[\]?.]+?\s+(\w+)\s*\(/);
       if (methodMatch) {
@@ -185,7 +184,7 @@ export const aspnetResolver: FrameworkResolver = {
       }
     }
 
-    // Minimal APIs: app.MapGet("/path", handler)
+    // Minimal APIs：app.MapGet("/path", handler)
     const minimalRegex = /\.Map(Get|Post|Put|Patch|Delete)\s*\(\s*"([^"]+)"\s*,\s*([^,)]+)/g;
     while ((match = minimalRegex.exec(safe)) !== null) {
       const [, verb, routePath, handlerExpr] = match;
@@ -225,20 +224,20 @@ export const aspnetResolver: FrameworkResolver = {
   },
 };
 
-/** Join a class-level [Route] prefix and an action's path into one normalized `/path`. */
+/** 将类级别 [Route] 前缀与 action 路径拼接为规范化的 `/path`。 */
 function joinCsPath(prefix: string, sub: string): string {
   const parts = [prefix, sub].map((p) => p.replace(/^\/+|\/+$/g, '')).filter(Boolean);
   return '/' + parts.join('/');
 }
 
-/** Extract last identifier from an expression like `MyService.Handler` or `Handler`. */
+/** 从 `MyService.Handler` 或 `Handler` 之类的表达式中提取最后一个标识符。 */
 function extractCSharpTailIdent(expr: string): string | null {
   const cleaned = expr.trim().replace(/\s+/g, '');
   const m = cleaned.match(/(?:\.|^)([A-Za-z_][A-Za-z0-9_]*)$/);
   return m ? m[1]! : null;
 }
 
-// Directory patterns
+// 目录模式
 const CONTROLLER_DIRS = ['/Controllers/'];
 const SERVICE_DIRS = ['/Services/', '/Service/', '/Application/'];
 const REPO_DIRS = ['/Repositories/', '/Repository/', '/Data/', '/Infrastructure/'];
@@ -249,7 +248,7 @@ const CLASS_KINDS = new Set(['class']);
 const SERVICE_KINDS = new Set(['class', 'interface']);
 
 /**
- * Resolve a symbol by name using indexed queries instead of scanning all files.
+ * 通过名称使用索引查询解析符号，而非扫描所有文件。
  */
 function resolveByNameAndKind(
   name: string,
@@ -263,13 +262,13 @@ function resolveByNameAndKind(
   const kindFiltered = candidates.filter((n) => kinds.has(n.kind));
   if (kindFiltered.length === 0) return null;
 
-  // Prefer candidates in framework-conventional directories
+  // 优先选择位于框架惯例目录中的候选项
   const preferred = kindFiltered.filter((n) =>
     preferredDirPatterns.some((d) => n.filePath.includes(d))
   );
 
   if (preferred.length > 0) return preferred[0]!.id;
 
-  // Fall back to any match
+  // 回退到任意匹配项
   return kindFiltered[0]!.id;
 }

@@ -1,15 +1,13 @@
 /**
- * Simple LRU cache backed by JavaScript's insertion-ordered Map.
+ * 基于 JavaScript 插入顺序 Map 实现的简单 LRU 缓存。
  *
- * Used by ReferenceResolver to bound the per-resolver caches that
- * previously grew without limit and OOM'd on large codebases (20k+
- * files). Each cache is sized independently — see `index.ts` for
- * the chosen limits per cache type.
+ * 供 ReferenceResolver 使用，用于限制各解析器缓存的大小——此前这些缓存
+ * 无上限增长，在超过 2 万个文件的大型代码库上会导致内存溢出（OOM）。
+ * 每个缓存的容量独立配置——各缓存类型的具体限制请参见 `index.ts`。
  *
- * Eviction is plain LRU: on `set`, if the cache is full, the
- * least-recently-used entry (the first one in iteration order) is
- * evicted. Touching via `get` moves the entry to the most-recently-used
- * position so hot keys survive eviction passes.
+ * 淘汰策略为标准 LRU：执行 `set` 时，若缓存已满，则淘汰最近最少使用的
+ * 条目（即迭代顺序中的第一条）。通过 `get` 访问某条目后，该条目会被
+ * 移至最近使用位置，从而使热键在淘汰轮次中得以保留。
  */
 export class LRUCache<K, V> {
   private readonly max: number;
@@ -29,11 +27,11 @@ export class LRUCache<K, V> {
   get(key: K): V | undefined {
     const value = this.store.get(key);
     if (value === undefined) {
-      // Distinguish "missing" from "stored undefined" by checking has().
-      // We don't store undefined in practice, but be defensive.
+      // 通过 has() 区分"键不存在"与"存储了 undefined"。
+      // 实际上不会存储 undefined，但保持防御性写法。
       return this.store.has(key) ? value : undefined;
     }
-    // Refresh recency by re-inserting.
+    // 通过重新插入来刷新访问时间。
     this.store.delete(key);
     this.store.set(key, value);
     return value;
@@ -47,7 +45,7 @@ export class LRUCache<K, V> {
     if (this.store.has(key)) {
       this.store.delete(key);
     } else if (this.store.size >= this.max) {
-      // Evict the oldest entry — first key in iteration order.
+      // 淘汰最旧的条目——即迭代顺序中的第一个键。
       const oldest = this.store.keys().next().value;
       if (oldest !== undefined) {
         this.store.delete(oldest);

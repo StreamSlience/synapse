@@ -1,7 +1,7 @@
 /**
- * Framework Resolver Registry
+ * 框架解析器注册表
  *
- * Manages framework-specific resolvers.
+ * 管理框架专属解析器。
  */
 
 import { FrameworkResolver, ResolutionContext } from '../types';
@@ -28,7 +28,7 @@ import { expoModulesResolver } from './expo-modules';
 import { fabricViewResolver } from './fabric';
 
 /**
- * All registered framework resolvers
+ * 所有已注册的框架解析器
  */
 const FRAMEWORK_RESOLVERS: FrameworkResolver[] = [
   // PHP
@@ -60,32 +60,32 @@ const FRAMEWORK_RESOLVERS: FrameworkResolver[] = [
   swiftUIResolver,
   uikitResolver,
   vaporResolver,
-  // Swift ↔ Objective-C cross-language bridging (mixed iOS apps)
+  // Swift ↔ Objective-C 跨语言桥接（混合 iOS 应用）
   swiftObjcBridgeResolver,
-  // React Native JS ↔ native bridge (legacy + TurboModules)
+  // React Native JS ↔ 原生桥接（Legacy + TurboModules）
   reactNativeBridgeResolver,
-  // Expo Modules — Function/AsyncFunction/Property DSL on Swift/Kotlin
+  // Expo Modules——Swift/Kotlin 上的 Function/AsyncFunction/Property DSL
   expoModulesResolver,
-  // React Native Fabric / Codegen view components — TS spec → component nodes
+  // React Native Fabric / Codegen 视图组件——TS 规范 → 组件节点
   fabricViewResolver,
 ];
 
 /**
- * Get all framework resolvers
+ * 获取所有框架解析器
  */
 export function getAllFrameworkResolvers(): FrameworkResolver[] {
   return FRAMEWORK_RESOLVERS;
 }
 
 /**
- * Get a resolver by name
+ * 按名称获取解析器
  */
 export function getFrameworkResolver(name: string): FrameworkResolver | undefined {
   return FRAMEWORK_RESOLVERS.find((r) => r.name === name);
 }
 
 /**
- * Detect which frameworks are used in a project
+ * 检测项目中使用了哪些框架
  */
 export function detectFrameworks(context: ResolutionContext): FrameworkResolver[] {
   return FRAMEWORK_RESOLVERS.filter((resolver) => {
@@ -98,8 +98,8 @@ export function detectFrameworks(context: ResolutionContext): FrameworkResolver[
 }
 
 /**
- * Filter a list of detected frameworks down to ones that apply to a given language.
- * Frameworks without an explicit `languages` list are treated as universal.
+ * 将已检测到的框架列表过滤为适用于给定语言的框架。
+ * 没有显式 `languages` 列表的框架视为通用框架。
  */
 export function getApplicableFrameworks(
   detected: FrameworkResolver[],
@@ -111,10 +111,10 @@ export function getApplicableFrameworks(
 }
 
 /**
- * Register a custom framework resolver
+ * 注册自定义框架解析器
  */
 export function registerFrameworkResolver(resolver: FrameworkResolver): void {
-  // Remove existing resolver with same name
+  // 移除同名的已有解析器
   const index = FRAMEWORK_RESOLVERS.findIndex((r) => r.name === resolver.name);
   if (index !== -1) {
     FRAMEWORK_RESOLVERS.splice(index, 1);
@@ -122,7 +122,7 @@ export function registerFrameworkResolver(resolver: FrameworkResolver): void {
   FRAMEWORK_RESOLVERS.push(resolver);
 }
 
-// Re-export framework resolvers
+// 重新导出框架解析器
 export { drupalResolver } from './drupal';
 export { laravelResolver, FACADE_MAPPINGS } from './laravel';
 export { expressResolver } from './express';

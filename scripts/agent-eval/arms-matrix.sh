@@ -1,15 +1,15 @@
 ﻿#!/usr/bin/env bash
-# Drive the tool-surface ablation across the chosen repos × arms (A–E).
-# Arms A–D ask the canonical FLOW question; arm E asks a NON-flow survey
-# question (the control probe — should degrade without explore+context).
-# Output: /tmp/arms/<repo>/<arm>-r<n>.jsonl  (parse with parse-arms.mjs).
+# 在选定代码库 × 分组（A–E）上运行工具面消融实验。
+# A–D 组提问规范的流程问题；E 组提非流程的概览问题
+#（对照探针——在无 explore+context 时应退化）。
+# 输出：/tmp/arms/<repo>/<arm>-r<n>.jsonl（用 parse-arms.mjs 解析）。
 set -uo pipefail
 HARNESS="$(cd "$(dirname "$0")" && pwd)"
 RUNS="${RUNS:-2}"
 C="${CORPUS:-/tmp/synapse-corpus}"
 NFQ='What are the main modules/components of this codebase and what does each one do? Give an overview of how it is organized.'
 
-# repo-path|flow-question  (2 small, 2 medium, 2 large — spans the size range)
+# repo-path|flow-question  （2 小型、2 中型、2 大型——覆盖规模范围）
 ROWS=(
 "$C/flutter-samples/add_to_app/books/flutter_module_books|How does the books UI build and what child widgets does it show?"
 "$C/aspnet-realworld|How is creating an article handled? Trace the controller to the service."
@@ -28,7 +28,7 @@ for row in "${ROWS[@]}"; do
     done
   done
 done
-# E: non-flow control probe on two repos (must degrade without explore+context)
+# E：在两个代码库上的非流程对照探针（在无 explore+context 时必须退化）
 for repo in "$C/excalidraw" "$C/spring-mall"; do
   for r in $(seq 1 "$RUNS"); do
     bash "$HARNESS/run-arms.sh" "$repo" "$NFQ" E "$r"

@@ -1,7 +1,7 @@
 ﻿#!/usr/bin/env node
-// One-shot probe: run handleExplore against an existing index using the built
-// dist, print the output + a few stats. Lets us verify explore's coverage fix
-// without a full agent run. Usage: node probe-explore.mjs <repo-with-.synapse> "<query>"
+// 单次探针：使用已构建的 dist 对现有索引运行 handleExplore，
+// 打印输出 + 若干统计信息。用于在无需完整 agent 运行的情况下
+// 验证 explore 的覆盖修复。用法：node probe-explore.mjs <repo-with-.synapse> "<query>"
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 
@@ -15,7 +15,7 @@ const load = async (rel) => import(pathToFileURL(resolve(rel)).href);
 const idx = await load('dist/index.js');
 const tools = await load('dist/mcp/tools.js');
 
-// esModuleInterop: dynamic import of CJS yields { default: module.exports, ...named }
+// esModuleInterop：对 CJS 进行动态 import 会得到 { default: module.exports, ...named }
 const Synapse = idx.default?.default ?? idx.default ?? idx.Synapse;
 const ToolHandler = tools.ToolHandler ?? tools.default?.ToolHandler;
 

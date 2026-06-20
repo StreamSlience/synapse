@@ -1,19 +1,18 @@
 ﻿/**
- * Server-level instructions emitted in the MCP `initialize` response.
+ * 在 MCP `initialize` 响应中输出的服务器级别 instructions。
  *
- * MCP clients (Claude Code, Cursor, opencode, LangChain, OpenAI Agent
- * SDK, …) surface this text in the agent's system prompt automatically,
- * giving the agent a high-level playbook for the synapse toolset
- * before it sees individual tool descriptions.
+ * MCP 客户端（Claude Code、Cursor、opencode、LangChain、OpenAI Agent
+ * SDK 等）会自动将此文本注入智能体的系统提示，让智能体在看到
+ * 具体工具描述之前就掌握 synapse 工具集的整体使用策略。
  *
- * Goals when editing this:
- *   - Tool selection by intent (which tool for which question)
- *   - Common chains (refactor planning = X then Y)
- *   - Anti-patterns (don't grep when synapse_search is faster)
+ * 编辑此内容时的目标：
+ *   - 按意图选择工具（哪个问题用哪个工具）
+ *   - 常见调用链（重构规划 = X 然后 Y）
+ *   - 反模式（synapse_search 更快时不要用 grep）
  *
- * Keep it tight. The agent reads this every session — long instructions
- * burn tokens. Reference only tools that exist on `main`; gate any
- * conditional tools behind feature checks if/when they ship.
+ * 保持简洁。智能体每次会话都会读取此内容——冗长的 instructions 会
+ * 消耗大量 token。只引用 `main` 上已存在的工具；条件性工具在发布时
+ * 再通过 feature check 进行门控。
  */
 export const SERVER_INSTRUCTIONS = `# Synapse — code intelligence over an indexed knowledge graph
 
@@ -77,14 +76,13 @@ typically one to a few calls; a grep/read exploration is dozens.
 `;
 
 /**
- * Instructions variant sent when the workspace has NO synapse index.
+ * 工作区**没有** synapse 索引时发送的 instructions 变体。
  *
- * Sending the full playbook ("lean on synapse for everything") into a
- * session where every call would fail wastes the agent's calls and — worse —
- * the failures teach it synapse is broken. The unindexed variant is a
- * short, unambiguous "inactive this session" note; `tools/list` is gated to
- * empty in the same state, so the agent has nothing to mis-call. Indexing is
- * deliberately left to the user: the agent is told NOT to run init itself.
+ * 在每次调用都会失败的会话中发送完整的操作手册（"凡事依赖 synapse"）
+ * 会浪费智能体的调用次数——更糟糕的是，失败会让它认为 synapse 已损坏。
+ * 未索引变体是简短、明确的"本次会话不可用"说明；`tools/list` 在同一状态下
+ * 被门控为空，使智能体无从误调用。索引操作刻意留给用户决定：
+ * 智能体被明确告知不要自行运行 init。
  */
 export const SERVER_INSTRUCTIONS_UNINDEXED = `# Synapse — inactive (workspace not indexed)
 

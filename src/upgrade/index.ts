@@ -1,27 +1,24 @@
 ﻿/**
  * `synapse upgrade`
  *
- * Self-update for the CLI, whatever way it was installed:
+ * CLI 的自我更新，支持所有安装方式：
  *
- *   - **bundle** — the self-contained runtime+app installed by `install.sh`
- *     (Linux/macOS) or `install.ps1` (Windows). Upgrading re-runs the SAME
- *     canonical installer script (single source of truth) so the download /
- *     version-resolution / PATH logic never drifts between first-install and
- *     upgrade.
- *   - **npm** — installed via `npm i -g @colbymchenry/synapse`. Upgrading
- *     shells out to npm.
- *   - **npx** — ephemeral; nothing to upgrade (next `npx` fetches latest).
- *   - **source** — a git checkout running its own `dist/`; `git pull` + rebuild.
+ *   - **bundle** — 由 `install.sh`（Linux/macOS）或 `install.ps1`（Windows）
+ *     安装的包含运行时的自包含包。升级时重新运行同一个规范安装脚本
+ *     （单一真实来源），以确保下载/版本解析/PATH 逻辑在首次安装和
+ *     升级之间不会出现偏差。
+ *   - **npm** — 通过 `npm i -g @colbymchenry/synapse` 安装。升级时调用 npm。
+ *   - **npx** — 临时使用；无需升级（下次 `npx` 会自动获取最新版本）。
+ *   - **source** — 运行自身 `dist/` 的 git 检出；通过 `git pull` + 重新构建升级。
  *
- * Detection is structural (see `detectInstallMethod`): a bundle carries a
- * vendored `node` binary and a `bin/synapse` launcher next to its `lib/`, so
- * we can recognize it from the running file's path without a marker file.
+ * 检测基于结构（参见 `detectInstallMethod`）：bundle 在其 `lib/` 旁边
+ * 携带一个内嵌的 `node` 二进制文件和一个 `bin/synapse` 启动器，
+ * 因此可以从运行文件的路径识别，无需标记文件。
  *
- * Windows wrinkle: a running `node.exe` is locked and can't be deleted, so the
- * bundle's `current\` dir can't be overwritten in place by the process doing
- * the upgrade. We therefore spawn a DETACHED helper that waits for this
- * process to exit (releasing the lock), then runs `install.ps1`. This is the
- * conventional Windows self-update dance (rustup/nvm-windows do the same).
+ * Windows 特殊情况：正在运行的 `node.exe` 被锁定无法删除，
+ * 因此 bundle 的 `current\` 目录不能被执行升级的进程原地覆盖。
+ * 为此我们派生一个分离的辅助进程，等待当前进程退出（释放锁）后再运行
+ * `install.ps1`。这是 Windows 自我更新的惯例做法（rustup/nvm-windows 同样如此）。
  */
 
 import * as fs from 'fs';
@@ -35,7 +32,7 @@ const RAW_BASE = `https://raw.githubusercontent.com/${REPO}/main`;
 export const INSTALL_SH_URL = `${RAW_BASE}/install.sh`;
 
 // ---------------------------------------------------------------------------
-// Install-method detection (pure — fully unit-testable via injected probes)
+// 安装方式检测（纯函数——可通过注入的探针完整进行单元测试）
 // ---------------------------------------------------------------------------
 
 export type InstallMethod =
@@ -46,11 +43,11 @@ export type InstallMethod =
   | { kind: 'unknown'; reason: string };
 
 export interface DetectInput {
-  /** `__filename` of the running CLI module — `<…>/dist/bin/synapse.js`. */
+  /** 运行中 CLI 模块的 `__filename`——`<…>/dist/bin/synapse.js`。 */
   filename: string;
   platform: NodeJS.Platform;
   cwd: string;
-  /** Injectable existence probe (defaults to fs.existsSync) — for tests. */
+  /** 可注入的存在性探针（默认为 `fs.existsSync`）——用于测试。 */
   exists?: (p: string) => boolean;
 }
 
@@ -59,10 +56,9 @@ function toPosix(p: string): string {
 }
 
 /**
- * Where the bundle installer keeps its install root, derived from the bundle
- * dir so an upgrade reuses a custom `SYNAPSE_INSTALL_DIR`. Returns null when
- * the layout isn't the one the installer creates (then the installer falls
- * back to its own default).
+ * bundle 安装器保存其安装根目录的位置，从 bundle 目录推导，
+ * 以便升级时复用自定义的 `SYNAPSE_INSTALL_DIR`。当布局与安装器
+ * 创建的不符时返回 null（此时安装器回退到其默认值）。
  *
  *   unix:    <installDir>/versions/<vX.Y.Z>   (bundleRoot)  → <installDir>
  *   windows: <installDir>\current             (bundleRoot)  → <installDir>
@@ -72,9 +68,8 @@ export function deriveInstallDir(
   os: 'unix' | 'windows',
   exists: (p: string) => boolean
 ): string | null {
-  // Use the TARGET platform's path semantics (not the host's), so this is
-  // deterministic when reasoning about a Windows layout from a POSIX host (CI)
-  // and vice-versa. In production `os` always matches the running platform.
+  // 使用目标平台的路径语义（而非宿主平台的），以便在 POSIX 宿主（CI）上
+  // 推断 Windows 布局时结果确定性一致，反之亦然。生产环境中 `os` 始终与运行平台匹配。
   const P = os === 'windows' ? path.win32 : path.posix;
   if (os === 'windows') {
     if (P.basename(bundleRoot).toLowerCase() === 'current') {
@@ -82,7 +77,7 @@ export function deriveInstallDir(
     }
     return null;
   }
-  // unix: bundleRoot is <installDir>/versions/<version>
+  // unix：bundleRoot 为 <installDir>/versions/<version>
   const parent = P.dirname(bundleRoot);
   if (P.basename(parent) === 'versions') {
     const installDir = P.dirname(parent);
@@ -94,13 +89,13 @@ export function deriveInstallDir(
 export function detectInstallMethod(input: DetectInput): InstallMethod {
   const exists = input.exists ?? fs.existsSync;
   const isWin = input.platform === 'win32';
-  // Path math keyed on the TARGET platform so detection is host-independent
-  // (a Windows layout resolves correctly even when unit-tested on macOS/Linux).
+  // 路径计算以目标平台为基准，使检测与宿主无关
+  // （Windows 布局在 macOS/Linux 单元测试中也能正确解析）。
   const P = isWin ? path.win32 : path.posix;
   const binDir = P.dirname(input.filename); // <…>/bin
 
-  // Bundle: <root>/lib/dist/bin/synapse.js → <root> is up 3 from bin/.
-  // A bundle has a vendored node + a launcher script as siblings of lib/.
+  // bundle：<root>/lib/dist/bin/synapse.js → <root> 在 bin/ 上方第 3 层。
+  // bundle 在 lib/ 旁边携带内嵌的 node 二进制文件 + 启动脚本。
   const bundleRoot = P.resolve(binDir, '..', '..', '..');
   const vendoredNode = P.join(bundleRoot, isWin ? 'node.exe' : 'node');
   const launcher = P.join(bundleRoot, 'bin', isWin ? 'synapse.cmd' : 'synapse');
@@ -111,18 +106,18 @@ export function detectInstallMethod(input: DetectInput): InstallMethod {
 
   const norm = toPosix(input.filename);
 
-  // npx cache: <…>/_npx/<hash>/node_modules/@colbymchenry/synapse/…
+  // npx 缓存路径：<…>/_npx/<hash>/node_modules/@colbymchenry/synapse/…
   if (norm.includes('/_npx/')) {
     return { kind: 'npx' };
   }
 
-  // npm install (global or local): lives under a node_modules tree.
+  // npm install（全局或本地）：位于 node_modules 树下。
   if (norm.includes('/node_modules/')) {
     const underCwd = norm.startsWith(toPosix(P.resolve(input.cwd)) + '/');
     return { kind: 'npm', scope: underCwd ? 'local' : 'global' };
   }
 
-  // Source checkout: running <repo>/dist/bin/synapse.js with a sibling .git.
+  // 源码检出：运行 <repo>/dist/bin/synapse.js 且同级目录有 .git。
   const repoRoot = P.resolve(binDir, '..', '..');
   if (exists(P.join(repoRoot, 'package.json')) && exists(P.join(repoRoot, '.git'))) {
     return { kind: 'source', root: repoRoot };
@@ -132,7 +127,7 @@ export function detectInstallMethod(input: DetectInput): InstallMethod {
 }
 
 // ---------------------------------------------------------------------------
-// Version helpers (pure)
+// 版本辅助函数（纯函数）
 // ---------------------------------------------------------------------------
 
 export interface Semver {
@@ -153,7 +148,7 @@ export function parseSemver(version: string): Semver | null {
   };
 }
 
-/** Returns >0 if a>b, <0 if a<b, 0 if equal. Throws on unparseable input. */
+/** 返回值 >0 表示 a>b，<0 表示 a<b，0 表示相等；输入无法解析时抛出异常。 */
 export function compareVersions(a: string, b: string): number {
   const sa = parseSemver(a);
   const sb = parseSemver(b);
@@ -161,7 +156,7 @@ export function compareVersions(a: string, b: string): number {
   if (sa.major !== sb.major) return sa.major - sb.major;
   if (sa.minor !== sb.minor) return sa.minor - sb.minor;
   if (sa.patch !== sb.patch) return sa.patch - sb.patch;
-  // A prerelease is "less than" its release (1.0.0-rc < 1.0.0).
+  // 预发布版本"小于"其正式版本（1.0.0-rc < 1.0.0）。
   if (sa.pre && !sb.pre) return -1;
   if (!sa.pre && sb.pre) return 1;
   if (sa.pre && sb.pre) return sa.pre < sb.pre ? -1 : sa.pre > sb.pre ? 1 : 0;
@@ -172,27 +167,27 @@ export function isUpdateAvailable(current: string, latest: string): boolean {
   try {
     return compareVersions(latest, current) > 0;
   } catch {
-    // If either is unparseable (e.g. a dev "0.0.0-unknown"), treat differing
-    // strings as "update available" so the user isn't stuck.
+    // 若任一版本无法解析（如开发版 `"0.0.0-unknown"`），
+    // 将不同的字符串视为"有可用更新"，以免用户卡住。
     return normalizeVersion(current) !== normalizeVersion(latest);
   }
 }
 
-/** `0.9.9` / `v0.9.9` → `v0.9.9` (release tags are v-prefixed). */
+/** 规范化版本号：`0.9.9` / `v0.9.9` → `v0.9.9`（发布标签带 `v` 前缀）。 */
 export function normalizeVersion(v: string): string {
   const t = v.trim();
   return t.startsWith('v') ? t : `v${t}`;
 }
 
-/** Strip a leading `v`: `v0.9.9` → `0.9.9`. */
+/** 去掉版本号开头的 `v` 前缀：`v0.9.9` → `0.9.9`。 */
 export function stripV(v: string): string {
   const t = v.trim();
   return t.startsWith('v') ? t.slice(1) : t;
 }
 
 /**
- * Parse the release tag out of the `Location` header GitHub returns for
- * `/releases/latest` → `…/releases/tag/v0.9.9`. Pure so it's unit-tested.
+ * 从 GitHub 为 `/releases/latest` 返回的 `Location` 响应头中解析发布标签，
+ * 格式为 `…/releases/tag/v0.9.9`。纯函数，便于单元测试。
  */
 export function parseLatestTagFromLocation(location: string | undefined): string | null {
   if (!location) return null;
@@ -201,7 +196,7 @@ export function parseLatestTagFromLocation(location: string | undefined): string
 }
 
 // ---------------------------------------------------------------------------
-// Latest-version resolution (network)
+// 最新版本解析（需网络）
 // ---------------------------------------------------------------------------
 
 function httpsGet(
@@ -221,13 +216,12 @@ function httpsGet(
 }
 
 /**
- * Resolve the latest release tag (e.g. `v0.9.9`).
+ * 解析最新发布标签（如 `v0.9.9`）。
  *
- * Primary: read the redirect `Location` from `github.com/<repo>/releases/latest`
- * — same trick install.sh uses, because the unauthenticated GitHub API is
- * rate-limited to 60 req/h/IP and 403s on shared/cloud hosts (issue #325). The
- * redirect has no such limit. Fall back to the API only if the redirect can't
- * be read.
+ * 主要方式：读取 `github.com/<repo>/releases/latest` 返回的重定向 `Location` 头——
+ * 与 install.sh 使用的技巧相同，因为未认证的 GitHub API 限速为 60 次/小时/IP，
+ * 在共享/云主机上会返回 403（issue #325）。重定向无此限制。
+ * 仅在无法读取重定向时才回退到 API。
  */
 export async function resolveLatestVersion(repo = REPO, timeoutMs = 12000): Promise<string> {
   try {
@@ -240,7 +234,7 @@ export async function resolveLatestVersion(repo = REPO, timeoutMs = 12000): Prom
     const tag = parseLatestTagFromLocation(Array.isArray(loc) ? loc[0] : loc);
     if (tag) return normalizeVersion(tag);
   } catch {
-    /* fall through to API */
+    /* 回退到 API */
   }
   try {
     const res = await httpsGet(
@@ -251,7 +245,7 @@ export async function resolveLatestVersion(repo = REPO, timeoutMs = 12000): Prom
     const tag = JSON.parse(res.body)?.tag_name;
     if (typeof tag === 'string' && tag) return normalizeVersion(tag);
   } catch {
-    /* fall through to error */
+    /* 回退到错误处理 */
   }
   throw new Error(
     'could not resolve the latest version from GitHub. Check your network, or pin a version: `synapse upgrade <version>`.'
@@ -259,24 +253,24 @@ export async function resolveLatestVersion(repo = REPO, timeoutMs = 12000): Prom
 }
 
 // ---------------------------------------------------------------------------
-// Orchestrator
+// 编排器
 // ---------------------------------------------------------------------------
 
 export interface UpgradeOptions {
-  /** Pin a specific version (positional arg or SYNAPSE_VERSION). */
+  /** 指定特定版本（位置参数或 SYNAPSE_VERSION）。 */
   version?: string;
-  /** Report current vs latest, don't change anything. */
+  /** 报告当前版本与最新版本，不做任何修改。 */
   check?: boolean;
-  /** Reinstall even if already on the resolved version. */
+  /** 即使已是目标版本也强制重新安装。 */
   force?: boolean;
 }
 
-/** Injectable side-effects so the orchestrator stays unit-testable. */
+/** 可注入的副作用接口，使编排器保持可单元测试。 */
 export interface UpgradeDeps {
   currentVersion: string;
   method: InstallMethod;
   resolveLatest: (pin?: string) => Promise<string>;
-  /** Run a command inheriting stdio; returns its exit code (-1 = spawn failed). */
+  /** 继承 stdio 运行命令；返回退出码（-1 表示派生失败）。 */
   run: (cmd: string, args: string[], env?: NodeJS.ProcessEnv) => number;
   hasCommand: (cmd: string) => boolean;
   log: (msg: string) => void;
@@ -293,24 +287,24 @@ const c = {
   cyan: (s: string) => `\x1b[36m${s}\x1b[0m`,
 };
 
-/** The honest, additive re-index reminder shown after a successful upgrade. */
+/** 成功升级后显示的诚实、附加式重新索引提醒。 */
 export function reindexAdvisory(): string {
   return [
     c.dim('Your existing project indexes keep working, but were built by the previous version.'),
-    c.dim('To pick up this version’s extraction improvements, refresh each project:'),
+    c.dim("To pick up this version's extraction improvements, refresh each project:"),
     `  ${c.cyan('synapse sync')}        ${c.dim('# incremental, fast')}`,
     `  ${c.cyan('synapse index -f')}    ${c.dim('# full rebuild')}`,
-    c.dim('(`synapse status` flags any index that predates the engine you’re running.)'),
+    c.dim("(`synapse status` flags any index that predates the engine you're running.)"),
   ].join('\n');
 }
 
 /**
- * Returns the process exit code (0 = success / nothing to do, 1 = failure).
+ * 返回进程退出码（0 = 成功/无需操作，1 = 失败）。
  */
 export async function runUpgrade(opts: UpgradeOptions, deps: UpgradeDeps): Promise<number> {
   const { currentVersion, method } = deps;
 
-  // Resolve the target version (pinned or latest).
+  // 解析目标版本（固定版本或最新版本）。
   let latest: string;
   try {
     latest = normalizeVersion(opts.version || (await deps.resolveLatest()));
@@ -329,7 +323,7 @@ export async function runUpgrade(opts: UpgradeOptions, deps: UpgradeDeps): Promi
       deps.log(c.yellow(`An update is available: ${currentDisplay} → ${latest}`));
       deps.log(c.dim('Run `synapse upgrade` to install it.'));
     } else {
-      deps.log(c.green(`You’re on the latest version (${currentDisplay}).`));
+      deps.log(c.green(`You're on the latest version (${currentDisplay}).`));
     }
     return 0;
   }
@@ -340,15 +334,15 @@ export async function runUpgrade(opts: UpgradeOptions, deps: UpgradeDeps): Promi
     return 0;
   }
 
-  // Dispatch by install method.
+  // 按安装方式分发到对应升级函数。
   switch (method.kind) {
     case 'bundle':
       return method.os === 'windows'
         ? upgradeWindowsBundle(method, latest, deps)
         : upgradeUnixBundle(method, opts.version ? latest : undefined, deps);
     case 'npm':
-      // npm version specs have no leading "v" (`@0.9.8`, not `@v0.9.8` — the
-      // latter resolves as a nonexistent dist-tag).
+      // npm 版本规范不带 `v` 前缀（`@0.9.8` 而非 `@v0.9.8`——
+      // 带 `v` 前缀会被解析为不存在的 dist-tag）。
       return upgradeNpm(method, opts.version ? stripV(latest) : 'latest', deps);
     case 'npx':
       deps.log(c.green('npx always runs the latest version on demand — nothing to upgrade.'));
@@ -359,7 +353,7 @@ export async function runUpgrade(opts: UpgradeOptions, deps: UpgradeDeps): Promi
       deps.log(c.dim('Upgrade it with: git pull && npm run build'));
       return 0;
     default:
-      deps.error(`Couldn’t determine how Synapse was installed (${method.reason}).`);
+      deps.error(`Couldn't determine how Synapse was installed (${method.reason}).`);
       deps.log(c.dim(`Reinstall manually — see https://github.com/${REPO}#install`));
       return 1;
   }
@@ -397,16 +391,16 @@ function upgradeUnixBundle(
   return 0;
 }
 
-/** Build the in-place Windows upgrade script (exported for unit-testing). */
+/** 构建 Windows 原地升级脚本（导出供单元测试使用）。 */
 export function buildWindowsUpgradeScript(bundleRoot: string, version: string, arch: string): string {
   const target = `win32-${arch}`;
   const url = `https://github.com/${REPO}/releases/download/${version}/synapse-${target}.zip`;
-  // Windows can't DELETE a running exe but CAN rename it, so we upgrade IN
-  // PLACE: download → rename the locked node.exe aside → extract the new bundle
-  // over current\. Synchronous, no detached helper (which dies under SSH/job
-  // objects and has worse UX). The running process keeps its renamed node.exe
-  // mapped; the NEXT `synapse` invocation uses the new one. We can't reuse
-  // install.ps1 here — it `Remove-Item`s current\, which fails on the locked exe.
+  // Windows 无法删除正在运行的 exe，但可以重命名，因此采用原地升级方式：
+  // 下载 → 将被锁定的 node.exe 重命名为备份 → 将新 bundle 解压覆盖到 current\ 目录。
+  // 同步操作，无需分离辅助进程（在 SSH/job 对象下不稳定，且用户体验较差）。
+  // 运行中的进程仍持有已重命名的 node.exe 映射；
+  // 下次调用 `synapse` 时将使用新版本。
+  // 此处无法复用 install.ps1——它会 `Remove-Item` current\ 目录，而被锁定的 exe 会导致失败。
   return [
     `$ErrorActionPreference='Stop'`,
     `$dest='${bundleRoot}'`,
@@ -436,9 +430,9 @@ function upgradeWindowsBundle(
 ): number {
   const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
   const script = buildWindowsUpgradeScript(method.bundleRoot, latest, arch);
-  // -EncodedCommand (base64 UTF-16LE), NOT -Command: Node's Windows argv→command
-  // -line quoting mangles a long multi-statement script, so PowerShell never
-  // parses it. Encoding sidesteps all shell quoting — the canonical approach.
+  // 使用 `-EncodedCommand`（base64 UTF-16LE）而非 `-Command`：Node 在 Windows 上的
+  // argv → 命令行引号转义会破坏长的多语句脚本，导致 PowerShell 无法解析。
+  // base64 编码绕过了所有 shell 引号问题——这是 PowerShell 的标准做法。
   const encoded = Buffer.from(script, 'utf16le').toString('base64');
   deps.log(c.dim(`Downloading and installing ${latest}…`));
   const code = deps.run('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded]);
@@ -464,10 +458,10 @@ function upgradeNpm(
   deps.log(c.dim(`Running: ${npm} ${args.join(' ')}`));
   const code = deps.run(npm, args, process.env);
   if (code !== 0) {
-    deps.error(`npm exited with code ${code}.`);
+    deps.error(`npm 以退出码 ${code} 终止。`);
     if (method.scope === 'global') {
-      deps.log(c.dim('If this is a permissions error (EACCES), your global prefix needs sudo, or use a'));
-      deps.log(c.dim('Node version manager (nvm/fnm) so global installs don’t require root.'));
+      deps.log(c.dim('如果这是权限错误（EACCES），可对全局前缀使用 sudo，'));
+      deps.log(c.dim('或改用 Node 版本管理器（nvm/fnm），避免全局安装需要 root 权限。'));
     }
     return 1;
   }
@@ -478,15 +472,14 @@ function upgradeNpm(
 }
 
 // ---------------------------------------------------------------------------
-// Production deps wiring (used by the CLI)
+// 生产依赖注入（供 CLI 调用）
 // ---------------------------------------------------------------------------
 
 /**
- * True if `cmd` resolves to an executable on PATH. A pure-Node PATH scan — NOT
- * a spawned `command -v`/`which`: `command` is a shell builtin (no standalone
- * binary on Debian, though macOS ships one), and `which` isn't guaranteed
- * present on minimal images, so spawning either is unreliable. Scanning PATH
- * ourselves behaves identically on every platform.
+ * 检查 `cmd` 是否能在 PATH 上解析为可执行文件。采用纯 Node PATH 扫描——
+ * 不派生 `command -v`/`which`：`command` 是 shell 内建命令（Debian 上没有
+ * 独立二进制文件，尽管 macOS 自带），`which` 在精简镜像上也不保证存在，
+ * 因此两种方式均不可靠。自行扫描 PATH 在所有平台上行为一致。
  */
 export function hasCommand(cmd: string): boolean {
   const isWin = process.platform === 'win32';
@@ -501,7 +494,7 @@ export function hasCommand(cmd: string): boolean {
         fs.accessSync(candidate, fs.constants.X_OK);
         return true;
       } catch {
-        /* not here / not executable — keep scanning */
+        /* 不在此处/不可执行——继续扫描 */
       }
     }
   }

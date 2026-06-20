@@ -1,16 +1,15 @@
 /**
- * Sync Module
+ * 同步模块
  *
- * Provides synchronization functionality for keeping the code graph
- * up-to-date with file system changes.
+ * 提供同步功能，用于使代码图与文件系统变更保持最新状态。
  *
- * Components:
- * - FileWatcher: Debounced fs.watch that auto-triggers sync on file changes
- * - Watch policy: decides when the watcher must be disabled (e.g. WSL2 /mnt)
- * - Git sync hooks: opt-in commit/merge/checkout hooks when watching is off
- * - Git worktree awareness: detect when a query borrows another tree's index
- * - Content hashing for change detection (in extraction module)
- * - Incremental reindexing (in extraction module)
+ * 组件：
+ * - FileWatcher：带防抖的 fs.watch，在文件变更时自动触发同步
+ * - 监视策略：决定何时必须禁用监视器（如 WSL2 /mnt）
+ * - Git 同步钩子：监视关闭时的可选提交/合并/checkout 钩子
+ * - Git worktree 感知：检测查询是否借用了另一个工作树的索引
+ * - 用于变更检测的内容哈希（在提取模块中）
+ * - 增量重新索引（在提取模块中）
  */
 
 export { FileWatcher, WatchOptions, PendingFile, LockUnavailableError } from './watcher';

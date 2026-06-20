@@ -1,20 +1,18 @@
 ﻿/**
- * Git Worktree Awareness
+ * Git Worktree 感知
  *
- * A Synapse index lives in a `.synapse/` directory and is resolved by
- * walking up parent directories to the nearest one (see
- * `findNearestSynapseRoot`). That walk is unaware of git worktrees: when a
- * worktree is created *inside* the main checkout (e.g. some tools place them
- * under `.gitignore`d paths like `.claude/worktrees/<name>/`), a command run
- * from the worktree walks up and silently resolves the MAIN checkout's index.
+ * Synapse 索引存放在 `.synapse/` 目录中，通过向上遍历父目录找到最近的一个
+ * （参见 `findNearestSynapseRoot`）。该遍历不感知 git worktree：当 worktree
+ * 创建在主检出目录*内部*时（例如某些工具将其置于 `.gitignore` 的路径下，
+ * 如 `.claude/worktrees/<name>/`），从 worktree 运行的命令会向上遍历并
+ * 静默地解析到主检出的索引。
  *
- * Every query then returns results from the main tree's code — usually a
- * different branch — rather than the worktree the user is actually editing.
- * Symbols added or changed only in the worktree are invisible. This module
- * detects that "borrowed index" situation so callers can warn about it.
+ * 这样所有查询结果都来自主工作树的代码——通常是另一个分支——
+ * 而非用户实际编辑的 worktree。仅在 worktree 中添加或修改的符号是不可见的。
+ * 本模块用于检测这种"借用索引"的情况，以便调用方能发出警告。
  *
- * Detection is best-effort: when git is unavailable or the path isn't a repo,
- * it reports "no mismatch" and callers carry on unchanged.
+ * 检测是尽力而为的：当 git 不可用或路径不是仓库时，
+ * 报告"无不匹配"并让调用方继续正常运行。
  */
 
 import * as fs from 'fs';
@@ -22,12 +20,12 @@ import * as path from 'path';
 import { execFileSync } from 'child_process';
 
 /**
- * Absolute, symlink-resolved toplevel of the git working tree that `dir`
- * belongs to, or null when `dir` isn't inside a git repo (or git is missing).
+ * `dir` 所在 git 工作树的绝对符号链接已解析顶层路径，
+ * 若 `dir` 不在 git 仓库内（或 git 不存在）则返回 null。
  *
- * `git rev-parse --show-toplevel` returns the per-worktree root: the main
- * checkout and each linked worktree report their own distinct directory, which
- * is exactly the distinction this module relies on.
+ * `git rev-parse --show-toplevel` 返回每个 worktree 自己的根目录：
+ * 主检出和每个链接的 worktree 各自报告独立的目录，
+ * 这正是本模块所依赖的区分依据。
  */
 export function gitWorktreeRoot(dir: string): string | null {
   try {
@@ -44,22 +42,21 @@ export function gitWorktreeRoot(dir: string): string | null {
 }
 
 export interface WorktreeIndexMismatch {
-  /** The git working tree the command was run from. */
+  /** 命令运行所在的 git 工作树。 */
   worktreeRoot: string;
-  /** The (different) working tree whose `.synapse` index is being used. */
+  /** 正在使用其 `.synapse` 索引的（另一个）工作树。 */
   indexRoot: string;
 }
 
 /**
- * Detect when `startPath` lives in one git working tree but the resolved
- * Synapse index (`indexRoot`) belongs to a *different* working tree.
+ * 检测 `startPath` 所在的 git 工作树与已解析的 Synapse 索引（`indexRoot`）
+ * 所属工作树不同的情况。
  *
- * Returns null — meaning "nothing to warn about" — when:
- *   - `startPath` isn't in a git repo (or git is unavailable),
- *   - the index already lives in `startPath`'s own working tree, or
- *   - `indexRoot` isn't itself a working-tree root (an unrelated parent dir
- *     that merely happens to contain a `.synapse/`), which keeps non-git
- *     and monorepo-subdir layouts from producing false warnings.
+ * 在以下情况返回 null（即"无需警告"）：
+ *   - `startPath` 不在 git 仓库中（或 git 不可用），
+ *   - 索引已在 `startPath` 自己的工作树中，或
+ *   - `indexRoot` 本身不是工作树根目录（只是一个恰好包含 `.synapse/` 的
+ *     无关父目录），以防止非 git 和 monorepo 子目录布局产生误报。
  */
 export function detectWorktreeIndexMismatch(
   startPath: string,
@@ -71,15 +68,15 @@ export function detectWorktreeIndexMismatch(
   const resolvedIndexRoot = realpath(indexRoot);
   if (worktreeRoot === resolvedIndexRoot) return null;
 
-  // Only flag it when the index root is itself a real working-tree root. This
-  // distinguishes "borrowed another worktree's index" from "index sits in a
-  // plain ancestor directory", and avoids warning outside git entirely.
+  // 仅在索引根目录本身是真实工作树根目录时才标记。这可以区分
+  // "借用了另一个 worktree 的索引"与"索引位于普通祖先目录"两种情况，
+  // 并避免在完全非 git 场景下发出警告。
   if (gitWorktreeRoot(resolvedIndexRoot) !== resolvedIndexRoot) return null;
 
   return { worktreeRoot, indexRoot: resolvedIndexRoot };
 }
 
-/** One-line-per-fact warning describing a detected mismatch. */
+/** 逐条描述检测到的不匹配情况的单行警告。 */
 export function worktreeMismatchWarning(m: WorktreeIndexMismatch): string {
   return (
     `This Synapse index belongs to a different git working tree.\n` +
@@ -92,9 +89,8 @@ export function worktreeMismatchWarning(m: WorktreeIndexMismatch): string {
 }
 
 /**
- * Compact, single-line variant for prefixing a tool's result. Read tools
- * return their answer inline, so the heads-up has to ride on the same payload
- * the agent is already reading — a multi-line block would bury the result.
+ * 用于在工具结果前缀处追加的紧凑单行变体。读取工具的答案是内联返回的，
+ * 因此提示必须附在智能体正在读取的同一载荷上——多行块会把结果淹没。
  */
 export function worktreeMismatchNotice(m: WorktreeIndexMismatch): string {
   return (
@@ -105,7 +101,7 @@ export function worktreeMismatchNotice(m: WorktreeIndexMismatch): string {
   );
 }
 
-/** Resolve symlinks where possible so tmp/realpath quirks don't break equality. */
+/** 尽可能解析符号链接，以避免 tmp/realpath 的差异导致路径相等性判断失败。 */
 function realpath(p: string): string {
   try {
     return fs.realpathSync(path.resolve(p));

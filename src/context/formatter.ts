@@ -1,30 +1,30 @@
 /**
- * Context Formatter
+ * 上下文格式化器
  *
- * Formats TaskContext as markdown or JSON for consumption by Claude.
+ * 将 TaskContext 格式化为 markdown 或 JSON，供 Claude 消费。
  */
 
 import { Node, Edge, TaskContext, Subgraph } from '../types';
 import { isGeneratedFile } from '../extraction/generated-detection';
 
 /**
- * Format context as markdown
+ * 将上下文格式化为 markdown
  *
- * Creates a compact markdown document optimized for Claude with minimal context usage:
- * - Brief summary
- * - Entry points with locations
- * - Code blocks only for key symbols
+ * 生成一份针对 Claude 优化的紧凑 markdown 文档，尽量减少上下文占用：
+ * - 简短摘要
+ * - 带位置信息的入口点
+ * - 仅对关键符号生成代码块
  */
 export function formatContextAsMarkdown(context: TaskContext): string {
   const lines: string[] = [];
 
-  // Header with query
+  // 带查询的标题
   lines.push('## Code Context\n');
   lines.push(`**Query:** ${context.query}\n`);
 
-  // Entry points - compact format. Re-sort so generated files (.pb.go,
-  // .pulsar.go, mocks, …) rank LAST — a flow query should lead with the
-  // hand-written implementation, not protobuf scaffolding.
+  // 入口点——紧凑格式。重新排序，使生成文件（.pb.go、
+  // .pulsar.go、mock 等）排在最后——流程查询应以手写实现为主，
+  // 而非 protobuf 脚手架。
   const orderedEntries = [...context.entryPoints].sort((a, b) => {
     const aGen = isGeneratedFile(a.filePath) ? 1 : 0;
     const bGen = isGeneratedFile(b.filePath) ? 1 : 0;
@@ -42,15 +42,15 @@ export function formatContextAsMarkdown(context: TaskContext): string {
     lines.push('');
   }
 
-  // Related symbols - compact list (skip verbose structure tree). Drop nodes
-  // in generated source files (`.pb.go` / `.pulsar.go` / mocks / …) — agents
-  // chasing a flow never want to land on protobuf scaffolding (cosmos-Q3 used
-  // to list `gov.pulsar.go::GetExpeditedThreshold` and `1.pulsar.go::Get` in
-  // Related Symbols, pure noise that displaced real-flow entries).
+  // 相关符号——紧凑列表（跳过冗长的结构树）。过滤掉生成源文件
+  // （`.pb.go` / `.pulsar.go` / mock 等）中的节点——追踪流程的智能体
+  // 从不需要跳转到 protobuf 脚手架（cosmos-Q3 曾在"相关符号"中
+  // 列出 `gov.pulsar.go::GetExpeditedThreshold` 和 `1.pulsar.go::Get`，
+  // 纯粹是噪音，占用了真实流程条目的位置）。
   const otherSymbols = Array.from(context.subgraph.nodes.values())
     .filter(n => !context.entryPoints.some(e => e.id === n.id))
     .filter(n => !isGeneratedFile(n.filePath))
-    .slice(0, 10); // Limit to 10 related symbols
+    .slice(0, 10); // 最多显示 10 个相关符号
 
   if (otherSymbols.length > 0) {
     lines.push('### Related Symbols\n');
@@ -68,8 +68,8 @@ export function formatContextAsMarkdown(context: TaskContext): string {
     lines.push('');
   }
 
-  // Code blocks - only for key entry points. Re-sort so non-generated blocks
-  // show first (consistent with Entry Points reordering above).
+  // 代码块——仅针对关键入口点。重新排序，使非生成块优先显示
+  // （与上方入口点重排序保持一致）。
   if (context.codeBlocks.length > 0) {
     const orderedBlocks = [...context.codeBlocks].sort((a, b) => {
       const aGen = isGeneratedFile(a.filePath) ? 1 : 0;
@@ -90,12 +90,12 @@ export function formatContextAsMarkdown(context: TaskContext): string {
 }
 
 /**
- * Format context as JSON
+ * 将上下文格式化为 JSON
  *
- * Returns a structured JSON representation suitable for programmatic use.
+ * 返回适合程序化使用的结构化 JSON 表示。
  */
 export function formatContextAsJson(context: TaskContext): string {
-  // Convert Map to array for JSON serialization
+  // 将 Map 转换为数组以便 JSON 序列化
   const serializable = {
     query: context.query,
     summary: context.summary,
@@ -119,13 +119,13 @@ export function formatContextAsJson(context: TaskContext): string {
 }
 
 /**
- * Format a subgraph as an ASCII tree structure
+ * 将子图格式化为 ASCII 树结构
  */
 export function formatSubgraphTree(subgraph: Subgraph, entryPoints: Node[]): string {
   const lines: string[] = [];
   const printed = new Set<string>();
 
-  // Build adjacency list for outgoing edges
+  // 构建出边邻接表
   const outgoing = new Map<string, Edge[]>();
   for (const edge of subgraph.edges) {
     const existing = outgoing.get(edge.source) ?? [];
@@ -133,13 +133,13 @@ export function formatSubgraphTree(subgraph: Subgraph, entryPoints: Node[]): str
     outgoing.set(edge.source, existing);
   }
 
-  // Print each entry point as a tree root
+  // 将每个入口点作为树的根节点输出
   for (const entry of entryPoints) {
     formatNodeTree(entry, subgraph, outgoing, printed, lines, 0, '');
-    lines.push(''); // Blank line between trees
+    lines.push(''); // 树之间留空行
   }
 
-  // Print any remaining nodes not reached from entry points
+  // 输出未从入口点可达的其余节点
   const remaining: Node[] = [];
   for (const node of subgraph.nodes.values()) {
     if (!printed.has(node.id)) {
@@ -161,7 +161,7 @@ export function formatSubgraphTree(subgraph: Subgraph, entryPoints: Node[]): str
 }
 
 /**
- * Format a single node and its relationships
+ * 格式化单个节点及其关系
  */
 function formatNodeTree(
   node: Node,
@@ -177,18 +177,18 @@ function formatNodeTree(
   }
   printed.add(node.id);
 
-  // Node header
+  // 节点标题
   const location = node.startLine ? `:${node.startLine}` : '';
   const signature = node.signature ? ` - ${truncate(node.signature, 50)}` : '';
   lines.push(`${prefix}${node.kind}: ${node.name} (${node.filePath}${location})${signature}`);
 
-  // Outgoing edges
+  // 出边
   const edges = outgoing.get(node.id) ?? [];
   const significantEdges = edges.filter((e) =>
     ['calls', 'extends', 'implements', 'imports', 'references'].includes(e.kind)
   );
 
-  // Group by kind
+  // 按类型分组
   const edgesByKind = new Map<string, Edge[]>();
   for (const edge of significantEdges) {
     const existing = edgesByKind.get(edge.kind) ?? [];
@@ -196,11 +196,11 @@ function formatNodeTree(
     edgesByKind.set(edge.kind, existing);
   }
 
-  // Print edges grouped by kind
+  // 按类型分组输出边
   const newPrefix = prefix + '  ';
   for (const [kind, kindEdges] of edgesByKind) {
     if (kindEdges.length > 3) {
-      // Summarize if too many
+      // 数量过多时汇总显示
       const names = kindEdges
         .slice(0, 3)
         .map((e) => {
@@ -220,7 +220,7 @@ function formatNodeTree(
     }
   }
 
-  // Recurse for directly connected nodes (limited depth)
+  // 对直接相连的节点递归处理（限制深度）
   if (depth < 1) {
     for (const edge of significantEdges.slice(0, 3)) {
       const target = subgraph.nodes.get(edge.target);
@@ -232,7 +232,7 @@ function formatNodeTree(
 }
 
 /**
- * Serialize a node for JSON output
+ * 将节点序列化为 JSON 输出
  */
 function serializeNode(node: Node): Record<string, unknown> {
   return {
@@ -254,7 +254,7 @@ function serializeNode(node: Node): Record<string, unknown> {
 }
 
 /**
- * Serialize an edge for JSON output
+ * 将边序列化为 JSON 输出
  */
 function serializeEdge(edge: Edge): Record<string, unknown> {
   return {
@@ -267,7 +267,7 @@ function serializeEdge(edge: Edge): Record<string, unknown> {
 }
 
 /**
- * Truncate a string with ellipsis
+ * 截断字符串并加省略号
  */
 function truncate(str: string, maxLength: number): string {
   if (str.length <= maxLength) {
@@ -277,7 +277,7 @@ function truncate(str: string, maxLength: number): string {
 }
 
 /**
- * Format bytes as human-readable string
+ * 将字节数格式化为人类可读的字符串
  */
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) {

@@ -1,8 +1,8 @@
 /**
- * Type declarations for @clack/prompts
+ * @clack/prompts 的类型声明
  *
- * The package ships ESM-only (.d.mts) which TypeScript can't resolve
- * with moduleResolution "node". We declare the subset we use here.
+ * 该包仅提供 ESM（.d.mts），TypeScript 在 moduleResolution "node" 模式下无法解析。
+ * 此处仅声明我们实际使用的子集。
  */
 
 declare module '@clack/prompts' {

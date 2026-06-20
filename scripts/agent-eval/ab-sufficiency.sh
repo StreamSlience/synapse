@@ -1,16 +1,15 @@
 ﻿#!/usr/bin/env bash
-# Sufficiency A/B: on a real understanding/flow question, WHEN the agent uses
-# synapse (explore/node), does it still Read? Premise under test: explore/node
-# return source WITH line numbers, so a Read should not be needed.
+# 充分性 A/B：在真实的理解/流程类问题上，当 agent 使用
+# synapse（explore/node）时，它是否仍会 Read？待验证前提：
+# explore/node 返回带行号的源码，因此不应再需要 Read。
 #
-# WITH synapse (pre-warmed daemon, reliable nested attach) vs WITHOUT (empty
-# MCP, Read/Grep only), N runs each, on a throwaway copy of the repo. Reports
-# explore/node vs Read/Grep, and LISTS the files Read in the WITH arm so a true
-# sufficiency gap (an indexed source file) is distinguishable from out-of-scope
-# (configs, docs, a file synapse didn't index).
+# 有 synapse（预热守护进程，可靠的嵌套挂载）vs 无（空 MCP，仅 Read/Grep），
+# 各 N 次运行，在代码库的临时副本上进行。报告 explore/node vs Read/Grep，
+# 并列出 WITH 组中被 Read 的文件，以区分真实的充分性缺口
+#（已索引的源文件）和范围外内容（配置、文档、synapse 未索引的文件）。
 #
-# Usage: ab-sufficiency.sh <indexed-repo> "<question>" [runs-per-arm]
-# Env: AGENT_EVAL_OUT (default: /tmp/ab-sufficiency)
+# 用法：ab-sufficiency.sh <indexed-repo> "<question>" [runs-per-arm]
+# 环境变量：AGENT_EVAL_OUT（默认：/tmp/ab-sufficiency）
 set -uo pipefail
 REPO="${1:?usage: ab-sufficiency.sh <indexed-repo> \"<question>\" [runs]}"
 Q="${2:?question required}"
@@ -26,8 +25,8 @@ trap cleanup EXIT
 mkdir -p "$OUT"
 ( cd "$ENGINE" && npm run build >/dev/null 2>&1 ) && echo "built"
 
-# Throwaway copy + fresh index (the agent works here; a read-only question won't
-# edit, but isolate anyway). Excludes the source repo's index/build/vcs.
+# 临时副本 + 全新索引（agent 在此工作；只读问题不会编辑，但仍需隔离）。
+# 排除源代码库的索引/构建/版本控制目录。
 rm -rf "$TGT"
 rsync -a --exclude node_modules --exclude .git --exclude dist --exclude .synapse "$REPO/" "$TGT/"
 node "$BIN" init "$TGT" >/dev/null 2>&1 && echo "indexed copy ($(node "$BIN" status --json 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).fileCount+" files")}catch{console.log("?")}})' 2>/dev/null || echo '?'))"

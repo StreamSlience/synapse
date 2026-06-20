@@ -3,8 +3,8 @@ import { getNodeText } from '../tree-sitter-helpers';
 import type { LanguageExtractor } from '../tree-sitter-types';
 
 /**
- * The `function_signature` carrying a method's return type — unwrapped from a
- * `method_signature` wrapper (Dart nests the signature one level for methods).
+ * 携带方法返回类型的 `function_signature`——从 `method_signature` 包装器中解包
+ *（Dart 对方法的签名嵌套了一层）。
  */
 function dartInnerSignature(node: SyntaxNode): SyntaxNode {
   if (node.type === 'method_signature') {
@@ -17,10 +17,10 @@ function dartInnerSignature(node: SyntaxNode): SyntaxNode {
 }
 
 /**
- * The factory/named-constructor signature inside a node, if any. A constructor
- * parses as `method_signature > {factory_,}constructor_signature` (e.g.
- * `factory Foo.create()` or `Foo._()`), whose children are the class identifier
- * and — for a named ctor — the constructor-name identifier.
+ * 节点内的工厂/命名构造函数签名（如有）。构造函数解析为
+ * `method_signature > {factory_,}constructor_signature`（例如
+ * `factory Foo.create()` 或 `Foo._()`），其子节点为类标识符，
+ * 以及命名构造函数的构造函数名标识符（如有）。
  */
 function dartConstructorSignature(node: SyntaxNode): SyntaxNode | undefined {
   if (node.type === 'factory_constructor_signature' || node.type === 'constructor_signature') {
@@ -34,7 +34,7 @@ function dartConstructorSignature(node: SyntaxNode): SyntaxNode | undefined {
   return undefined;
 }
 
-/** The name of the class/mixin/extension/enum lexically enclosing `node`. */
+/** 词法上包含 `node` 的 class/mixin/extension/enum 的名称。 */
 function dartEnclosingTypeName(node: SyntaxNode): string | undefined {
   let p = node.parent;
   while (p) {
@@ -50,13 +50,12 @@ function dartEnclosingTypeName(node: SyntaxNode): string | undefined {
 }
 
 /**
- * Validated constructor info for `node`, or undefined if it isn't genuinely a
- * constructor. A constructor signature is structurally `<Class>` or
- * `<Class>.<name>`, but tree-sitter-dart MISPARSES `@override (T) m()` — the
- * annotation swallows the record return type `(T)`, leaving `m()` looking like a
- * single-identifier constructor_signature. We disambiguate by the class name:
- * a real ctor's class identifier matches the enclosing type; a misparsed method
- * (`reduce` inside class `Action`) doesn't, and is treated as the method it is.
+ * `node` 经过验证的构造函数信息，如果它不是真正的构造函数则返回 undefined。
+ * 构造函数签名在结构上为 `<Class>` 或 `<Class>.<name>`，但 tree-sitter-dart
+ * 会误解析 `@override (T) m()`——注解吞掉了 record 返回类型 `(T)`，
+ * 使 `m()` 看起来像一个单标识符 constructor_signature。
+ * 我们通过类名来消歧：真实构造函数的类标识符与外层类型匹配；
+ * 误解析的方法（`Action` 类中的 `reduce`）不匹配，会被当作方法处理。
  */
 function dartCtorInfo(node: SyntaxNode): { className: string; ctorName: string } | undefined {
   const ctor = dartConstructorSignature(node);
@@ -70,19 +69,17 @@ function dartCtorInfo(node: SyntaxNode): { className: string; ctorName: string }
 }
 
 /**
- * Capture a Dart method/function's declared return type as a bare type name, for
- * the chained static-factory / fluent call mechanism (#750). `Bar makeBar()`
- * yields `Bar`; a generic `List<Foo>` yields its container `List` (the method is
- * on the container, not the element); a prefixed `prefix.Bar` yields `Bar`. A
- * factory / named constructor returns its enclosing class implicitly, so its
- * "return type" is the class.
+ * 捕获 Dart 方法/函数的声明返回类型为裸类型名，用于链式静态工厂 / 流式调用机制
+ *（#750）。`Bar makeBar()` 返回 `Bar`；泛型 `List<Foo>` 返回其容器 `List`
+ *（方法在容器上，而非元素上）；带前缀的 `prefix.Bar` 返回 `Bar`。
+ * 工厂 / 命名构造函数隐式返回其外层类，因此其"返回类型"就是该类。
  */
 function extractDartReturnType(node: SyntaxNode, source: string): string | undefined {
   const ctor = dartCtorInfo(node);
   if (ctor) return ctor.className;
   const sig = dartInnerSignature(node);
-  // The return type precedes the method name; it's the first type_identifier
-  // (generic args sit in a sibling `type_arguments`, so this is the container).
+  // 返回类型先于方法名；它是第一个 type_identifier
+  // （泛型参数位于兄弟节点 `type_arguments` 中，所以这是容器）。
   const retType = sig.namedChildren.find((c: SyntaxNode) => c.type === 'type_identifier');
   if (!retType) return undefined;
   const text = getNodeText(retType, source).replace(/<[^>]*>/g, '').trim();
@@ -92,15 +89,15 @@ function extractDartReturnType(node: SyntaxNode, source: string): string | undef
 }
 
 /**
- * The callee name of the Dart call whose `argument_part` selector is `argPart`
- * — mirrors the main extractBareCall accessor logic so a chained receiver
- * (`Foo.create()` in `Foo.create().bar()`) can be reconstructed. Returns
- * `Foo.create`, a bare `create`, or `Foo` (constructor) — or undefined.
+ * `argPart` 的 argument_part 选择器所对应的 Dart 调用的被调用方名称
+ * ——镜像主 extractBareCall 访问器逻辑，使链式接收者
+ *（`Foo.create().bar()` 中的 `Foo.create()`）可以被重建。
+ * 返回 `Foo.create`、裸 `create` 或 `Foo`（构造函数），或 undefined。
  */
 function dartCalleeOfArgPart(argPart: SyntaxNode): string | undefined {
   const prev = argPart.previousNamedSibling;
   if (!prev) return undefined;
-  if (prev.type === 'identifier') return prev.text; // bare `Foo()` / `create()`
+  if (prev.type === 'identifier') return prev.text; // 裸 `Foo()` / `create()`
   if (prev.type === 'selector') {
     const accessor = prev.namedChildren.find((c: SyntaxNode) =>
       c.type === 'unconditional_assignable_selector' || c.type === 'conditional_assignable_selector'
@@ -118,11 +115,11 @@ function dartCalleeOfArgPart(argPart: SyntaxNode): string | undefined {
 export const dartExtractor: LanguageExtractor = {
   functionTypes: ['function_signature'],
   classTypes: ['class_definition'],
-  // `method_signature` covers regular methods AND factory constructors (which
-  // parse as method_signature > factory_constructor_signature). A plain named
-  // constructor `Foo._()` parses as a bare `constructor_signature`, so include
-  // it too — resolveName names it by the ctor name and getReturnType gives it
-  // the class as its return type, so `Foo._().bar()` chains resolve (#750).
+  // `method_signature` 涵盖普通方法和工厂构造函数（解析为
+  // method_signature > factory_constructor_signature）。普通命名构造函数
+  // `Foo._()` 解析为裸 `constructor_signature`，也包含进来——
+  // resolveName 以构造函数名命名，getReturnType 给它类作为返回类型，
+  // 使 `Foo._().bar()` 的链式调用能够解析（#750）。
   methodTypes: ['method_signature', 'constructor_signature'],
   interfaceTypes: [],
   structTypes: [],
@@ -130,17 +127,17 @@ export const dartExtractor: LanguageExtractor = {
   enumMemberTypes: ['enum_constant'],
   typeAliasTypes: ['type_alias'],
   importTypes: ['import_or_export'],
-  callTypes: [],  // Dart calls use identifier+selector, handled via extractBareCall
+  callTypes: [],  // Dart 调用使用 identifier+selector，通过 extractBareCall 处理
   variableTypes: [],
   extraClassNodeTypes: ['mixin_declaration', 'extension_declaration'],
-  // A Dart `static_final_declaration` is exactly a top-level or class-`static`
-  // `const`/`final` — the shared-constant idiom — so extract it as `constant`
-  // for value-reference edges. Instance fields, `var`, and typed declarations
-  // use `initialized_identifier`, and method-locals use
-  // `initialized_variable_definition`; neither is this node, so there are no
-  // instance/local leaks to guard. The name is the first `identifier`; its
-  // parent scope (`file:` top-level / `class:` static member) comes from the
-  // node stack, both of which the value-reference target gate accepts.
+  // Dart `static_final_declaration` 正是顶层或类 `static` 的
+  // `const`/`final`——共享常量的惯用法——因此将其提取为 `constant`
+  // 以用于值引用边。实例字段、`var` 和带类型声明使用
+  // `initialized_identifier`，方法局部变量使用
+  // `initialized_variable_definition`；两者均不是此节点，
+  // 因此不存在实例/局部泄漏风险。名称为第一个 `identifier`；
+  // 其父作用域（`file:` 顶层 / `class:` 静态成员）来自节点栈，
+  // 两者均被值引用目标门接受。
   visitNode: (node, ctx) => {
     if (node.type === 'static_final_declaration') {
       const nameNode = node.namedChildren.find((c: SyntaxNode) => c.type === 'identifier');
@@ -156,13 +153,13 @@ export const dartExtractor: LanguageExtractor = {
     return false;
   },
   resolveBody: (node, bodyField) => {
-    // Dart: function_body is a next sibling of function_signature/method_signature
+    // Dart：function_body 是 function_signature/method_signature 的下一个兄弟节点
     if (node.type === 'function_signature' || node.type === 'method_signature') {
       const next = node.nextNamedSibling;
       if (next?.type === 'function_body') return next;
       return null;
     }
-    // For class/mixin/extension: try standard field, then class_body/extension_body
+    // 对于 class/mixin/extension：尝试标准字段，再尝试 class_body/extension_body
     const standard = node.childForFieldName(bodyField);
     if (standard) return standard;
     return node.namedChildren.find((c: SyntaxNode) =>
@@ -170,25 +167,25 @@ export const dartExtractor: LanguageExtractor = {
     ) || null;
   },
   nameField: 'name',
-  bodyField: 'body', // class_definition uses 'body' field
+  bodyField: 'body', // class_definition 使用 'body' 字段
   paramsField: 'formal_parameter_list',
   returnField: 'type',
   getReturnType: extractDartReturnType,
   isMisparsedFunction: (_name, node) => {
-    // Skip the UNNAMED constructor `Foo()` (its ctor name equals the class). It's
-    // ordinary construction — an `instantiates` edge to the class `Foo` — so
-    // extracting it as a `Foo::Foo` method node would hijack instantiation
-    // resolution (a `Foo(...)` call would resolve to the ctor method, not the
-    // class). NAMED ctors `Foo.create()` / `Foo._()` ARE kept so their chains
-    // resolve (#750). dartCtorInfo validates against the class name, so a method
-    // tree-sitter misparsed as a ctor (`@override (T) m()`) is NOT skipped here.
-    // (isMisparsedFunction skips node creation but still visits the body.)
+    // 跳过无名构造函数 `Foo()`（其构造函数名等于类名）。这是
+    // 普通的实例化——对类 `Foo` 的 `instantiates` 边——因此将其提取为
+    // `Foo::Foo` 方法节点会劫持实例化解析（`Foo(...)` 调用会解析到构造函数
+    // 方法，而非类）。命名构造函数 `Foo.create()` / `Foo._()` 保留，
+    // 以便其链式调用能够解析（#750）。dartCtorInfo 会对类名进行校验，
+    // 所以 tree-sitter 误解析为构造函数的方法（`@override (T) m()`）
+    // 不会在此处被跳过。
+    //（isMisparsedFunction 跳过节点创建，但仍会访问函数体。）
     const ctor = dartCtorInfo(node);
     return ctor != null && ctor.ctorName === ctor.className;
   },
   getSignature: (node, source) => {
-    // For function_signature: extract params + return type
-    // For method_signature: delegate to inner function_signature
+    // 对于 function_signature：提取参数 + 返回类型
+    // 对于 method_signature：委托给内部 function_signature
     let sig = node;
     if (node.type === 'method_signature') {
       const inner = node.namedChildren.find((c: SyntaxNode) =>
@@ -207,7 +204,7 @@ export const dartExtractor: LanguageExtractor = {
     return result.trim() || undefined;
   },
   getVisibility: (node) => {
-    // Dart convention: _ prefix means private, otherwise public
+    // Dart 约定：_ 前缀表示私有，否则为公开
     let nameNode: SyntaxNode | null = null;
     if (node.type === 'method_signature') {
       const inner = node.namedChildren.find((c: SyntaxNode) =>
@@ -221,7 +218,7 @@ export const dartExtractor: LanguageExtractor = {
     return 'public';
   },
   isAsync: (node) => {
-    // In Dart, 'async' is on the function_body (next sibling), not the signature
+    // 在 Dart 中，'async' 位于 function_body（下一个兄弟节点）上，而非签名上
     const nextSibling = node.nextNamedSibling;
     if (nextSibling?.type === 'function_body') {
       for (let i = 0; i < nextSibling.childCount; i++) {
@@ -232,7 +229,7 @@ export const dartExtractor: LanguageExtractor = {
     return false;
   },
   isStatic: (node) => {
-    // For method_signature, check for 'static' child
+    // 对于 method_signature，检查是否有 'static' 子节点
     if (node.type === 'method_signature') {
       for (let i = 0; i < node.childCount; i++) {
         const child = node.child(i);
@@ -242,19 +239,18 @@ export const dartExtractor: LanguageExtractor = {
     return false;
   },
   resolveName: (node) => {
-    // Name a factory / named constructor by its constructor name — the 2nd
-    // identifier (`create` in `factory Foo.create()`, `_` in `Foo._()`) — not
-    // the class, so a call `Foo.create()` resolves to `Foo::create` (#750). The
-    // default Dart naming returns the FIRST identifier (the class), which
-    // collides every named ctor onto `Foo::Foo` and leaves `Foo.create()`
-    // unresolvable. An unnamed ctor `Foo()` has a single identifier — fall
-    // through (undefined) to the default class name. Letting the core's
-    // extractMethod own the factory (rather than a custom visitNode) keeps the
-    // body attribution intact: calls inside `factory Foo.create() { … }` are
-    // attributed to `Foo::create`, and getReturnType gives it return type Foo.
+    // 以构造函数名命名工厂 / 命名构造函数——第二个标识符
+    //（`factory Foo.create()` 中的 `create`，`Foo._()` 中的 `_`）——
+    // 而非类名，使调用 `Foo.create()` 解析到 `Foo::create`（#750）。
+    // 默认 Dart 命名返回第一个标识符（类名），会将每个命名构造函数
+    // 都折叠到 `Foo::Foo`，导致 `Foo.create()` 无法解析。
+    // 无名构造函数 `Foo()` 只有一个标识符——直通（undefined）到默认类名。
+    // 让核心的 extractMethod 拥有工厂（而非自定义 visitNode），
+    // 保证函数体归属正确：`factory Foo.create() { … }` 内的调用
+    // 归属于 `Foo::create`，getReturnType 给它返回类型 Foo。
     const ctor = dartCtorInfo(node);
-    // A named ctor `Foo.create` → `create`; the unnamed ctor `Foo()` → undefined
-    // (default naming gives the class name `Foo`, which is correct).
+    // 命名构造函数 `Foo.create` → `create`；无名构造函数 `Foo()` → undefined
+    //（默认命名给出类名 `Foo`，这是正确的）。
     if (ctor && ctor.ctorName !== ctor.className) return ctor.ctorName;
     return undefined;
   },
@@ -262,7 +258,7 @@ export const dartExtractor: LanguageExtractor = {
     const importText = source.substring(node.startIndex, node.endIndex).trim();
     let moduleName = '';
 
-    // Dart imports: import 'dart:async'; import 'package:foo/bar.dart' as bar;
+    // Dart imports：import 'dart:async'; import 'package:foo/bar.dart' as bar;
     const libraryImport = node.namedChildren.find((c: SyntaxNode) => c.type === 'library_import');
     if (libraryImport) {
       const importSpec = libraryImport.namedChildren.find((c: SyntaxNode) => c.type === 'import_specification');
@@ -280,7 +276,7 @@ export const dartExtractor: LanguageExtractor = {
       }
     }
 
-    // Also handle exports: export 'src/foo.dart';
+    // 同样处理 exports：export 'src/foo.dart';
     if (!moduleName) {
       const libraryExport = node.namedChildren.find((c: SyntaxNode) => c.type === 'library_export');
       if (libraryExport) {
@@ -303,8 +299,8 @@ export const dartExtractor: LanguageExtractor = {
     return null;
   },
   extractBareCall: (node, _source) => {
-    // Dart calls are: identifier + selector(argument_part), not a dedicated call node.
-    // Match on selector nodes that contain argument_part.
+    // Dart 调用形式为：identifier + selector(argument_part)，而非专用调用节点。
+    // 匹配包含 argument_part 的 selector 节点。
     if (node.type === 'selector') {
       const hasArgPart = node.namedChildren.some((c: SyntaxNode) => c.type === 'argument_part');
       if (!hasArgPart) return undefined;
@@ -312,12 +308,12 @@ export const dartExtractor: LanguageExtractor = {
       const prev = node.previousNamedSibling;
       if (!prev) return undefined;
 
-      // Simple function/constructor call: prev is identifier (e.g., runApp(...), MyWidget(...))
+      // 简单函数/构造函数调用：prev 是 identifier（例如 runApp(...)、MyWidget(...)）
       if (prev.type === 'identifier') {
         return prev.text;
       }
 
-      // Method call: prev is selector with accessor (e.g., obj.method(...), Navigator.push(...))
+      // 方法调用：prev 是带访问器的 selector（例如 obj.method(...)、Navigator.push(...)）
       if (prev.type === 'selector') {
         const accessor = prev.namedChildren.find((c: SyntaxNode) =>
           c.type === 'unconditional_assignable_selector' || c.type === 'conditional_assignable_selector'
@@ -325,19 +321,17 @@ export const dartExtractor: LanguageExtractor = {
         if (accessor) {
           const methodId = accessor.namedChildren.find((c: SyntaxNode) => c.type === 'identifier');
           if (methodId) {
-            // Include receiver for first call in chain (receiver is a direct identifier)
+            // 包含链首的接收者（接收者是直接 identifier）
             const accessorPrev = prev.previousNamedSibling;
             if (accessorPrev?.type === 'identifier') {
               return accessorPrev.text + '.' + methodId.text;
             }
-            // Chained static-factory / fluent call: the receiver is itself a call
-            // (`Foo.create().bar()`), so accessorPrev is that call's argument_part
-            // selector. Encode `<innerCallee>().<method>` so resolution can infer
-            // bar's class from what `Foo.create` RETURNS (#645/#608 mechanism) —
-            // but only when the chain starts with a capitalized type (a companion
-            // factory / static method / constructor); an instance chain
-            // (`obj.foo().bar()`) keeps the bare name (its receiver's type can't
-            // be recovered here).
+            // 链式静态工厂 / 流式调用：接收者本身是一次调用
+            //（`Foo.create().bar()` 中的接收者），所以 accessorPrev 是该调用的
+            // argument_part selector。编码为 `<innerCallee>().<method>` 使解析可以
+            // 从 `Foo.create` 的返回值推断 bar 的类（#645/#608 机制）——
+            // 但仅当链以大写类型开头时（伴生工厂 / 静态方法 / 构造函数）；
+            // 实例链（`obj.foo().bar()`）保持裸名（其接收者的类型无法在此恢复）。
             if (accessorPrev?.type === 'selector' &&
                 accessorPrev.namedChildren.some((c: SyntaxNode) => c.type === 'argument_part')) {
               const innerCallee = dartCalleeOfArgPart(accessorPrev);
@@ -350,7 +344,7 @@ export const dartExtractor: LanguageExtractor = {
         }
       }
 
-      // super.method() / this.method(): prev is bare unconditional_assignable_selector
+      // super.method() / this.method()：prev 是裸 unconditional_assignable_selector
       if (prev.type === 'unconditional_assignable_selector' || prev.type === 'conditional_assignable_selector') {
         const methodId = prev.namedChildren.find((c: SyntaxNode) => c.type === 'identifier');
         if (methodId) return methodId.text;
@@ -359,14 +353,14 @@ export const dartExtractor: LanguageExtractor = {
       return undefined;
     }
 
-    // new MyWidget() — explicit constructor call
+    // new MyWidget() — 显式构造函数调用
     if (node.type === 'new_expression') {
       const typeId = node.namedChildren.find((c: SyntaxNode) => c.type === 'type_identifier');
       if (typeId) return typeId.text;
       return undefined;
     }
 
-    // const EdgeInsets.all(8.0) — const constructor call
+    // const EdgeInsets.all(8.0) — const 构造函数调用
     if (node.type === 'const_object_expression') {
       const typeId = node.namedChildren.find((c: SyntaxNode) => c.type === 'type_identifier');
       const nameId = node.namedChildren.find((c: SyntaxNode) => c.type === 'identifier');

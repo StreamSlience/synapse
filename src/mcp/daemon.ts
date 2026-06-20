@@ -1,43 +1,38 @@
 ﻿/**
- * Shared MCP daemon — issue #411.
+ * 共享 MCP 守护进程 — issue #411。
  *
- * One detached `synapse serve --mcp` daemon process per project root,
- * accepting N concurrent MCP clients over a Unix-domain socket (or named pipe
- * on Windows). Each incoming connection gets its own {@link MCPSession}; all
- * sessions share a single {@link MCPEngine}, which means a single file watcher
- * (one inotify set), a single SQLite connection (one WAL writer), and a single
- * tree-sitter warm-up — paid once, amortized across every agent talking to the
- * project.
+ * 每个项目根目录一个分离的 `synapse serve --mcp` 守护进程进程，
+ * 通过 Unix 域 socket（或 Windows 上的命名管道）接受 N 个并发 MCP 客户端。
+ * 每个进入的连接获得自己的 {@link MCPSession}；所有会话共享单个 {@link MCPEngine}，
+ * 这意味着单个文件监视器（一个 inotify 集）、单个 SQLite 连接（一个 WAL 写入器）
+ * 和单次 tree-sitter 预热 — 一次付出，摊销到所有与该项目通信的智能体。
  *
- * Lifecycle (see also `./index.ts` and `./proxy.ts`):
- *   - The daemon is spawned **detached** (its own session/process group, stdio
- *     decoupled) by the first launcher that finds no daemon running. It is NOT
- *     a child of any MCP host, so closing one terminal / Ctrl-C'ing one session
- *     can't take it down and sever the others. That's why this process has no
- *     PPID watchdog: it deliberately outlives every individual client.
- *   - Every MCP host talks to the daemon through a thin `proxy` process (the
- *     thing the host actually spawned). The proxy keeps the #277 PPID watchdog,
- *     so a SIGKILL'd host still reaps its proxy promptly; the proxy's socket
- *     close then decrements the daemon's refcount.
- *   - When the last client disconnects the daemon lingers for
- *     `SYNAPSE_DAEMON_IDLE_TIMEOUT_MS` (default 300s) so back-to-back agent
- *     runs in the same project don't repay startup, then exits cleanly. This is
- *     what keeps a single-agent session from leaking a daemon forever (#277).
+ * 生命周期（另见 `./index.ts` 和 `./proxy.ts`）：
+ *   - 守护进程由发现没有守护进程运行的第一个启动器**分离地**派生
+ *     （独立的 session/进程组，stdio 解耦）。它**不是**任何 MCP 宿主的子进程，
+ *     因此关闭一个终端/Ctrl-C 一个会话不会使其停止并断开其他客户端。
+ *     这就是为什么此进程没有 PPID 看门狗：它刻意比所有单个客户端存活更久。
+ *   - 每个 MCP 宿主通过一个薄薄的 `proxy` 进程（宿主实际派生的那个）与守护进程通信。
+ *     代理保留 #277 PPID 看门狗，因此被 SIGKILL 的宿主仍会及时回收其代理；
+ *     代理的 socket 关闭随后递减守护进程的引用计数。
+ *   - 当最后一个客户端断开连接时，守护进程会等待
+ *     `SYNAPSE_DAEMON_IDLE_TIMEOUT_MS`（默认 300s），以便同一项目中背靠背的
+ *     智能体运行不必重新支付启动代价，然后干净退出。这就是防止单次智能体会话
+ *     永远泄漏守护进程的机制（#277）。
  *
- * What this file owns:
- *   - Listening on the daemon socket and spawning per-connection sessions.
- *   - The handshake "hello" line that lets a proxy verify it found a
- *     same-version daemon before piping any JSON-RPC through it.
- *   - The lockfile (`.synapse/daemon.pid`) competing daemons arbitrate
- *     against — atomic `O_EXCL` create with the full record written in the same
- *     breath (no empty-file window) + cleanup on exit.
- *   - Reference counting + idle timeout.
- *   - Graceful shutdown on SIGTERM/SIGINT and idle exit.
+ * 此文件负责：
+ *   - 监听守护进程 socket 并为每个连接派生会话。
+ *   - 让代理在通过它管道传输任何 JSON-RPC 之前验证找到的是同版本守护进程的
+ *     握手 "hello" 行。
+ *   - 竞争守护进程仲裁的锁文件（`.synapse/daemon.pid`）— 原子 `O_EXCL` 创建，
+ *     同时写入完整记录（没有空文件窗口）+ 退出时清理。
+ *   - 引用计数 + 空闲超时。
+ *   - 优雅关闭（SIGTERM/SIGINT）和空闲退出。
  *
- * What this file does NOT own:
- *   - The proxy side (`./proxy.ts`).
- *   - The decision of *whether* to run as daemon at all — that's `MCPServer`.
- *   - The MCP protocol state machine — that's `./session.ts`.
+ * 此文件不负责：
+ *   - 代理侧（`./proxy.ts`）。
+ *   - *是否*以守护进程模式运行的决策 — 那是 `MCPServer` 的职责。
+ *   - MCP 协议状态机 — 那是 `./session.ts` 的职责。
  */
 
 import * as fs from 'fs';
@@ -56,78 +51,72 @@ import {
 import { SynapsePackageVersion } from './version';
 import { registerDaemon, deregisterDaemon } from './daemon-registry';
 
-/** Default idle linger after the last client disconnects. */
+/** 最后一个客户端断开后的默认空闲等待时间。 */
 const DEFAULT_IDLE_TIMEOUT_MS = 300_000;
 
 /**
- * Hard ceiling on how long the daemon stays up with clients connected but no
- * inbound traffic. A backstop (#692): if a client's socket-close is never
- * delivered (a Windows named-pipe hazard) it stays counted forever and the
- * normal idle timer — which only arms at zero clients — never fires. A phantom
- * client sends no traffic, so bounding on inactivity reaps the daemon anyway.
- * Set generously so a real but momentarily-idle session isn't reaped mid-use.
+ * 当客户端仍（名义上）连接但没有入站流量时守护进程保持运行的硬性上限。
+ * 这是一个兜底（#692）：如果客户端的 socket 关闭从未被送达
+ * （Windows 命名管道的隐患），它会永久被计入引用，而仅在零客户端时
+ * 触发的正常空闲定时器永远不会触发。幽灵客户端不发送任何流量，
+ * 因此通过不活跃性限制来回收守护进程。设置得足够宽裕，
+ * 以免真实但暂时空闲的会话在使用中被回收。
  */
 const DEFAULT_MAX_IDLE_MS = 1_800_000; // 30 min
 
-/** How often the daemon sweeps connected clients for a dead peer process (#692). */
+/** 守护进程扫描已连接客户端以查找死亡对端进程的频率（#692）。 */
 const DEFAULT_CLIENT_SWEEP_MS = 30_000;
 
-/** How long the daemon waits for the optional client-hello before proceeding without it. */
+/** 守护进程在继续处理之前等待可选客户端 hello 的时长。 */
 const CLIENT_HELLO_TIMEOUT_MS = 3_000;
 
-/** Bytes/parse-window for an oversized hello line — bounded against a malicious peer. */
+/** 超大 hello 行的字节/解析窗口 — 防范恶意对端。 */
 const MAX_HELLO_LINE_BYTES = 4096;
 
 /**
- * Wire format for the one-shot hello line the daemon emits on every new
- * connection. Versioned with the package's own semver so a 0.9.x proxy never
- * pipes through a 0.10.x daemon (or vice-versa) — the proxy falls back to
- * direct mode on mismatch rather than risk subtle wire incompatibilities.
+ * 守护进程在每个新连接上发出的单次 hello 行的线格式。
+ * 以包自身的 semver 版本化，使 0.9.x 代理永远不会通过 0.10.x 守护进程传输（反之亦然）—
+ * 代理在版本不匹配时回退到直接模式，而不是冒着细微线格式不兼容的风险。
  */
 export interface DaemonHello {
-  synapse: string; // package version (must match the proxy's own version)
-  pid: number;       // daemon pid (informational; for `ps` debugging)
-  socketPath: string; // echoed back so the proxy can log it
-  protocol: 1;       // bump if the hello shape changes
+  synapse: string; // 包版本（必须与代理自身版本匹配）
+  pid: number;       // 守护进程 pid（信息性；用于 `ps` 调试）
+  socketPath: string; // 回显以便代理记录日志
+  protocol: 1;       // hello 形状改变时递增
 }
 
 /**
- * Optional reverse-handshake line a proxy sends right after it verifies the
- * daemon hello, carrying its own pids so the daemon can reap the client if its
- * process dies WITHOUT the socket ever signalling close (the Windows named-pipe
- * hazard behind #692). Entirely optional and fail-safe: a connection that never
- * sends it (a legacy/direct client) just falls back to the socket-close
- * lifecycle. The `synapse_client` marker is what tells it apart from the
- * client's first JSON-RPC message.
+ * 代理在验证守护进程 hello 后立即发送的可选反向握手行，携带自身 pid，
+ * 以便守护进程在客户端进程死亡但 socket 从未发出关闭信号时（#692 背后的 Windows
+ * 命名管道隐患）能够回收该客户端。完全可选且故障安全：从未发送此行的连接
+ * （旧版/直接客户端）只是回退到 socket 关闭生命周期。`synapse_client` 标记
+ * 用于将其与客户端的第一条 JSON-RPC 消息区分。
  */
 export interface DaemonClientHello {
   synapse_client: 1;
-  pid: number;             // the proxy process's own pid
-  hostPid: number | null;  // the MCP host pid (past any launcher shim), if known
+  pid: number;             // 代理进程自身的 pid
+  hostPid: number | null;  // MCP 宿主 pid（经过任何启动器 shim），若已知
 }
 
 export interface DaemonStartResult {
-  /** Always-non-null for a successfully-started daemon. */
+  /** 成功启动的守护进程始终非空。 */
   socketPath: string;
-  /** Lockfile contents as written. */
+  /** 已写入的锁文件内容。 */
   lock: DaemonLockInfo;
 }
 
 /**
- * Run as the shared daemon for `projectRoot`. Resolves once the socket is
- * listening. The Daemon owns the socket, the engine, and the lockfile until
- * `stop()` is called or it exits on idle/signal.
+ * 作为 `projectRoot` 的共享守护进程运行。socket 开始监听后 resolve。
+ * 守护进程拥有 socket、引擎和锁文件，直到调用 `stop()` 或因空闲/信号退出。
  *
- * Race-safe: callers must first call `tryAcquireDaemonLock(projectRoot)` and
- * only construct a Daemon if they got the lock (`kind: 'acquired'`). The atomic
- * `O_EXCL` create inside the acquire helper — which now also writes the full
- * record before returning — is the only synchronization between competing
- * daemons.
+ * 竞争安全：调用方必须首先调用 `tryAcquireDaemonLock(projectRoot)`，
+ * 仅在获得锁（`kind: 'acquired'`）时才构造 Daemon。获取辅助函数内部的原子
+ * `O_EXCL` 创建 — 现在也在返回前写入完整记录 — 是竞争守护进程之间唯一的同步机制。
  */
 export class Daemon {
   private server: net.Server | null = null;
   private clients = new Set<MCPSession>();
-  /** Per-client peer pids from the optional client-hello, for the liveness sweep. */
+  /** 每个客户端来自可选 client-hello 的对端 pid，供活跃性扫描使用。 */
   private clientPeers = new Map<MCPSession, { pid: number | null; hostPid: number | null }>();
   private idleTimer: NodeJS.Timeout | null = null;
   private idleTimeoutMs: number;
@@ -153,20 +142,18 @@ export class Daemon {
   }
 
   /**
-   * Bind the socket, kick off engine init, and register signal handlers. The
-   * lockfile body was already written atomically by `tryAcquireDaemonLock`, so
-   * there is nothing to write here. The promise resolves once the server is
-   * listening — the daemon then sticks around until idle/shutdown.
+   * 绑定 socket，启动引擎初始化，并注册信号处理器。锁文件体已由
+   * `tryAcquireDaemonLock` 原子写入，因此这里无需写入。Promise 在服务器开始
+   * 监听后 resolve — 守护进程随后一直存在直到空闲/关闭。
    */
   async start(): Promise<DaemonStartResult> {
-    // Engine init is deliberately backgrounded — see #172. The first session
-    // to land waits on `ensureInitialized` either way, and unloaded sessions
-    // (cross-project tool calls only) shouldn't pay any open cost.
+    // 引擎初始化刻意在后台执行 — 见 #172。首个到达的会话无论如何都会
+    // 等待 `ensureInitialized`，而未加载的会话（仅跨项目工具调用）不应支付任何打开代价。
     void this.engine.ensureInitialized(this.projectRoot);
 
-    // Stale socket file (left over from a SIGKILL'd previous daemon) will
-    // wedge `listen` with EADDRINUSE. We arrived here holding the lockfile,
-    // which means there's no live daemon, so it's safe to clear.
+    // 过期的 socket 文件（被 SIGKILL 的上一个守护进程遗留）会使
+    // `listen` 因 EADDRINUSE 挂起。我们持有锁文件到达这里，
+    // 意味着没有存活的守护进程，因此安全地清除。
     if (process.platform !== 'win32') {
       try { fs.unlinkSync(this.socketPath); } catch { /* not-exists is fine */ }
     }
@@ -175,8 +162,8 @@ export class Daemon {
       const server = net.createServer((socket) => this.handleConnection(socket));
       server.once('error', (err) => reject(err));
       server.listen(this.socketPath, () => {
-        // POSIX: tighten permissions to user-only — the socket lives under
-        // `.synapse/`, which is git-ignored but may be on a shared FS.
+        // POSIX：收紧权限为仅限用户 — socket 存放在 `.synapse/` 下，
+        // 该目录被 git 忽略但可能在共享文件系统上。
         if (process.platform !== 'win32') {
           try { fs.chmodSync(this.socketPath, 0o600); } catch { /* best-effort */ }
         }
@@ -192,17 +179,16 @@ export class Daemon {
       startedAt: Date.now(),
     };
 
-    // Drop a discovery record so `synapse list` / `stop --all` can find us.
-    // Best-effort; a missing record only means list's liveness prune covers it.
+    // 发布一条发现记录，以便 `synapse list` / `stop --all` 能找到我们。
+    // 尽力而为；缺少记录只意味着 list 的活跃性修剪会覆盖它。
     registerDaemon({ root: this.projectRoot, ...lock });
 
     process.stderr.write(
       `[Synapse daemon] Listening on ${this.socketPath} (pid ${process.pid}, v${SynapsePackageVersion}). Idle timeout ${this.idleTimeoutMs}ms.\n`
     );
 
-    // No clients yet: arm the idle timer immediately so a daemon that nobody
-    // ever connects to (e.g. spawned then abandoned because the launcher died)
-    // doesn't pin resources forever.
+    // 尚无客户端：立即触发空闲定时器，使从未有人连接的守护进程
+    // （例如派生后因启动器死亡而被放弃的）不会永久占用资源。
     this.armIdleTimer();
     this.startLivenessTimers();
 
@@ -212,17 +198,17 @@ export class Daemon {
     return { socketPath: this.socketPath, lock };
   }
 
-  /** Currently-connected client count. Exposed for tests / status output. */
+  /** 当前已连接的客户端数量。暴露给测试/状态输出使用。 */
   getClientCount(): number {
     return this.clients.size;
   }
 
-  /** The socket path the daemon is (or will be) listening on. */
+  /** 守护进程正在（或将要）监听的 socket 路径。 */
   getSocketPath(): string {
     return this.socketPath;
   }
 
-  /** Graceful shutdown: close all sessions, the engine, and clean up the lock. */
+  /** 优雅关闭：关闭所有会话、引擎，并清理锁。 */
   async stop(reason: string = 'stop'): Promise<void> {
     if (this.stopping) return;
     this.stopping = true;
@@ -257,8 +243,8 @@ export class Daemon {
   }
 
   private handleConnection(socket: net.Socket): void {
-    // Hello first so the proxy can verify versions before piping any
-    // application bytes. The proxy reads exactly one line, then forwards.
+    // 先发送 hello，以便代理在管道传输任何应用字节之前验证版本。
+    // 代理恰好读取一行，然后转发。
     const hello: DaemonHello = {
       synapse: SynapsePackageVersion,
       pid: process.pid,
@@ -267,10 +253,9 @@ export class Daemon {
     };
     socket.write(JSON.stringify(hello) + '\n');
 
-    // Read the optional client-hello (proxy → daemon) to learn the client's
-    // peer pids, then hand the socket to the session. Fail-safe: any problem —
-    // timeout, a non-hello first line, an early close — yields null pids and we
-    // fall back to the socket-close lifecycle exactly as before (#692).
+    // 读取可选的 client-hello（代理 → 守护进程）以获取客户端的对端 pid，
+    // 然后将 socket 交给会话。故障安全：任何问题 — 超时、非 hello 的第一行、
+    // 提前关闭 — 都产生空 pid，我们像之前一样回退到 socket 关闭生命周期（#692）。
     void readClientHello(socket).then((peers) => {
       const transport = new SocketTransport(socket);
       const session = new MCPSession(transport, this.engine, {
@@ -281,9 +266,9 @@ export class Daemon {
       this.clientPeers.set(session, peers);
       this.disarmIdleTimer();
       session.start();
-      // Observe inbound bytes purely to feed the inactivity backstop — a second
-      // 'data' listener that reads nothing, added AFTER the transport's so the
-      // unshifted client-hello tail reaches the transport intact.
+      // 仅观察入站字节以驱动不活跃兜底 — 第二个 'data' 监听器，
+      // 什么都不读，在传输层的监听器之后添加，以便
+      // unshift 的 client-hello 尾部能完整到达传输层。
       socket.on('data', () => { this.lastActivityAt = Date.now(); });
     });
   }
@@ -296,21 +281,19 @@ export class Daemon {
 
   private armIdleTimer(): void {
     if (this.idleTimer || this.stopping) return;
-    if (this.idleTimeoutMs <= 0) return; // 0 = never idle-exit
+    if (this.idleTimeoutMs <= 0) return; // 0 = 永不空闲退出
     this.idleTimer = setTimeout(() => {
       this.idleTimer = null;
-      // Last-second sanity check: if a connection landed between the timer
-      // firing and now, don't exit. (setImmediate-ordering is the only way
-      // this races; cheap to defend against.)
+      // 最后一刻健全性检查：如果定时器触发到现在之间有连接到来，不退出。
+      // （setImmediate 顺序是唯一的竞争方式；防御代价很低。）
       if (this.clients.size > 0) {
         this.armIdleTimer();
         return;
       }
       void this.stop('idle timeout');
     }, this.idleTimeoutMs);
-    // Don't keep the event loop alive just for this — the net.Server keeps the
-    // loop alive while listening, so the timer still fires; once we stop() the
-    // loop should drain naturally.
+    // 不要仅为此定时器保持事件循环存活 — net.Server 在监听时会保持
+    // 循环存活，定时器仍会触发；一旦我们 stop()，循环应自然排空。
     this.idleTimer.unref?.();
   }
 
@@ -321,17 +304,16 @@ export class Daemon {
   }
 
   /**
-   * Defense-in-depth against a daemon that outlives its clients (#692), for the
-   * cases the refcount + idle timer miss because a socket close never arrives:
-   *   - **Inactivity backstop:** exit if no inbound traffic for `maxIdleMs` while
-   *     clients are still (nominally) connected. A phantom client sends nothing,
-   *     so it can't pin the daemon past this window.
-   *   - **Liveness sweep:** drop any client whose peer process has died (per the
-   *     client-hello pids), which re-arms the idle timer once the last real
-   *     client is gone. Catches a dead peer within one sweep instead of waiting
-   *     out the whole backstop.
-   * Both timers are unref'd — the listening server keeps the loop alive, and
-   * neither should hold it open on its own.
+   * 针对守护进程在引用计数 + 空闲定时器因 socket 关闭从未到达而失效的情况
+   * 的纵深防御（#692）：
+   *   - **不活跃兜底：** 如果在仍（名义上）有客户端连接时的 `maxIdleMs` 内
+   *     没有入站流量，则退出。幽灵客户端什么都不发送，因此不能在此窗口之外
+   *     固定守护进程。
+   *   - **活跃性扫描：** 丢弃任何对端进程已死亡的客户端（根据 client-hello pid），
+   *     一旦最后一个真实客户端消失就重新触发空闲定时器。在一次扫描内
+   *     捕获死亡对端，而不是等待整个兜底时间。
+   * 两个定时器都 unref — 监听中的服务器保持循环存活，
+   * 两者都不应单独持有它。
    */
   private startLivenessTimers(): void {
     if (this.maxIdleMs > 0) {
@@ -352,9 +334,9 @@ export class Daemon {
   }
 
   /**
-   * Drop every connected client whose peer process is gone. Returns the count
-   * reaped. `isAlive` is injected for testing. Clients with unknown pids (no
-   * client-hello) are skipped — they rely on the socket-close path.
+   * 丢弃每个对端进程已消失的已连接客户端。返回回收的数量。
+   * `isAlive` 可注入以供测试。没有已知 pid（无 client-hello）的客户端被跳过 —
+   * 它们依赖 socket 关闭路径。
    */
   reapDeadClients(isAlive: (pid: number) => boolean): number {
     if (this.clients.size === 0) return 0;
@@ -375,8 +357,7 @@ export class Daemon {
   private cleanupLockfile(): void {
     try {
       if (fs.existsSync(this.pidPath)) {
-        // Only remove if it still belongs to us — another daemon may have
-        // already taken over while we were shutting down (extremely rare).
+        // 仅在仍属于我们时删除 — 另一个守护进程可能已在我们关闭期间接管（极为罕见）。
         const raw = fs.readFileSync(this.pidPath, 'utf8');
         const info = decodeLockInfo(raw);
         if (info && info.pid === process.pid) {
@@ -388,33 +369,30 @@ export class Daemon {
 }
 
 /**
- * Result of `tryAcquireDaemonLock`. Either we got the lockfile (caller becomes
- * the daemon), or it already existed (caller should connect to the existing
- * daemon as a proxy, or — if the holder is dead — clear it and retry).
+ * `tryAcquireDaemonLock` 的结果。要么我们获得了锁文件（调用方成为守护进程），
+ * 要么它已存在（调用方应作为代理连接到现有守护进程，或者 — 如果持有者已死 —
+ * 清除它并重试）。
  */
 export type AcquireResult =
   | { kind: 'acquired'; pidPath: string; info: DaemonLockInfo }
   | { kind: 'taken'; existing: DaemonLockInfo | null; pidPath: string };
 
 /**
- * Atomically create the daemon pidfile with its full record already in place.
- * Returns either an `acquired` result (the caller is the daemon-elect and may
- * construct a {@link Daemon}) or a `taken` result.
+ * 以原子方式创建守护进程 pidfile，并已在其中写入完整记录。
+ * 返回 `acquired` 结果（调用方是守护进程候选，可以构造 {@link Daemon}）
+ * 或 `taken` 结果。
  *
- * must-fix 1 (issue #411 review): the lockfile must appear in ONE atomic step,
- * already complete — never empty, even momentarily. The first attempt at this
- * (`O_EXCL` create then a separate `writeSync`) left a microsecond window where
- * the file existed but was empty; under concurrent daemon startup a third
- * candidate could read that empty file, decode it as `null`, and `unlink` the
- * winner's lock → two daemons (two watchers, two writers). The window was
- * normally too small to hit, but the file watcher's extra startup time made
- * concurrent daemons overlap enough to reproduce it reliably.
+ * must-fix 1（issue #411 审查）：锁文件必须在一个原子步骤中出现，且已经完整 —
+ * 永远不能为空，哪怕是瞬间。最初的尝试（`O_EXCL` 创建后再单独 `writeSync`）
+ * 留下了一个微秒级窗口，文件存在但为空；在并发守护进程启动时，
+ * 第三个候选可以读到那个空文件，将其解码为 `null`，然后 `unlink` 赢家的锁 →
+ * 两个守护进程（两个监视器，两个写入器）。这个窗口通常太短而无法命中，
+ * 但文件监视器额外的启动时间使并发守护进程重叠到足以可靠地复现。
  *
- * The fix writes the complete record to a private temp file, then hard-links it
- * into place: `link()` is atomic AND exclusive (EEXIST if the target exists), so
- * the pidfile becomes visible in one step already containing a full record.
- * Whoever links first wins; everyone else gets EEXIST and reads a complete file.
- * There is no empty-file window at all.
+ * 修复方法是将完整记录写入私有临时文件，然后将其硬链接到目标位置：
+ * `link()` 既原子又排他（目标存在时 EEXIST），因此 pidfile 在一步中变为可见，
+ * 且已包含完整记录。首先链接者获胜；其他人得到 EEXIST 并读取完整文件。
+ * 完全没有空文件窗口。
  */
 export function tryAcquireDaemonLock(projectRoot: string): AcquireResult {
   const pidPath = getDaemonPidPath(projectRoot);
@@ -429,7 +407,7 @@ export function tryAcquireDaemonLock(projectRoot: string): AcquireResult {
     startedAt: Date.now(),
   };
 
-  // Temp name is pid-scoped so racing candidates never collide on it.
+  // 临时文件名以 pid 为作用域，竞争候选永远不会在它上面冲突。
   const tmp = `${pidPath}.${process.pid}.tmp`;
   let acquired = false;
   try {
@@ -446,9 +424,8 @@ export function tryAcquireDaemonLock(projectRoot: string): AcquireResult {
 
   if (acquired) return { kind: 'acquired', pidPath, info };
 
-  // Taken. Because the pidfile was link'd atomically it always holds a complete
-  // record — `existing` is null only for a genuinely corrupt leftover, never a
-  // mid-write race.
+  // 已被占用。因为 pidfile 是原子链接的，所以它始终持有完整记录 —
+  // `existing` 仅对真正损坏的遗留文件为 null，而不是写入中途的竞争。
   let existing: DaemonLockInfo | null = null;
   try {
     existing = decodeLockInfo(fs.readFileSync(pidPath, 'utf8'));
@@ -457,39 +434,38 @@ export function tryAcquireDaemonLock(projectRoot: string): AcquireResult {
 }
 
 /**
- * Remove a stale pidfile, but only if it still names a dead process. Re-reads
- * the file immediately before unlinking so we never delete a lock that a live
- * daemon (re)acquired in the meantime.
+ * 清除过期的 pidfile，但仅在它仍然指向已死进程时。在 unlink 前立即重新读取文件，
+ * 确保我们永远不会删除存活守护进程（重新）获取的锁。
  *
- * must-fix 1 (issue #411 review): the original unconditionally `unlink`'d,
- * which let a racing candidate delete a healthy daemon's lock. Passing
- * `expectedDeadPid` (the pid the caller believed was dead) makes the clear a
- * compare-and-delete: bail if the file now holds a different pid, or any live
- * pid. Returns true when the stale lock is gone (or was already gone).
+ * must-fix 1（issue #411 审查）：原始实现无条件 `unlink`，
+ * 这让竞争候选可以删除健康守护进程的锁。传入 `expectedDeadPid`
+ * （调用方认为已死的 pid）使清除成为比较-并-删除操作：
+ * 如果文件现在持有不同的 pid，或任何存活的 pid，则退出。
+ * 返回 true 表示过期锁已消失（或已经消失）。
  */
 export function clearStaleDaemonLock(pidPath: string, expectedDeadPid?: number): boolean {
   try {
     const raw = fs.readFileSync(pidPath, 'utf8');
     const info = decodeLockInfo(raw);
     if (info) {
-      // A different pid took over since we read it — not ours to clear.
+      // 另一个 pid 自我们读取后接管了 — 不是我们该清除的。
       if (expectedDeadPid !== undefined && info.pid !== expectedDeadPid) return false;
-      // Holder is actually alive — never clear a live daemon's lock.
+      // 持有者实际上存活 — 永远不清除存活守护进程的锁。
       if (info.pid > 0 && isProcessAlive(info.pid)) return false;
     }
     fs.unlinkSync(pidPath);
     return true;
   } catch (err: unknown) {
     const e = err as NodeJS.ErrnoException;
-    if (e.code === 'ENOENT') return true; // already gone
+    if (e.code === 'ENOENT') return true; // 已消失
     return false;
   }
 }
 
 /**
- * Probe whether `pid` is currently alive (signal-0). Treats EPERM as alive on
- * every platform (the process exists, it's just not ours to signal) so we never
- * mistake a live daemon for a dead one and clear its lock.
+ * 探测 `pid` 当前是否存活（signal-0）。在所有平台上将 EPERM 视为存活
+ * （进程存在，只是不属于我们来发信号），以防我们将存活的守护进程误认为已死
+ * 并清除其锁。
  */
 export function isProcessAlive(pid: number): boolean {
   try {
@@ -497,7 +473,7 @@ export function isProcessAlive(pid: number): boolean {
     return true;
   } catch (err: unknown) {
     const e = err as NodeJS.ErrnoException;
-    if (e.code === 'EPERM') return true; // exists, just not ours to signal
+    if (e.code === 'EPERM') return true; // 存在，只是不属于我们来发信号
     return false;
   }
 }
@@ -527,9 +503,9 @@ function resolveClientSweepMs(): number {
 }
 
 /**
- * Parse one client-hello line. Returns the peer pids if `line` is a well-formed
- * client-hello (carries the `synapse_client` marker), or null otherwise — in
- * which case the caller treats the bytes as ordinary JSON-RPC.
+ * 解析一行 client-hello。如果 `line` 是格式良好的 client-hello
+ * （携带 `synapse_client` 标记），返回对端 pid；否则返回 null —
+ * 在这种情况下调用方将字节视为普通 JSON-RPC。
  */
 export function parseClientHelloLine(
   line: string,
@@ -543,9 +519,9 @@ export function parseClientHelloLine(
 }
 
 /**
- * A client's peer is dead when its proxy process is gone, or when its known
- * host process is gone. Unknown pid (no client-hello) is never "dead" on this
- * basis — those clients rely on the socket-close path. Exported for testing.
+ * 当客户端的代理进程消失，或其已知宿主进程消失时，该客户端的对端视为已死。
+ * 未知 pid（无 client-hello）在此基础上永远不是"已死" —
+ * 这些客户端依赖 socket 关闭路径。导出供测试使用。
  */
 export function peerIsDead(
   peers: { pid: number | null; hostPid: number | null },
@@ -558,13 +534,12 @@ export function peerIsDead(
 }
 
 /**
- * Read the optional client-hello line a proxy sends after the daemon hello.
- * Always resolves (never rejects) — fail-safe by design, since every connection
- * funnels through here. Resolves with the peer pids when the first line is a
- * client-hello; otherwise resolves with null pids and unshifts the already-read
- * bytes so the transport parses them as the client's first JSON-RPC message(s).
- * Accumulates as Buffers and splits on the newline byte so a UTF-8 sequence
- * straddling a chunk boundary in the unshifted tail is never corrupted.
+ * 读取代理在守护进程 hello 之后发送的可选 client-hello 行。
+ * 始终 resolve（永不 reject）— 设计上故障安全，因为每个连接都经过这里。
+ * 当第一行是 client-hello 时以对端 pid resolve；否则以空 pid resolve，
+ * 并将已读字节 unshift 回去，使传输层将其解析为客户端的第一条 JSON-RPC 消息。
+ * 以 Buffer 形式累积并在换行字节处分割，使跨块边界的 UTF-8 序列
+ * 在 unshift 的尾部中永远不会被损坏。
  */
 function readClientHello(
   socket: net.Socket,
@@ -595,8 +570,8 @@ function readClientHello(
       const all = chunks.length === 1 ? buf : Buffer.concat(chunks, total);
       const nl = all.indexOf(0x0a); // '\n'
       if (nl === -1) {
-        // No newline yet. If it's already too long to be a hello, it isn't one —
-        // hand the bytes back as data; otherwise keep accumulating.
+        // 尚无换行符。如果已经太长而不可能是 hello，就不是 —
+        // 将字节归还为数据；否则继续累积。
         if (total > MAX_HELLO_LINE_BYTES) finish({ pid: null, hostPid: null }, all);
         else chunks = [all];
         return;
@@ -606,8 +581,8 @@ function readClientHello(
         const tail = all.subarray(nl + 1);
         finish(peers, tail.length > 0 ? tail : undefined);
       } else {
-        // First line is not a client-hello (legacy/direct client) — hand the
-        // whole buffer back so the transport sees the message verbatim.
+        // 第一行不是 client-hello（旧版/直接客户端）— 将整个缓冲区归还，
+        // 使传输层能原样看到消息。
         finish({ pid: null, hostPid: null }, all);
       }
     };
@@ -620,5 +595,5 @@ function readClientHello(
   });
 }
 
-/** Exported for test stubs that need to bound the hello-line read. */
+/** 导出供需要限定 hello 行读取的测试桩使用。 */
 export { MAX_HELLO_LINE_BYTES };

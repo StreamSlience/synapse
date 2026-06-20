@@ -1,17 +1,15 @@
 ﻿/**
- * Hermes Agent target.
+ * Hermes Agent target。
  *
- * Hermes reads MCP servers from `$HERMES_HOME/config.yaml` under the
- * top-level `mcp_servers` key, and exposes discovered MCP tools through
- * dynamic toolsets named `mcp-<server>`. We add:
+ * Hermes 从 `$HERMES_HOME/config.yaml` 的顶层 `mcp_servers` 键读取 MCP 服务器，
+ * 并通过名为 `mcp-<server>` 的动态工具集暴露发现的 MCP 工具。我们添加：
  *
  *   mcp_servers.synapse -> `synapse serve --mcp`
  *   platform_toolsets.cli -> `mcp-synapse`
  *
- * The second entry matters because Hermes CLI profiles often enable an
- * explicit `platform_toolsets.cli` list. Without `mcp-synapse` in that
- * list, the MCP server can be configured and connected but its tools may
- * still be filtered out of normal CLI sessions.
+ * 第二个条目很重要，因为 Hermes CLI 配置文件通常会启用显式的
+ * `platform_toolsets.cli` 列表。若该列表中没有 `mcp-synapse`，
+ * MCP 服务器可能已配置并连接，但其工具仍会在普通 CLI 会话中被过滤掉。
  */
 
 import * as fs from 'fs';
@@ -189,20 +187,19 @@ function childRange(lines: string[], parent: LineRange, child: string): LineRang
 }
 
 /**
- * Block-range for a 2-space-indented child whose value is a YAML block list.
+ * 2 空格缩进子节点的块范围，其值为 YAML 块列表。
  *
- * Unlike `childRange`, this handles PyYAML's default `default_flow_style=False`
- * serialization, where list items sit at the SAME indent as the parent key:
+ * 与 `childRange` 不同，此函数处理 PyYAML 默认的 `default_flow_style=False`
+ * 序列化方式，其中列表项与父键处于相同缩进级别：
  *
  *     cli:
- *     - hermes-cli       # indent 2 — belongs to cli, not a sibling
+ *     - hermes-cli       # 缩进 2——属于 cli，而非兄弟节点
  *     - browser
  *
- * `childRange`'s `^  \S` heuristic mistakes that first `  - hermes-cli` line
- * for the next sibling key and truncates the block, causing inserts to land
- * before the existing items at a different indent (issue #456). This helper
- * recognizes a `  - ` line as part of the block instead, and reports back
- * the actual indent used by existing items so the inserter matches it.
+ * `childRange` 的 `^  \S` 启发式规则会将第一个 `  - hermes-cli` 行误判为
+ * 下一个兄弟键，从而截断块，导致插入内容落在现有条目之前且缩进不同
+ * （issue #456）。此辅助函数将 `  - ` 行识别为块的一部分，并回报现有条目
+ * 实际使用的缩进，以便插入器与之匹配。
  */
 function listChildBlock(
   lines: string[],

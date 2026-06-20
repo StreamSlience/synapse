@@ -1,15 +1,13 @@
 ﻿/**
- * MCP per-connection session — speaks the JSON-RPC protocol (initialize,
- * tools/list, tools/call) over a single {@link JsonRpcTransport}. It owns
- * per-client state only (which protocol version the client asked for, whether
- * it advertised `roots`, the one-shot roots/list latch); the heavyweight
- * resources (Synapse, watcher, ToolHandler) live in the shared
- * {@link MCPEngine} so daemon mode can collapse N inotify sets / DB handles
- * to one.
+ * MCP 单连接会话 — 通过单个 {@link JsonRpcTransport} 处理 JSON-RPC 协议
+ * （initialize、tools/list、tools/call）。它只持有每个客户端的状态
+ * （客户端请求的协议版本、是否声明了 `roots`、一次性 roots/list 锁存）；
+ * 重量级资源（Synapse、文件监视器、ToolHandler）存放在共享的
+ * {@link MCPEngine} 中，以便守护进程模式能将 N 个 inotify 集 / DB 句柄
+ * 合并为一个。
  *
- * The state-machine itself mirrors what `MCPServer` used to do inline before
- * issue #411 split it out — the same regression tests in
- * `__tests__/mcp-initialize.test.ts` still drive this code path.
+ * 状态机本身镜像了 `MCPServer` 在 issue #411 拆分之前内联执行的逻辑
+ * — `__tests__/mcp-initialize.test.ts` 中相同的回归测试仍驱动此代码路径。
  */
 
 import * as path from 'path';
@@ -22,28 +20,26 @@ import { findNearestSynapseRoot } from '../directory';
 import { getTelemetry, ClientInfo } from '../telemetry';
 
 /**
- * MCP Server Info — kept on the session because some clients log it. The
- * version tracks the real package version (was a hard-coded '0.1.0').
+ * MCP 服务器信息 — 保存在会话中，因为部分客户端会记录它。
+ * 版本号追踪真实的包版本（原先硬编码为 '0.1.0'）。
  */
-// Exported so the proxy can answer `initialize` locally with the IDENTICAL
-// payload the daemon would send — no drift between the two handshake paths.
+// 导出以便代理可以用与守护进程发送完全相同的 payload 在本地回应 `initialize`
+// — 两条握手路径之间不会产生偏差。
 export const SERVER_INFO = {
   name: 'synapse',
   version: SynapsePackageVersion,
 };
 
-/** MCP Protocol Version (latest the server claims). */
+/** MCP 协议版本（服务器声明的最新版本）。 */
 export const PROTOCOL_VERSION = '2024-11-05';
 
 /**
- * How long to wait for the client's `roots/list` response before giving up
- * and falling back to the process cwd.
+ * 等待客户端 `roots/list` 响应的超时时间，超时后回退到进程 cwd。
  */
 const ROOTS_LIST_TIMEOUT_MS = 5000;
 
 /**
- * Convert a file:// URI to a filesystem path. Handles URL encoding and
- * Windows drive letter paths.
+ * 将 file:// URI 转换为文件系统路径。处理 URL 编码和 Windows 盘符路径。
  */
 function fileUriToPath(uri: string): string {
   try {
@@ -58,7 +54,7 @@ function fileUriToPath(uri: string): string {
   }
 }
 
-/** First usable filesystem path from a `roots/list` result, or null. */
+/** 从 `roots/list` 结果中取第一个可用的文件系统路径，若无则返回 null。 */
 function firstRootPath(result: unknown): string | null {
   if (!result || typeof result !== 'object') return null;
   const roots = (result as { roots?: unknown }).roots;
@@ -70,20 +66,19 @@ function firstRootPath(result: unknown): string | null {
 
 export interface MCPSessionOptions {
   /**
-   * Explicit project path from the `--path` CLI flag. When set, the session
-   * will not bother asking the client for `roots/list` — we already know
-   * where the project lives.
+   * 来自 `--path` CLI 标志的显式项目路径。设置后，会话将不再请求
+   * 客户端的 `roots/list` — 我们已经知道项目在哪里。
    */
   explicitProjectPath?: string | null;
 }
 
 /**
- * One MCP client's view of the server. Created fresh per stdio launch
- * (direct mode) or per socket connection (daemon mode).
+ * 单个 MCP 客户端对服务器的视图。直接模式（stdio 启动）时每次新建一个，
+ * 守护进程模式（socket 连接）时每个连接新建一个。
  */
 export class MCPSession {
   private clientSupportsRoots = false;
-  /** From the initialize handshake — attributes usage rollups to the agent host. */
+  /** 来自 initialize 握手 — 将用量汇总归因到对应的智能体宿主。 */
   private clientInfo: ClientInfo | undefined;
   private rootsAttempted = false;
   private resolvePromise: Promise<void> | null = null;
@@ -98,22 +93,22 @@ export class MCPSession {
   }
 
   /**
-   * Start handling messages from the transport. Returns immediately — the
-   * session lives for as long as the transport is open.
+   * 开始处理来自传输层的消息。立即返回 —
+   * 会话在传输层开放期间持续存在。
    */
   start(): void {
     this.transport.start(this.handleMessage.bind(this));
   }
 
   /**
-   * Tear down the session. Does NOT touch the engine (the engine may serve
-   * other sessions) or call `process.exit` (the daemon decides when to exit).
+   * 关闭会话。不会触碰引擎（引擎可能服务于其他会话），
+   * 也不调用 `process.exit`（守护进程自行决定何时退出）。
    */
   stop(): void {
     this.transport.stop();
   }
 
-  /** Underlying transport — exposed for daemon-side close hooks. */
+  /** 底层传输层 — 暴露给守护进程侧的关闭钩子使用。 */
   getTransport(): JsonRpcTransport {
     return this.transport;
   }
@@ -125,7 +120,7 @@ export class MCPSession {
         if (isRequest) await this.handleInitialize(message as JsonRpcRequest);
         break;
       case 'initialized':
-        // Notification that client has finished initialization — no action needed.
+        // 客户端已完成初始化的通知 — 无需任何操作。
         break;
       case 'tools/list':
         if (isRequest) await this.handleToolsList(message as JsonRpcRequest);
@@ -137,16 +132,15 @@ export class MCPSession {
         if (isRequest) this.transport.sendResult((message as JsonRpcRequest).id, {});
         break;
       case 'resources/list':
-        // We expose no MCP resources, but some clients (opencode, Codex) probe
-        // for them on connect; reply with an empty list instead of a
-        // MethodNotFound error that surfaces as a scary `-32601` log line. (#621)
+        // 我们不暴露任何 MCP 资源，但部分客户端（opencode、Codex）会在连接时探测；
+        // 返回空列表而不是 MethodNotFound 错误，以避免显示吓人的 `-32601` 日志行。(#621)
         if (isRequest) this.transport.sendResult((message as JsonRpcRequest).id, { resources: [] });
         break;
       case 'resources/templates/list':
         if (isRequest) this.transport.sendResult((message as JsonRpcRequest).id, { resourceTemplates: [] });
         break;
       case 'prompts/list':
-        // Likewise — no prompts exposed, but answer the probe cleanly. (#621)
+        // 同上 — 不暴露任何 prompts，但干净地回应探测。(#621)
         if (isRequest) this.transport.sendResult((message as JsonRpcRequest).id, { prompts: [] });
         break;
       default:
@@ -176,10 +170,10 @@ export class MCPSession {
       };
     }
 
-    // Explicit project signal, strongest first: client-provided rootUri /
-    // workspaceFolders (LSP-style), else the --path the server was launched
-    // with. cwd is NOT used here — we defer it so a roots/list answer can
-    // win over it. See issue #196.
+    // 显式项目信号，优先级从高到低：客户端提供的 rootUri /
+    // workspaceFolders（LSP 风格），其次是服务器启动时的 --path。
+    // 此处不使用 cwd — 我们推迟它，以便 roots/list 的答案
+    // 能够覆盖它。参见 issue #196。
     let explicitPath: string | null = null;
     if (params?.rootUri) {
       explicitPath = fileUriToPath(params.rootUri);
@@ -189,19 +183,17 @@ export class MCPSession {
       explicitPath = this.explicitProjectPath;
     }
 
-    // Pick the instructions variant by the workspace's index state — a cheap
-    // synchronous walk-up (existsSync loop only, no DB open, so the #172
-    // respond-fast contract holds). An unindexed workspace gets the short
-    // "inactive this session" note instead of the full playbook: the playbook
-    // tells the agent to lean on tools that would all fail, and early failures
-    // teach the agent to abandon synapse entirely. `tools/list` is gated the
-    // same way (empty list when unindexed). When no explicit path is known yet
-    // (roots/list dance pending), cwd is the best predictor of where the
-    // default project will resolve — and on a mismatch the worst case is the
-    // optimistic full playbook backstopped by the empty tool list.
+    // 根据工作区的索引状态选择说明文字变体 — 一次廉价的同步向上遍历
+    // （仅 existsSync 循环，不打开 DB，因此满足 #172 的快速响应约定）。
+    // 未索引的工作区收到简短的"本次会话不活跃"提示，而非完整的使用手册：
+    // 使用手册会告知智能体依赖那些全部会失败的工具，而早期失败会让智能体
+    // 在整个会话中放弃 synapse。`tools/list` 以同样方式设门控（未索引时返回空列表）。
+    // 当尚不知道显式路径时（roots/list 握手待处理），cwd 是预测默认项目
+    // 解析位置的最佳方案 — 即使不匹配，最坏情况也只是乐观地返回完整使用手册，
+    // 并由空工具列表兜底。
     const indexed = findNearestSynapseRoot(explicitPath ?? process.cwd()) !== null;
 
-    // Respond to the handshake BEFORE doing any heavy init — see issue #172.
+    // 在任何重量级初始化之前先响应握手 — 参见 issue #172。
     this.transport.sendResult(request.id, {
       protocolVersion: PROTOCOL_VERSION,
       capabilities: { tools: {} },
@@ -210,22 +202,19 @@ export class MCPSession {
     });
 
     if (explicitPath) {
-      // Kick off engine init in the background. If another session in the
-      // same daemon already opened the project, `ensureInitialized` is a
-      // ~free no-op — N concurrent clients pay exactly one open.
+      // 在后台启动引擎初始化。如果同一守护进程中的另一个会话已经打开了该项目，
+      // `ensureInitialized` 几乎是无操作 — N 个并发客户端只需一次打开。
       this.resolvePromise = this.engine.ensureInitialized(explicitPath);
     }
   }
 
   private async handleToolsList(request: JsonRpcRequest): Promise<void> {
     await this.retryInitIfNeeded();
-    // An unindexed workspace serves an EMPTY tool list: absence is the one
-    // signal an agent can't misread. Listing 8 tools that all fail wastes the
-    // agent's calls and teaches it synapse is broken (observed: one or two
-    // early isError responses and the agent stops calling synapse for the
-    // whole session). A `synapse init` run after the server started is
-    // picked up on the next tools/list — retryInitIfNeeded re-walks — though
-    // most hosts only request the list once per connection.
+    // 未索引的工作区返回空工具列表：缺席是智能体无法误读的唯一信号。
+    // 列出 8 个全部失败的工具会浪费智能体的调用次数，并让它认为 synapse 坏了
+    // （观察到：一两次早期 isError 响应后，智能体在整个会话中停止调用 synapse）。
+    // 服务器启动后运行 `synapse init` 会在下次 tools/list 时被感知到
+    // — retryInitIfNeeded 会重新遍历 — 尽管大多数宿主每次连接只请求一次列表。
     this.transport.sendResult(request.id, {
       tools: this.engine.hasDefaultSynapse() ? this.engine.getToolHandler().getTools() : [],
     });
@@ -259,18 +248,18 @@ export class MCPSession {
 
     const result = await this.engine.getToolHandler().execute(toolName, toolArgs);
     this.transport.sendResult(request.id, result);
-    // After the reply is on the wire — telemetry must never delay a tool
-    // response (in-memory increment only; see src/telemetry).
+    // 回复在线后 — 遥测绝不能延迟工具响应
+    // （仅内存计数；参见 src/telemetry）。
     getTelemetry().recordUsage('mcp_tool', toolName, !result.isError, this.clientInfo);
   }
 
   /**
-   * Lazy default-project resolution. Three layers:
-   *   1. await the in-flight init kicked off from `handleInitialize` (if any);
-   *   2. if still uninitialized and we never asked the client for its roots,
-   *      do so now (one-shot); fall back to cwd if the client lacks roots;
-   *   3. last-resort: re-walk from the best candidate — picks up projects
-   *      that were `synapse init`'d *after* the server started.
+   * 惰性默认项目解析。三层逻辑：
+   *   1. 等待来自 `handleInitialize` 发起的进行中初始化（如有）；
+   *   2. 若仍未初始化且从未向客户端请求 roots，现在请求（一次性）；
+   *      若客户端不支持 roots 则回退到 cwd；
+   *   3. 最后手段：从最佳候选路径重新遍历 — 能感知到服务器启动后
+   *      `synapse init` 的项目。
    */
   private async retryInitIfNeeded(): Promise<void> {
     if (this.resolvePromise) {
@@ -291,15 +280,14 @@ export class MCPSession {
       if (this.engine.hasDefaultSynapse()) return;
     }
 
-    // Last resort: walk from the best candidate (sync open). Picks up
-    // projects that appeared after the server started.
+    // 最后手段：从最佳候选路径遍历（同步打开）。能感知服务器启动后出现的项目。
     const candidate = hint ?? process.cwd();
     this.engine.retryInitializeSync(candidate);
   }
 
   /**
-   * Ask the client for its workspace root via `roots/list` and open the
-   * first one. Falls back to `process.cwd()` on timeout or empty answer.
+   * 通过 `roots/list` 向客户端请求其工作区根目录，并打开第一个。
+   * 超时或收到空答案时回退到 `process.cwd()`。
    */
   private async initFromRoots(): Promise<void> {
     let target = process.cwd();

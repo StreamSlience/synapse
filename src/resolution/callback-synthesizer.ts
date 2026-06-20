@@ -1,25 +1,25 @@
 ﻿/**
- * Callback / observer edge synthesis — Phase 1 + 2.
+ * 回调 / 观察者边合成——第 1 + 2 阶段。
  *
- * Closes dynamic-dispatch holes where a dispatcher invokes callbacks registered
- * elsewhere. Two channel shapes:
+ * 弥补动态分发缺口：分发器调用在其他地方注册的回调时，静态边会断裂。
+ * 两种通道形态：
  *
- *  (1) Field-backed observer (Phase 1):
- *      onUpdate(cb) { this.callbacks.add(cb); }            // registrar
- *      triggerUpdate() { for (cb of this.callbacks) cb(); } // dispatcher
- *      scene.onUpdate(this.triggerRender)                  // registration
- *      → synthesize triggerUpdate → triggerRender
+ *  (1) 字段支撑的观察者（第 1 阶段）：
+ *      onUpdate(cb) { this.callbacks.add(cb); }            // 注册方
+ *      triggerUpdate() { for (cb of this.callbacks) cb(); } // 分发方
+ *      scene.onUpdate(this.triggerRender)                  // 注册调用
+ *      → 合成 triggerUpdate → triggerRender
  *
- *  (2) String-keyed EventEmitter (Phase 2):
- *      this.on('mount', function onmount(){...})           // registration
- *      fn.emit('mount', this)                              // dispatch
- *      → synthesize (method containing emit('mount')) → onmount
+ *  (2) 字符串键 EventEmitter（第 2 阶段）：
+ *      this.on('mount', function onmount(){...})           // 注册
+ *      fn.emit('mount', this)                              // 分发
+ *      → 合成（包含 emit('mount') 的方法）→ onmount
  *
- * Whole-graph pass after base resolution. High-precision/low-recall by design:
- * named callbacks only; field channels paired by file+field; EventEmitter
- * channels capped by event fan-out (generic names like 'error' skipped — they
- * need receiver-type matching, deferred to Phase 3). All synthesized edges are
- * tagged `provenance:'heuristic'`. See docs/design/callback-edge-synthesis.md.
+ * 在基础解析之后对整个图执行。设计上高精度/低召回：
+ * 仅处理具名回调；字段通道按 file+field 配对；EventEmitter
+ * 通道受事件扇出上限约束（'error' 等泛型名称跳过——
+ * 需要接收者类型匹配，延至第 3 阶段处理）。所有合成边均
+ * 标记 `provenance:'heuristic'`。参见 docs/design/callback-edge-synthesis.md。
  */
 import type { Edge, Node, NodeKind } from '../types';
 import type { QueryBuilder } from '../db/queries';
@@ -30,7 +30,7 @@ import { stripCommentsForRegex } from './strip-comments';
 const REGISTRAR_NAME = /^(on[A-Z]\w*|subscribe|addListener|addEventListener|register|watch|listen|addCallback)$/;
 const DISPATCHER_NAME = /(emit|trigger|notify|dispatch|fire|publish|flush)/i;
 const MAX_CALLBACKS_PER_CHANNEL = 40;
-const EVENT_FANOUT_CAP = 6; // skip events with more handlers/dispatchers than this (too generic without type info)
+const EVENT_FANOUT_CAP = 6; // 处理器/分发器数量超过此上限的事件跳过（缺乏类型信息时过于泛化）
 
 const ON_RE = /\.(?:on|once|addListener)\(\s*['"]([^'"]+)['"]\s*,\s*(?:function\s+(\w+)|(?:this\.)?(\w+))/g;
 const EMIT_RE = /\.(?:emit|fire|dispatchEvent)\(\s*['"]([^'"]+)['"]/g;
@@ -38,44 +38,45 @@ const SETSTATE_RE = /this\.setState\s*\(/;
 const FLUTTER_SETSTATE_RE = /\bsetState\s*\(/; // Flutter: setState((){…}) / this.setState
 const JSX_TAG_RE = /<([A-Z][A-Za-z0-9_]*)[\s/>]/g;
 const MAX_JSX_CHILDREN = 30;
-// Vue SFC templates: kebab-case child components (<el-button> → ElButton) and
-// event bindings (@click="fn" / v-on:click="fn"). PascalCase children (<VPNav/>)
-// are already caught by JSX_TAG_RE via the SFC component node.
+// Vue SFC 模板：kebab-case 子组件（<el-button> → ElButton）和
+// 事件绑定（@click="fn" / v-on:click="fn"）。PascalCase 子组件（<VPNav/>）
+// 已通过 SFC 组件节点由 JSX_TAG_RE 捕获。
 const VUE_KEBAB_RE = /<([a-z][a-z0-9]*(?:-[a-z0-9]+)+)[\s/>]/g;
-// PascalCase component tags — `<MediaCard ...>`, `<NavBar/>`. HTML elements are
-// lowercase, so an uppercase-initial tag is a component usage; built-ins
-// (`<NuxtLink>`, `<Transition>`) simply resolve to nothing and emit no edge.
+// PascalCase 组件标签——`<MediaCard ...>`、`<NavBar/>`。HTML 元素为小写，
+// 因此首字母大写的标签即为组件用法；内置组件
+// （`<NuxtLink>`、`<Transition>`）解析为空，不产生边。
 const VUE_PASCAL_RE = /<([A-Z][A-Za-z0-9]*)[\s/>]/g;
 const VUE_HANDLER_RE = /(?:@|v-on:)([a-zA-Z][\w-]*)(?:\.[\w]+)*\s*=\s*"([^"]+)"/g;
-// Composable/hook destructure: `const { close: closeSidebar } = useSidebarControl()`.
-// Captures the destructure body + the called composable; only `use*` calls qualify.
+// 组合式函数/hook 解构：`const { close: closeSidebar } = useSidebarControl()`。
+// 捕获解构体与被调用的组合式函数；仅 `use*` 调用符合条件。
 const VUE_DESTRUCTURE_RE = /(?:const|let|var)\s*\{([^}]+)\}\s*=\s*(\w+)\s*\(/g;
 
-// Closure-collection dynamic dispatch (language-agnostic, Swift-first). A method
-// appends a closure to a collection property; another method iterates that
-// property *invoking each element* (`coll.forEach { $0() }` / `{ it() }`). The
-// element-invoke (`$0(` / `it(`) PROVES the collection holds closures, so pairing
-// a dispatcher to same-named registrars (`.append`/`.add`/`.push`/`.insert`,
-// incl. Swift `prop.write { $0.append }`) is high-precision. Cross-file/class by
-// design: Alamofire appends in `DataRequest.validate` but iterates in the base
-// `Request.didCompleteTask` — neither same-file nor same-class pairing reaches it.
+// 闭包集合动态分发（语言无关，Swift 优先）。某方法将一个闭包
+// 追加到集合属性；另一方法遍历该属性并*逐元素调用*
+// （`coll.forEach { $0() }` / `{ it() }`）。
+// 元素调用（`$0(` / `it(`）证明集合持有闭包，因此将分发器与
+// 同名注册方（`.append`/`.add`/`.push`/`.insert`，
+// 包括 Swift 的 `prop.write { $0.append }`）配对是高精度的。
+// 设计上支持跨文件/类：Alamofire 在 `DataRequest.validate` 中追加，
+// 却在基类 `Request.didCompleteTask` 中遍历——
+// 同文件或同类配对均无法覆盖此场景。
 const CC_DISPATCH_RE = /(\w+)\.forEach\s*\{\s*(?:\$0|it)\s*\(/g;
 const CC_APPEND_WRITE_RE = /(\w+)\.write\s*\{\s*\$0(?:\.(\w+))?\.(?:append|add|push|insert)\s*\(/g;
 const CC_APPEND_DIRECT_RE = /(\w+)\.(?:append|add|push|insert)\s*\(/g;
-const CC_FANOUT_CAP = 8; // skip a field name with more dispatchers/registrars than this (too generic to pair confidently)
+const CC_FANOUT_CAP = 8; // 某字段名的分发器/注册方超过此数量时跳过（过于泛化，无法可靠配对）
 
 function kebabToPascal(s: string): string {
   return s.split('-').map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join('');
 }
 
 /**
- * Nuxt auto-import name for a component, derived from its path UNDER `components/`:
- * `components/media/Card.vue` → `MediaCard`, `components/base/foo/Bar.vue` →
- * `BaseFooBar`. Each directory segment and the filename is PascalCased and
- * concatenated; a directory whose PascalCase name prefixes the next segment is
- * collapsed (Nuxt's de-dup: `base/BaseButton.vue` → `BaseButton`, not
- * `BaseBaseButton`). Returns null for a flat component (`components/NavBar.vue`)
- * — its node is already named by basename, so a direct tag match finds it.
+ * 从 `components/` 下的路径推导 Nuxt 自动导入组件名：
+ * `components/media/Card.vue` → `MediaCard`，`components/base/foo/Bar.vue` →
+ * `BaseFooBar`。每个目录段和文件名均转为 PascalCase 后拼接；
+ * 若某目录的 PascalCase 名是下一段的前缀，则折叠合并
+ * （Nuxt 去重规则：`base/BaseButton.vue` → `BaseButton`，而非 `BaseBaseButton`）。
+ * 对平铺组件（`components/NavBar.vue`）返回 null——
+ * 其节点已按 basename 命名，直接标签匹配即可找到。
  */
 function nuxtComponentName(filePath: string): string | null {
   const marker = filePath.lastIndexOf('components/');
@@ -112,31 +113,30 @@ function dispatcherField(src: string): string | null {
 
 const FN_KINDS = new Set(['method', 'function', 'component']);
 
-/** Innermost function/method node whose line range contains `line`. */
+/** 行范围包含 `line` 的最内层函数/方法节点。 */
 function enclosingFn(nodesInFile: Node[], line: number): Node | null {
   let best: Node | null = null;
   for (const n of nodesInFile) {
     if (!FN_KINDS.has(n.kind)) continue;
     const end = n.endLine ?? n.startLine;
     if (n.startLine <= line && end >= line) {
-      if (!best || n.startLine >= best.startLine) best = n; // prefer the tightest (latest-starting) encloser
+      if (!best || n.startLine >= best.startLine) best = n; // 优先选取范围最紧（起始行最晚）的外层节点
     }
   }
   return best;
 }
 
 /**
- * Stream method + function nodes lazily. The synthesizers only scan-and-filter
- * down to a tiny matched subset, so materializing every function/method (which
- * is gigabytes on a symbol-dense project) just to iterate it once is what OOM'd
- * #610. Iterating keeps memory O(1) in the node count.
+ * 惰性流式返回方法与函数节点。合成器只需扫描并筛选出极少量匹配项，
+ * 若将所有函数/方法一次性物化（在符号密集的项目上可达数 GB）再迭代，
+ * 正是导致 #610 OOM 的原因。惰性迭代使内存消耗在节点数上保持 O(1)。
  */
 function* methodAndFunctionNodes(queries: QueryBuilder): IterableIterator<Node> {
   yield* queries.iterateNodesByKind('method');
   yield* queries.iterateNodesByKind('function');
 }
 
-/** Phase 1: field-backed observer channels (registrar/dispatcher share a store). */
+/** 第 1 阶段：字段支撑的观察者通道（注册方与分发方共享同一存储）。 */
 function fieldChannelEdges(queries: QueryBuilder, ctx: ResolutionContext): Edge[] {
   const registrars: Array<{ node: Node; field: string }> = [];
   const dispatchers: Array<{ node: Node; field: string }> = [];
@@ -181,9 +181,10 @@ function fieldChannelEdges(queries: QueryBuilder, ctx: ResolutionContext): Edge[
           provenance: 'heuristic',
           metadata: {
             synthesizedBy: 'callback', via: reg.node.name, field: reg.field,
-            // Where the callback was wired up (`scene.onUpdate(this.triggerRender)`).
-            // This is the #1 thing an agent reads/greps to explain the flow — surface
-            // it so node/trace/context can show it without a callers() + Read round-trip.
+            // 回调的连线位置（`scene.onUpdate(this.triggerRender)`）。
+            // 这是智能体最常通过 read/grep 查阅以理解流程的信息——
+            // 将其暴露出来，让 node/trace/context 无需经过
+            // callers() + Read 往返即可直接展示。
             registeredAt: `${caller.filePath}:${e.line}`,
           },
         });
@@ -195,25 +196,23 @@ function fieldChannelEdges(queries: QueryBuilder, ctx: ResolutionContext): Edge[
 }
 
 /**
- * Closure-collection dispatch: dispatcher iterates a closure-collection property
- * invoking each element; registrar appends a closure to the same-named property.
- * Emits dispatcher → registrar so a flow reaches the registration site (where the
- * appended closure's body — and its callers — live). High-precision: the
- * dispatcher's element-invoke is the gate (a `.forEach` that does NOT invoke its
- * element is ignored), so a repo with no closure-collection dispatch yields zero
- * edges regardless of how many `.append`/`.push` sites it has.
+ * 闭包集合分发：分发器遍历闭包集合属性并逐元素调用；注册方将闭包追加到
+ * 同名属性。产生分发器 → 注册方的边，使流程能到达注册点
+ * （追加的闭包体及其调用者均在此处）。高精度：分发器的元素调用是门控条件
+ * （不调用元素的 `.forEach` 被忽略），因此在没有闭包集合分发的仓库中
+ * 不会产生任何边，无论有多少 `.append`/`.push` 调用点。
  *
- * Pairs globally by field name (cross-file/class is required — see Alamofire's
- * base-class `Request.didCompleteTask` iterating `validators` appended by the
- * subclass `DataRequest.validate`), bounded by a fan-out cap so a generic field
- * name shared across unrelated classes can't fan out into noise.
+ * 按字段名全局配对（必须支持跨文件/类——参见 Alamofire 的基类
+ * `Request.didCompleteTask` 遍历由子类 `DataRequest.validate` 追加的
+ * `validators`），并受扇出上限约束，防止跨无关类共享的泛型字段名
+ * 产生噪声边。
  */
 function closureCollectionEdges(queries: QueryBuilder, ctx: ResolutionContext): Edge[] {
-  const dispatchers = new Map<string, Array<{ node: Node; line: number }>>(); // field → dispatcher methods + forEach line
-  const registrars = new Map<string, Array<{ node: Node; line: number }>>();   // field → registrar methods + append line
+  const dispatchers = new Map<string, Array<{ node: Node; line: number }>>(); // 字段 → 分发方法 + forEach 行号
+  const registrars = new Map<string, Array<{ node: Node; line: number }>>();   // 字段 → 注册方法 + append 行号
 
   const addReg = (field: string | undefined, node: Node, absLine: number) => {
-    if (!field || /^\d+$/.test(field)) return; // `$0.append` mis-captures the `0`; the write-RE owns that field
+    if (!field || /^\d+$/.test(field)) return; // `$0.append` 错误捕获了 `0`；写入 RE 负责处理该字段
     const arr = registrars.get(field) ?? [];
     if (!arr.some((r) => r.node.id === node.id)) arr.push({ node, line: absLine });
     registrars.set(field, arr);
@@ -240,7 +239,7 @@ function closureCollectionEdges(queries: QueryBuilder, ctx: ResolutionContext): 
     if (hasAppend) {
       CC_APPEND_WRITE_RE.lastIndex = 0;
       let w: RegExpExecArray | null;
-      while ((w = CC_APPEND_WRITE_RE.exec(src))) addReg(w[2] || w[1], m, lineAt(w.index)); // nested `$0.streams` else the `.write` receiver
+      while ((w = CC_APPEND_WRITE_RE.exec(src))) addReg(w[2] || w[1], m, lineAt(w.index)); // 嵌套的 `$0.streams` 否则取 `.write` 的接收者
       CC_APPEND_DIRECT_RE.lastIndex = 0;
       let a: RegExpExecArray | null;
       while ((a = CC_APPEND_DIRECT_RE.exec(src))) addReg(a[1], m, lineAt(a.index));
@@ -252,7 +251,7 @@ function closureCollectionEdges(queries: QueryBuilder, ctx: ResolutionContext): 
   for (const [field, disps] of dispatchers) {
     const regs = registrars.get(field);
     if (!regs || regs.length === 0) continue;
-    if (disps.length > CC_FANOUT_CAP || regs.length > CC_FANOUT_CAP) continue; // generic field — can't pair confidently
+    if (disps.length > CC_FANOUT_CAP || regs.length > CC_FANOUT_CAP) continue; // 泛型字段——无法可靠配对
     for (const disp of disps) for (const reg of regs) {
       if (disp.node.id === reg.node.id) continue;
       const key = `${disp.node.id}>${reg.node.id}`;
@@ -268,10 +267,10 @@ function closureCollectionEdges(queries: QueryBuilder, ctx: ResolutionContext): 
   return edges;
 }
 
-/** Phase 2: string-keyed EventEmitter channels (on('e', fn) ↔ emit('e')). */
+/** 第 2 阶段：字符串键 EventEmitter 通道（on('e', fn) ↔ emit('e')）。 */
 function eventEmitterEdges(ctx: ResolutionContext): Edge[] {
-  const emitsByEvent = new Map<string, Set<string>>();          // event → dispatcher node ids
-  const handlersByEvent = new Map<string, Map<string, string>>(); // event → handler id → registration site (file:line)
+  const emitsByEvent = new Map<string, Set<string>>();          // 事件 → 分发器节点 id
+  const handlersByEvent = new Map<string, Map<string, string>>(); // 事件 → 处理器 id → 注册点（file:line）
 
   for (const file of ctx.getAllFiles()) {
     const content = ctx.readFile(file);
@@ -311,8 +310,8 @@ function eventEmitterEdges(ctx: ResolutionContext): Edge[] {
   for (const [event, dispatchers] of emitsByEvent) {
     const handlers = handlersByEvent.get(event);
     if (!handlers) continue;
-    // Precision guard: a generic event name with many handlers/dispatchers can't
-    // be matched without receiver-type info (Phase 3) — skip rather than over-link.
+    // 精度保护：泛型事件名若有大量处理器/分发器，在缺乏接收者类型信息（第 3 阶段）的情况下
+    // 无法精确匹配——跳过，而非过度连接。
     if (dispatchers.size > EVENT_FANOUT_CAP || handlers.size > EVENT_FANOUT_CAP) continue;
     for (const d of dispatchers) for (const [h, registeredAt] of handlers) {
       if (d === h) continue;
@@ -326,15 +325,15 @@ function eventEmitterEdges(ctx: ResolutionContext): Edge[] {
 }
 
 /**
- * Phase 4: React class-component re-render. `this.setState(...)` re-runs the
- * component's `render()`, but that hop is React-internal — no static edge — so a
- * flow like "mutation → setState → canvas repaint" dead-ends at setState even
- * though `render → getRenderableElements → …` is fully call-connected after it.
- * Bridge it: for each class that has a `render` method, link every sibling method
- * whose body calls `this.setState(` → `render`. The setState gate keeps this to
- * React class components (a non-React class with a `render` method won't call
- * `this.setState`). Over-approximation (all setState methods reach render) is
- * accepted — it's reachability-correct, like the callback channels.
+ * 第 4 阶段：React 类组件重渲染。`this.setState(...)` 会重新执行
+ * 组件的 `render()`，但该跳转是 React 内部行为——没有静态边——
+ * 因此"mutation → setState → 画布重绘"这样的流程会在 setState 处中断，
+ * 即便 `render → getRenderableElements → …` 在其后已完全通过调用连接。
+ * 桥接方式：对每个拥有 `render` 方法的类，将所有在方法体中调用
+ * `this.setState(` 的兄弟方法链接到 `render`。setState 门控将范围限制在
+ * React 类组件（非 React 类即便有 `render` 方法也不会调用 `this.setState`）。
+ * 过度近似（所有 setState 方法都能到达 render）是可接受的——
+ * 可达性正确，与回调通道的处理方式一致。
  */
 function reactRenderEdges(queries: QueryBuilder, ctx: ResolutionContext): Edge[] {
   const edges: Edge[] = [];
@@ -367,13 +366,13 @@ function reactRenderEdges(queries: QueryBuilder, ctx: ResolutionContext): Edge[]
 }
 
 /**
- * Phase 4b: Flutter setState → build (the Dart analog of react-render). In a
- * StatefulWidget's State class, `setState(() {…})` re-runs `build(context)`, but
- * that hop is framework-internal (Flutter calls build), so a flow like
- * "onPressed → _increment → setState → rebuilt UI" dead-ends at setState. Bridge
- * it: for each Dart class with a `build` method, link every sibling method whose
- * body calls `setState(` → `build`. The setState gate + `.dart` file keep this to
- * Flutter State classes. Over-approximation accepted (reachability-correct).
+ * 第 4b 阶段：Flutter setState → build（react-render 的 Dart 对应版本）。
+ * 在 StatefulWidget 的 State 类中，`setState(() {…})` 会重新执行 `build(context)`，
+ * 但该跳转是框架内部行为（Flutter 负责调用 build），因此
+ * "onPressed → _increment → setState → 界面重建"这样的流程会在 setState 处中断。
+ * 桥接方式：对每个拥有 `build` 方法的 Dart 类，将所有在方法体中调用
+ * `setState(` 的兄弟方法链接到 `build`。setState 门控加上 `.dart` 文件限制
+ * 将范围约束在 Flutter State 类。过度近似可接受（可达性正确）。
  */
 function flutterBuildEdges(queries: QueryBuilder, ctx: ResolutionContext): Edge[] {
   const edges: Edge[] = [];
@@ -406,14 +405,13 @@ function flutterBuildEdges(queries: QueryBuilder, ctx: ResolutionContext): Edge[
 }
 
 /**
- * Phase 4c: C++ virtual override. A call through a base/interface pointer
- * (`db->Get(...)`, `iter->Next()`) dispatches at runtime to a subclass override,
- * but that hop is a vtable indirection — no static call edge — so a flow stops at
- * the abstract base method. Bridge it like react-render: for each C++ class that
- * `extends` a base, link each base method → the subclass method of the same name
- * (the override), so trace/callees from the interface method reach the
- * implementation(s). Over-approximation accepted (reachability-correct); capped
- * per class and gated to C++ to avoid touching other languages' dispatch.
+ * 第 4c 阶段：C++ 虚函数覆盖。通过基类/接口指针的调用
+ * （`db->Get(...)`、`iter->Next()`）在运行时分发到子类覆盖，
+ * 但该跳转是 vtable 间接调用——没有静态调用边——因此流程会停在
+ * 抽象基类方法处。桥接方式类似 react-render：对每个 `extends` 基类的 C++ 类，
+ * 将每个基类方法链接到同名子类方法（覆盖），使接口方法的
+ * trace/callees 能到达具体实现。过度近似可接受（可达性正确）；
+ * 每类设上限，且仅限 C++ 以避免影响其他语言的分发。
  */
 function cppOverrideEdges(queries: QueryBuilder): Edge[] {
   const edges: Edge[] = [];
@@ -454,37 +452,33 @@ function cppOverrideEdges(queries: QueryBuilder): Edge[] {
 }
 
 /**
- * Phase 5.5: interface / abstract dispatch (Java, Kotlin). A call through an
- * injected interface (`@Autowired FooService svc; svc.list()`) or an abstract
- * base dispatches at runtime to the implementing class's override — a vtable
- * indirection with no static call edge — so a request→service flow stops at the
- * interface method. Bridge it like cpp-override: for each class that
- * `implements` an interface (or `extends` an abstract base), link each
- * base/interface method → the class's same-name method (the override) so
- * trace/callees reach the implementation. Over-approximation accepted
- * (reachability-correct); capped per class, gated to JVM languages.
+ * 第 5.5 阶段：接口/抽象类分发（Java、Kotlin）。通过注入接口
+ * （`@Autowired FooService svc; svc.list()`）或抽象基类的调用，
+ * 在运行时分发到实现类的覆盖方法——vtable 间接调用，无静态调用边——
+ * 因此 request→service 流程会停在接口方法处。桥接方式类似 cpp-override：
+ * 对每个 `implements` 接口（或 `extends` 抽象基类）的类，将每个
+ * 基类/接口方法链接到该类的同名方法（覆盖），使 trace/callees 能到达实现。
+ * 过度近似可接受（可达性正确）；每类设上限，仅限 JVM 语言。
  */
-// Languages whose static `implements`/`extends` edges should bridge an
-// interface (or abstract base) method to the matching concrete-class method.
-// The set is "languages with explicit nominal subtyping and a single class
-// kind that holds methods" — i.e. the shape this loop expects. Swift and
-// Scala fit shape-wise (Swift `protocol`/`class`, Scala `trait`/`class`)
-// and are added below; their concrete-side nodes can be a `struct` (Swift)
-// or an `object` (Scala) so the loop also iterates those kinds.
+// 应为接口（或抽象基类）方法与对应具体类方法建立桥接的语言集合，
+// 通过静态 `implements`/`extends` 边实现。
+// 该集合为"具有显式名义子类型且持有方法的单一 class 类型"的语言，
+// 即符合此循环期望的形态。Swift 和 Scala 在形态上符合
+// （Swift 的 `protocol`/`class`，Scala 的 `trait`/`class`），已添加至此；
+// 其具体端节点可以是 `struct`（Swift）或 `object`（Scala），
+// 因此循环也会遍历这两种类型。
 const IFACE_OVERRIDE_LANGS = new Set([
   'java', 'kotlin', 'csharp', 'typescript', 'javascript', 'swift', 'scala', 'go', 'rust',
 ]);
 /**
- * Go implicit interface satisfaction (#584). Go has no `implements` keyword — a
- * struct satisfies an interface structurally when its method set covers the
- * interface's. Synthesize the missing `implements` edge (struct → interface) by
- * matching method-NAME sets, so impl-navigation works and the interface-dispatch
- * bridge ({@link interfaceOverrideEdges}, now 'go'-enabled) can link an interface
- * method call to the concrete overrides.
+ * Go 隐式接口满足（#584）。Go 没有 `implements` 关键字——
+ * 当一个 struct 的方法集覆盖接口的方法集时，结构性地满足该接口。
+ * 通过方法名集合匹配来合成缺失的 `implements` 边（struct → interface），
+ * 使实现导航可用，同时让接口分发桥接（{@link interfaceOverrideEdges}，
+ * 现已启用 'go'）能将接口方法调用链接到具体覆盖方法。
  *
- * Name-only matching (signatures ignored) — over-approximation accepted, in line
- * with the other dispatch synthesizers; capped per interface. Empty interfaces
- * (`any`) are skipped so they don't match every struct.
+ * 仅按名称匹配（忽略签名）——过度近似可接受，与其他分发合成器保持一致；
+ * 每接口设上限。空接口（`any`）跳过，以免匹配所有 struct。
  */
 function goImplementsEdges(queries: QueryBuilder): Edge[] {
   const edges: Edge[] = [];
@@ -506,7 +500,7 @@ function goImplementsEdges(queries: QueryBuilder): Edge[] {
   for (const iface of queries.getNodesByKind('interface')) {
     if (iface.language !== 'go') continue;
     const want = methodNameSet(iface.id);
-    if (want.size === 0) continue; // empty interface (`any`) — would match everything
+    if (want.size === 0) continue; // 空接口（`any`）——会匹配所有内容
     let added = 0;
     for (const s of goStructs) {
       if (added >= MAX_CALLBACKS_PER_CHANNEL) break;
@@ -535,25 +529,21 @@ function goImplementsEdges(queries: QueryBuilder): Edge[] {
 }
 
 /**
- * Cross-file Go method → receiver-type `contains` edges. In Go a type's methods
- * are commonly declared in a different file from the `type` declaration itself
- * (`type User struct{…}` in `user.go`, `func (u *User) Save()` in
- * `user_store.go`). Extraction attaches the struct→method `contains` edge only
- * when the receiver type is in the SAME file — the owner lookup in
- * `tree-sitter.ts` is scoped to the file being parsed — so a cross-file method
- * is left orphaned from its type (it's still `contains`ed by its file, just not
- * its struct). That breaks `synapse_node` member outlines, any
- * callers/callees/impact traversal that goes through the type's `contains`
- * edges, and the {@link goImplementsEdges} method-set computation (which derives
- * a struct's method set from those same edges, so it under-counts interfaces a
- * cross-file struct satisfies).
+ * 跨文件 Go 方法 → 接收者类型 `contains` 边。Go 中一个类型的方法
+ * 通常声明在与 `type` 声明不同的文件中（`user.go` 中的
+ * `type User struct{…}`，`user_store.go` 中的 `func (u *User) Save()`）。
+ * 提取时仅在接收者类型与方法在同一文件时才附加 struct→method 的 `contains` 边——
+ * `tree-sitter.ts` 中的所有者查找仅在当前被解析的文件内有效——
+ * 因此跨文件方法与其类型是孤立的（它仍被所在文件 `contains`，只是不被其 struct）。
+ * 这会破坏 `synapse_node` 的成员列表、所有经过类型 `contains` 边的
+ * callers/callees/impact 遍历，以及 {@link goImplementsEdges} 的方法集计算
+ * （后者从同一批边推导 struct 的方法集，因此会少计跨文件 struct 满足的接口）。
  *
- * Go guarantees a method's receiver type is declared in the SAME PACKAGE as the
- * method, and a Go package is a single directory — so this is a deterministic
- * structural link, not a heuristic: find the same-named type in the method's own
- * directory and add the missing `contains` edge (no `provenance: 'heuristic'`,
- * matching the same-file edges extraction already emits). Skips methods that
- * already have a type parent (the same-file case). (#583, cross-file half)
+ * Go 保证方法的接收者类型与方法声明在同一包（即同一目录）中——
+ * 因此这是确定性的结构链接，而非启发式：在方法所在目录中找到同名类型，
+ * 补充缺失的 `contains` 边（不设 `provenance: 'heuristic'`，
+ * 与提取已产生的同文件边保持一致）。跳过已有类型父节点的方法（同文件情况）。
+ * （#583，跨文件部分）
  */
 function goCrossFileMethodContainsEdges(queries: QueryBuilder): Edge[] {
   const edges: Edge[] = [];
@@ -566,8 +556,8 @@ function goCrossFileMethodContainsEdges(queries: QueryBuilder): Edge[] {
 
   for (const method of queries.getNodesByKind('method')) {
     if (method.language !== 'go') continue;
-    // The receiver type is encoded in the method's qualifiedName as `Recv::name`
-    // (extraction sets `${receiverType}::${name}` for receiver methods).
+    // 接收者类型被编码在方法的 qualifiedName 中，格式为 `Recv::name`
+    // （提取器对接收者方法设置 `${receiverType}::${name}`）。
     const qn = method.qualifiedName;
     if (!qn) continue;
     const sep = qn.lastIndexOf('::');
@@ -575,7 +565,7 @@ function goCrossFileMethodContainsEdges(queries: QueryBuilder): Edge[] {
     const receiver = qn.slice(0, sep);
     if (!receiver) continue;
 
-    // Already attached to its type (same-file case handled at extraction)?
+    // 已挂载到其类型（提取时的同文件情况已处理）？
     const hasTypeParent = queries
       .getIncomingEdges(method.id, ['contains'])
       .some((e) => {
@@ -584,10 +574,8 @@ function goCrossFileMethodContainsEdges(queries: QueryBuilder): Edge[] {
       });
     if (hasTypeParent) continue;
 
-    // Find the receiver type in the SAME directory (= same Go package). Go forbids
-    // duplicate type names within a package, so a same-name same-dir match is
-    // unambiguous; scoping to the directory avoids linking to a same-named type
-    // in another package.
+    // 在同一目录（= 同一 Go 包）中查找接收者类型。Go 禁止包内出现重复类型名，
+    // 因此同名同目录的匹配是无歧义的；限定到目录可避免链接到另一个包中的同名类型。
     const dir = dirOf(method.filePath);
     const owner = queries
       .getNodesByName(receiver)
@@ -603,30 +591,28 @@ function goCrossFileMethodContainsEdges(queries: QueryBuilder): Edge[] {
 }
 
 /**
- * Kotlin Multiplatform `expect`/`actual` linking. A `common` source set declares
- * `expect fun foo()` / `expect class Bar`; each platform source set (jvm, native,
- * js, …) provides an `actual` implementation with the IDENTICAL fully-qualified
- * name in a different file. Callers in common code resolve to the `expect`
- * declaration, so every `actual` impl ends up with zero dependents — invisible to
- * impact/affected even though editing it can break every caller of the API.
+ * Kotlin Multiplatform `expect`/`actual`链接。`common` 源集声明
+ * `expect fun foo()` / `expect class Bar`；每个平台源集（jvm、native、
+ * js 等）在不同文件中提供具有完全相同全限定名的 `actual` 实现。
+ * common 代码中的调用方解析到 `expect` 声明，因此每个 `actual` 实现
+ * 都没有依赖方——即便修改它可能破坏 API 的每个调用者，
+ * 在 impact/affected 中也是不可见的。
  *
- * Synthesize a `calls` edge from the common declaration to each platform `actual`
- * (mirroring the interface-impl bridge: abstract → concrete), so editing a
- * platform impl surfaces the common `expect` and its callers, and the impl file
- * participates in the graph.
+ * 从 common 声明到每个平台 `actual` 合成 `calls` 边
+ * （镜像接口-实现桥接：抽象 → 具体），使修改平台实现时能暴露
+ * common `expect` 及其调用者，实现文件也能参与图的遍历。
  *
- * `expect`/`actual` are captured onto the node's `decorators` list at extraction
- * (kotlin.ts `extractModifiers`). Members of an `expect class` are NOT themselves
- * keyword-marked, so the declaration side is matched as the same-FQN, same-kind
- * node that is NOT marked `actual`. Requiring an `actual`-marked counterpart also
- * gates out plain cross-file overloads (neither side is marked).
+ * `expect`/`actual` 在提取时被记录到节点的 `decorators` 列表中
+ * （kotlin.ts 的 `extractModifiers`）。`expect class` 的成员本身
+ * 不带关键字标记，因此声明端匹配为具有相同 FQN、相同 kind 且
+ * 未标记 `actual` 的节点。要求对端标记 `actual` 同时也能排除
+ * 普通跨文件重载（两端均未标记）。
  */
-// Kinds that an `expect`/`actual` pair may legitimately straddle. `expect class`
-// is routinely fulfilled by an `actual typealias` (e.g. `actual typealias
-// CancellationException = …`, `actual typealias SchedulerTask = Task`), so a
-// strict kind match would miss those one-line alias files. Same-FQN + the
-// `actual` marker already gates out unrelated symbols, so widening to the
-// type-like kinds is safe.
+// `expect`/`actual` 对合法跨越的类型。`expect class` 通常由
+// `actual typealias` 实现（如 `actual typealias CancellationException = …`、
+// `actual typealias SchedulerTask = Task`），严格 kind 匹配会遗漏
+// 这些单行别名文件。同 FQN + `actual` 标记已足以排除无关符号，
+// 因此扩展到类型类 kind 是安全的。
 const KMP_TYPE_KINDS = new Set(['class', 'interface', 'struct', 'enum', 'type_alias']);
 function kmpKindsCompatible(a: string, b: string): boolean {
   return a === b || (KMP_TYPE_KINDS.has(a) && KMP_TYPE_KINDS.has(b));
@@ -642,8 +628,8 @@ function kotlinExpectActualEdges(queries: QueryBuilder): Edge[] {
     let added = 0;
     for (const cand of queries.getNodesByQualifiedNameExact(act.qualifiedName)) {
       if (added >= MAX_CALLBACKS_PER_CHANNEL) break;
-      // The declaration side: same FQN + compatible kind, a different file, NOT
-      // itself an `actual` (that would be a sibling platform impl, not the decl).
+      // 声明端：相同 FQN + 兼容 kind，不同文件，且本身不是 `actual`
+      // （否则就是同级平台实现，而非声明）。
       if (cand.language !== 'kotlin' || cand.id === act.id) continue;
       if (!kmpKindsCompatible(cand.kind, act.kind) || cand.filePath === act.filePath) continue;
       if (cand.decorators?.includes('actual')) continue;
@@ -676,9 +662,9 @@ function interfaceOverrideEdges(queries: QueryBuilder): Edge[] {
       .getOutgoingEdges(classId, ['contains'])
       .map((e) => queries.getNodeById(e.target))
       .filter((n): n is Node => !!n && n.kind === 'method');
-  // Concrete-side kinds vary by language: `class` covers Java / Kotlin /
-  // C# / TS / Swift-classes / Scala-classes; `struct` covers Swift value
-  // types that conform to protocols. Iterate both.
+  // 具体端 kind 因语言而异：`class` 涵盖 Java / Kotlin /
+  // C# / TypeScript / Swift 类 / Scala 类；`struct` 涵盖遵循协议的
+  // Swift 值类型。两种都要遍历。
   const concreteKinds = ['class', 'struct'] as const;
   for (const kind of concreteKinds) {
   for (const cls of queries.getNodesByKind(kind)) {
@@ -687,10 +673,10 @@ function interfaceOverrideEdges(queries: QueryBuilder): Edge[] {
     for (const sup of queries.getOutgoingEdges(cls.id, ['implements', 'extends'])) {
       const base = queries.getNodeById(sup.target);
       if (!base || !IFACE_OVERRIDE_LANGS.has(base.language) || base.id === cls.id) continue;
-      // Group impl methods by name to handle OVERLOADS: an interface `list()` and
-      // `list(params)` are distinct nodes and a call may resolve to either, so
-      // link every base overload → every same-name impl overload (keying by name
-      // alone would drop all but one and miss the resolved overload).
+      // 按名称将实现方法分组以处理重载：接口的 `list()` 和
+      // `list(params)` 是不同节点，调用可能解析到任意一个，
+      // 因此将每个基类重载链接到所有同名实现重载
+      // （仅按名称键入会丢弃除一个之外的所有重载，遗漏已解析的那个）。
       const implByName = new Map<string, Node[]>();
       for (const m of implMethods) {
         const arr = implByName.get(m.name);
@@ -723,41 +709,37 @@ function interfaceOverrideEdges(queries: QueryBuilder): Edge[] {
 }
 
 /**
- * Go gRPC stub → impl bridge. The protoc-gen-go-grpc codegen emits an
- * `UnimplementedXxxServer` struct in `*_grpc.pb.go` carrying one method
- * per service RPC; the real handler is a hand-written struct in another
- * file (`x/bank/keeper/msg_server.go::msgServer.Send` in cosmos-sdk).
- * Go's structural typing means no `implements` edge exists for our
- * resolver to follow, so `trace("Send","SendCoins")` lands on the
- * empty stub and reports "no path" (validated empirically — the cosmos
- * Q1 r1 trace failure that drove this work).
+ * Go gRPC 桩代码 → 实现桥接。protoc-gen-go-grpc 代码生成器在
+ * `*_grpc.pb.go` 中生成 `UnimplementedXxxServer` struct，每个服务 RPC
+ * 对应一个方法；真正的处理器是另一个文件中手写的 struct
+ * （如 cosmos-sdk 中的 `x/bank/keeper/msg_server.go::msgServer.Send`）。
+ * Go 的结构性类型意味着我们的解析器没有可跟随的 `implements` 边，
+ * 因此 `trace("Send","SendCoins")` 会落到空桩上并报告"无路径"
+ * （已实证验证——这正是推动本工作的 cosmos Q1 r1 trace 失败）。
  *
- * Bridge: for each `UnimplementedXxxServer` whose RPC-method names are
- * a SUBSET of some other Go struct's method names, emit `calls` edges
- * `stub.method → impl.method` (paired by name). Excludes the gRPC
- * internal markers `mustEmbedUnimplementedXxxServer` and
- * `testEmbeddedByValue`, and skips candidate impls that themselves
- * live in a generated file (their `xxxClient` / sibling stubs would
- * otherwise look like impls).
+ * 桥接：对每个 RPC 方法名是某个其他 Go struct 方法名子集的
+ * `UnimplementedXxxServer`，产生 `calls` 边 `桩.method → 实现.method`
+ * （按名称配对）。排除 gRPC 内部标记方法 `mustEmbedUnimplementedXxxServer`
+ * 和 `testEmbeddedByValue`，并跳过自身在生成文件中的候选实现
+ * （否则 `xxxClient` / 同级桩会被误判为实现）。
  *
- * Multiple candidates is allowed and capped at MAX_CALLBACKS_PER_CHANNEL —
- * a service often has both a production impl and one or more test
- * mocks; linking to all preserves trace utility without false-favoring.
+ * 允许多个候选实现，上限为 MAX_CALLBACKS_PER_CHANNEL——
+ * 一个服务通常同时有生产实现和一个或多个测试 mock；
+ * 全部链接可保留 trace 的实用性，而不会错误偏袒某一个。
  *
- * Provenance: `heuristic`, `synthesizedBy: 'go-grpc-stub-impl'`. The
- * stub's source line is the wiring site shown in the trace trail.
+ * 出处：`heuristic`，`synthesizedBy: 'go-grpc-stub-impl'`。
+ * 桩的源码行是 trace 追踪路径中显示的连线点。
  */
 function goGrpcStubImplEdges(queries: QueryBuilder): Edge[] {
   const edges: Edge[] = [];
   const seen = new Set<string>();
 
   const STUB_RE = /^Unimplemented.*Server$/;
-  // gRPC internal-helper methods that appear on every Unimplemented*Server;
-  // not part of the service contract, so exclude when computing the RPC-method
-  // signature used to match impls.
+  // gRPC 每个 Unimplemented*Server 上都存在的内部辅助方法；
+  // 不属于服务契约，因此在计算用于匹配实现的 RPC 方法签名时排除。
   const isInternalMarker = (n: string) => n.startsWith('mustEmbed') || n === 'testEmbeddedByValue';
 
-  // Methods directly contained by each Go struct, name-only. Built once.
+  // 每个 Go struct 直接包含的方法，仅记录名称。构建一次。
   const methodNamesByStruct = new Map<string, Set<string>>();
   const methodNodesByStruct = new Map<string, Node[]>();
   const goStructs: Node[] = [];
@@ -774,10 +756,9 @@ function goGrpcStubImplEdges(queries: QueryBuilder): Edge[] {
 
   for (const stub of goStructs) {
     if (!STUB_RE.test(stub.name)) continue;
-    // The stub MUST live in a generated file — that's what tells us this is
-    // a protoc-emitted scaffold rather than someone naming a struct
-    // `UnimplementedXxxServer` by hand. Without this gate we'd also bridge
-    // such hand-written structs and create misleading edges.
+    // 桩必须位于生成文件中——这才能说明它是 protoc 生成的脚手架，
+    // 而非有人手写了名为 `UnimplementedXxxServer` 的 struct。
+    // 没有此门控，我们也会桥接此类手写 struct，产生误导性的边。
     if (!isGeneratedFile(stub.filePath)) continue;
 
     const stubMethods = (methodNodesByStruct.get(stub.id) ?? []).filter(
@@ -788,17 +769,16 @@ function goGrpcStubImplEdges(queries: QueryBuilder): Edge[] {
 
     for (const cand of goStructs) {
       if (cand.id === stub.id) continue;
-      // Skip generated-file candidates — they're siblings (msgClient,
-      // UnsafeMsgServer, …) whose method sets coincidentally match.
+      // 跳过生成文件中的候选实现——它们是同级文件（msgClient、
+      // UnsafeMsgServer 等），其方法集恰好与桩匹配。
       if (isGeneratedFile(cand.filePath)) continue;
 
       const candNames = methodNamesByStruct.get(cand.id);
       if (!candNames) continue;
-      // Subset: every RPC method must exist on the candidate by name.
-      // Signature-level match would tighten this further, but name-match
-      // alone already gives one-to-one pairing in real codebases because
-      // gRPC method-name sets are highly distinctive (Send + MultiSend +
-      // UpdateParams + SetSendEnabled is unique to bank's MsgServer).
+      // 子集：每个 RPC 方法必须按名称存在于候选实现中。
+      // 签名级匹配可进一步收紧，但仅名称匹配在真实代码库中
+      // 已能实现一对一配对，因为 gRPC 方法名集合极具辨识度
+      // （Send + MultiSend + UpdateParams + SetSendEnabled 唯一标识 bank 的 MsgServer）。
       if (!stubMethodNames.every((n) => candNames.has(n))) continue;
 
       const candMethods = methodNodesByStruct.get(cand.id) ?? [];
@@ -832,13 +812,13 @@ function goGrpcStubImplEdges(queries: QueryBuilder): Edge[] {
 }
 
 /**
- * Phase 5: React JSX child rendering. A component that returns `<Child .../>`
- * mounts Child — React calls it — but JSX instantiation isn't a static call edge,
- * so a render tree (App.render → StaticCanvas → renderStaticScene) breaks at the
- * JSX hop. Link parent → each capitalized JSX child it renders. File-oriented
- * (read each JSX file once). Precision gate: the child name must resolve to a
- * component/function/class node — TS generics like `Array<Foo>` resolve to a type
- * (or nothing) and are dropped.
+ * 第 5 阶段：React JSX 子组件渲染。返回 `<Child .../>` 的组件
+ * 会挂载 Child——React 负责调用——但 JSX 实例化不是静态调用边，
+ * 因此渲染树（App.render → StaticCanvas → renderStaticScene）会在
+ * JSX 跳转处断裂。将父组件链接到其渲染的每个大写 JSX 子组件。
+ * 以文件为单位处理（每个 JSX 文件读取一次）。精度门控：子组件名必须
+ * 解析到 component/function/class 节点——TypeScript 泛型如 `Array<Foo>`
+ * 会解析到类型（或空），被丢弃。
  */
 function reactJsxChildEdges(ctx: ResolutionContext): Edge[] {
   const edges: Edge[] = [];
@@ -878,30 +858,29 @@ function reactJsxChildEdges(ctx: ResolutionContext): Edge[] {
 }
 
 /**
- * Phase 6: Vue SFC templates. The `.vue` extractor only parses `<script>`, so
- * template usage is invisible — child components and event handlers used ONLY in
- * the template have no edge to them. PascalCase children (`<VPNav/>`) are already
- * caught by reactJsxChildEdges (which scans the SFC component node), so this adds
- * the two Vue-specific shapes:
- *   - kebab-case children: `<el-button>` → `ElButton` component (renders).
- *   - event bindings: `@click="onClick"` / `v-on:submit="save"` → handler method.
- * Scoped to the `<template>` block of `.vue` files; resolution gate (kebab→
- * component, handler→function/method) keeps precision; inline arrows / `$emit`
- * skipped.
+ * 第 6 阶段：Vue SFC 模板。`.vue` 提取器仅解析 `<script>`，因此
+ * 模板中的用法是不可见的——只在模板中使用的子组件和事件处理器
+ * 与它们之间没有边。PascalCase 子组件（`<VPNav/>`）已由
+ * reactJsxChildEdges 捕获（扫描 SFC 组件节点），因此这里补充
+ * 两种 Vue 特有形态：
+ *   - kebab-case 子组件：`<el-button>` → `ElButton` 组件（渲染关系）。
+ *   - 事件绑定：`@click="onClick"` / `v-on:submit="save"` → 处理器方法。
+ * 范围限定在 `.vue` 文件的 `<template>` 块；通过解析门控（kebab→
+ * 组件，处理器→function/method）保持精度；内联箭头函数 / `$emit` 跳过。
  */
 function vueTemplateEdges(ctx: ResolutionContext): Edge[] {
   const edges: Edge[] = [];
   const seen = new Set<string>();
   const COMPONENT_KINDS = new Set(['component', 'function', 'class']);
   const HANDLER_KINDS = new Set(['method', 'function']);
-  // A composable's returned member may be a fn (`function close(){}`) or an
-  // arrow assigned to a const (`const close = () => {}`).
+  // 组合式函数的返回成员可以是函数（`function close(){}`）或
+  // 赋值给 const 的箭头函数（`const close = () => {}`）。
   const RETURN_KINDS = new Set(['method', 'function', 'variable', 'constant']);
-  // Nuxt auto-imports nested components by a DIRECTORY-PREFIXED name —
-  // `components/media/Card.vue` is used as `<MediaCard/>`, not `<Card/>` — but
-  // the component node is named by basename (`Card`), so a direct tag match
-  // misses it (flat components match by basename and don't need this). Map each
-  // nested component's Nuxt name → node so those template usages resolve.
+  // Nuxt 按目录前缀名自动导入嵌套组件——
+  // `components/media/Card.vue` 用作 `<MediaCard/>`，而非 `<Card/>`——
+  // 但组件节点以 basename（`Card`）命名，直接标签匹配会遗漏它
+  // （平铺组件按 basename 匹配，无需此处理）。将每个嵌套组件的
+  // Nuxt 名称映射到节点，以便模板中的用法能够正确解析。
   const nuxtComponents = new Map<string, Node>();
   for (const c of ctx.getNodesByKind('component')) {
     const nn = nuxtComponentName(c.filePath);
@@ -915,15 +894,15 @@ function vueTemplateEdges(ctx: ResolutionContext): Edge[] {
     const comp = ctx.getNodesInFile(file).find((n) => n.kind === 'component');
     if (!comp) continue;
 
-    // Composable-destructure map: alias → { composable, key }. Lets us resolve a
-    // template handler that isn't a local function but a destructured composable
-    // return (`@click="closeSidebar"` ← `const { close: closeSidebar } = useSidebarControl()`).
+    // 组合式函数解构映射：alias → { composable, key }。用于解析
+    // 模板中非局部函数、而是解构组合式函数返回值的处理器
+    // （`@click="closeSidebar"` ← `const { close: closeSidebar } = useSidebarControl()`）。
     const script = content.match(/<script[^>]*>([\s\S]*?)<\/script>/i)?.[1] ?? '';
     const destructured = new Map<string, { composable: string; key: string }>();
     VUE_DESTRUCTURE_RE.lastIndex = 0;
     let dm: RegExpExecArray | null;
     while ((dm = VUE_DESTRUCTURE_RE.exec(script))) {
-      if (!/^use[A-Z]/.test(dm[2]!)) continue; // composables / hooks only
+      if (!/^use[A-Z]/.test(dm[2]!)) continue; // 仅限组合式函数 / hooks
       for (const part of dm[1]!.split(',')) {
         const pm = part.trim().match(/^(\w+)\s*(?::\s*(\w+))?$/); // key | key: alias
         if (pm) destructured.set(pm[2] || pm[1]!, { composable: dm[2]!, key: pm[1]! });
@@ -939,8 +918,8 @@ function vueTemplateEdges(ctx: ResolutionContext): Edge[] {
       edges.push({ source: comp.id, target: target.id, kind: 'calls', line: comp.startLine, provenance: 'heuristic', metadata: meta });
       added++;
     };
-    // Prefer a target in THIS SFC (handlers live in the same file's script) —
-    // avoids cross-file mis-match when a name repeats across a monorepo.
+    // 优先选取当前 SFC 中的目标（处理器位于同文件的 script 中）——
+    // 避免在 monorepo 中同名重复时发生跨文件错误匹配。
     const resolve = (name: string, kinds: Set<string>): Node | undefined => {
       const matches = ctx.getNodesByName(name).filter((n) => kinds.has(n.kind));
       return matches.find((n) => n.filePath === file) ?? matches[0];
@@ -952,9 +931,9 @@ function vueTemplateEdges(ctx: ResolutionContext): Edge[] {
       const tag = kebabToPascal(m[1]!);
       addEdge(resolve(tag, COMPONENT_KINDS) ?? nuxtComponents.get(tag), { synthesizedBy: 'jsx-render', via: m[1] });
     }
-    // PascalCase component tags. Try a direct name match first (flat components
-    // and explicit registrations), then the Nuxt dir-prefixed auto-import name
-    // (`<MediaCard>` → components/media/Card.vue). Built-ins match neither → no edge.
+    // PascalCase 组件标签。先尝试直接名称匹配（平铺组件和显式注册），
+    // 再尝试 Nuxt 目录前缀自动导入名（`<MediaCard>` → components/media/Card.vue）。
+    // 内置组件两者均不匹配 → 不产生边。
     VUE_PASCAL_RE.lastIndex = 0;
     while ((m = VUE_PASCAL_RE.exec(tpl))) {
       const tag = m[1]!;
@@ -964,19 +943,18 @@ function vueTemplateEdges(ctx: ResolutionContext): Edge[] {
     while ((m = VUE_HANDLER_RE.exec(tpl))) {
       const event = m[1]!;
       const expr = m[2]!.trim();
-      if (expr.includes('=>') || expr.startsWith('$')) continue; // inline arrow / $emit
+      if (expr.includes('=>') || expr.startsWith('$')) continue; // 内联箭头函数 / $emit
       const name = expr.match(/^([A-Za-z_]\w*)/)?.[1];
       if (!name) continue;
       const direct = resolve(name, HANDLER_KINDS);
       if (direct) { addEdge(direct, { synthesizedBy: 'vue-handler', event }); continue; }
-      // Composable-destructure handler → resolve to the composable's returned fn.
+      // 组合式函数解构处理器 → 解析到该组合式函数的返回函数。
       const d = destructured.get(name);
       if (!d) continue;
       const composable = resolve(d.composable, HANDLER_KINDS);
-      // Resolve to the SPECIFIC returned member (e.g. `close`) defined in the
-      // composable's file. No fallback to the composable itself — the component
-      // already has a static `useX()` call edge, so that would just be redundant
-      // and less precise.
+      // 解析到组合式函数文件中定义的特定返回成员（如 `close`）。
+      // 不回退到组合式函数本身——组件已有静态的 `useX()` 调用边，
+      // 那样只会造成冗余且精度更低。
       const keyFn = composable
         ? ctx.getNodesByName(d.key).find((n) => RETURN_KINDS.has(n.kind) && n.filePath === composable.filePath)
         : undefined;
@@ -987,55 +965,52 @@ function vueTemplateEdges(ctx: ResolutionContext): Edge[] {
 }
 
 /**
- * React Native cross-language event channel (Phase 3 of the mixed-iOS/RN
- * bridging effort). Same shape as `eventEmitterEdges` but cross-language:
+ * React Native 跨语言事件通道（混合 iOS/RN 桥接工作的第 3 阶段）。
+ * 与 `eventEmitterEdges` 形态相同，但跨语言：
  *
- *   Native (ObjC, on RCTEventEmitter subclass):
+ *   原生端（ObjC，在 RCTEventEmitter 子类中）：
  *     [self sendEventWithName:@"locationUpdate" body:@{...}];
  *
- *   Native (Java/Kotlin, via the JS module dispatcher):
+ *   原生端（Java/Kotlin，通过 JS 模块分发器）：
  *     emitter.emit("locationUpdate", body);
  *     reactContext.getJSModule(RCTDeviceEventEmitter.class).emit("locationUpdate", body);
  *
- *   JS (subscriber):
+ *   JS 端（订阅方）：
  *     new NativeEventEmitter(NativeModules.Geo).addListener("locationUpdate", handler);
  *     DeviceEventEmitter.addListener("locationUpdate", handler);
  *
- * Synthesize: native dispatch site → JS handler, keyed by the literal
- * event name. Only matches NAMED handlers (the existing `ON_RE` named-
- * capture form). Inline arrow handlers like `addListener('x', d => …)`
- * aren't named at extraction time and would need link-through-body
- * support; matches the deliberate scope of the in-language synthesizer.
+ * 合成：原生分发点 → JS 处理器，以字面事件名为键。
+ * 仅匹配具名处理器（现有 `ON_RE` 具名捕获形式）。
+ * 内联箭头处理器如 `addListener('x', d => …)` 在提取时未命名，
+ * 需要链式传递体支持；与同语言合成器的刻意范围保持一致。
  *
- * Provenance `'heuristic'`, synthesizedBy `'rn-event-channel'`.
+ * 出处 `'heuristic'`，synthesizedBy `'rn-event-channel'`。
  */
-// ObjC's `[self sendEventWithName:@"X" body:...]` shape (bracket syntax,
-// `@` string literals).
+// ObjC 的 `[self sendEventWithName:@"X" body:...]` 形态（括号语法，
+// `@` 字符串字面量）。
 const RN_OBJC_SEND_RE = /\bsendEventWithName\s*:\s*@"([^"]+)"/g;
-// Swift's `sendEvent(withName: "X", body: ...)` shape — same RCTEventEmitter
-// method, different call syntax. Both Objective-C and Swift subclass
-// RCTEventEmitter so this catches the Swift-side equivalent emission sites
-// (e.g. RNFusedLocation.swift's `sendEvent(withName: "geolocationDidChange",
-// body: locationData)`).
+// Swift 的 `sendEvent(withName: "X", body: ...)` 形态——与 ObjC 相同的
+// RCTEventEmitter 方法，但调用语法不同。ObjC 和 Swift 都继承
+// RCTEventEmitter，因此这捕获了 Swift 端等效的发送点
+// （如 RNFusedLocation.swift 的 `sendEvent(withName: "geolocationDidChange",
+// body: locationData)`）。
 const RN_SWIFT_SEND_RE = /\bsendEvent\s*\(\s*withName\s*:\s*"([^"]+)"/g;
-// JVM-side emitter calls: `emitter.emit("X", body)`. Matches both Java
-// and Kotlin syntax because the call form is identical. Restricted to
-// JVM source files in the consumer so we don't re-process JS emits
-// (which `eventEmitterEdges` already handles).
+// JVM 端发送调用：`emitter.emit("X", body)`。Java 和 Kotlin 语法相同，
+// 因此同一正则均可匹配。在消费处限定为 JVM 源文件，
+// 以免重复处理 JS 端的 emit（已由 `eventEmitterEdges` 处理）。
 const RN_JVM_EMIT_RE = /\.emit\s*\(\s*"([^"]+)"\s*,/g;
-// Custom `sendEvent(reactContext, "X", body)` wrapper — extremely common
-// (react-native-device-info and many libs wrap `DeviceEventManagerModule…emit`
-// behind a helper whose `.emit(eventName, …)` uses a VARIABLE, so RN_JVM_EMIT_RE
-// misses it; the literal lives in the wrapper CALL instead). Captures the first
-// string literal inside a `sendEvent(...)` call. `[^;{}]*?` keeps it on one
-// statement and stops at a block boundary, so the wrapper DEFINITION (whose `(`
-// is followed by `… ) {`) never matches. Multi-line tolerant. (java/kotlin/swift)
+// 自定义 `sendEvent(reactContext, "X", body)` 包装器——极为常见
+// （react-native-device-info 及众多库将 `DeviceEventManagerModule…emit`
+// 封装在一个辅助函数后面，该函数的 `.emit(eventName, …)` 使用变量，
+// 因此 RN_JVM_EMIT_RE 无法匹配；字面量位于包装调用处）。
+// 捕获 `sendEvent(...)` 调用内的第一个字符串字面量。`[^;{}]*?` 限定在
+// 单条语句范围内并在块边界处停止，因此包装函数定义（其 `(` 后跟
+// `… ) {`）永远不会匹配。支持多行。（java/kotlin/swift）
 const RN_NATIVE_SENDEVENT_RE = /\bsendEvent\s*\([^;{}]*?"([^"]+)"/g;
 
 function rnEventEdges(ctx: ResolutionContext): Edge[] {
-  // Native dispatchers (source = the native method whose body sends the
-  // event) and JS handlers (target = the function/method registered as
-  // the listener) keyed by event name.
+  // 原生分发器（source = 发送事件的原生方法）和 JS 处理器
+  // （target = 注册为监听器的函数/方法），以事件名为键。
   const nativeDispatchersByEvent = new Map<string, Set<string>>();
   const jsHandlersByEvent = new Map<string, Map<string, string>>();
 
@@ -1053,8 +1028,8 @@ function rnEventEdges(ctx: ResolutionContext): Edge[] {
       nativeDispatchersByEvent.set(event, set);
     };
 
-    // ObjC side: `sendEventWithName:@"X"` only fires inside `.m`/`.mm`
-    // files (RCTEventEmitter subclasses).
+    // ObjC 端：`sendEventWithName:@"X"` 仅在 `.m`/`.mm` 文件中触发
+    // （RCTEventEmitter 子类）。
     if (file.endsWith('.m') || file.endsWith('.mm')) {
       RN_OBJC_SEND_RE.lastIndex = 0;
       let m: RegExpExecArray | null;
@@ -1063,7 +1038,7 @@ function rnEventEdges(ctx: ResolutionContext): Edge[] {
       }
     }
 
-    // Swift side: same RCTEventEmitter method, parens/named-args syntax.
+    // Swift 端：相同的 RCTEventEmitter 方法，圆括号/具名参数语法。
     if (file.endsWith('.swift')) {
       RN_SWIFT_SEND_RE.lastIndex = 0;
       let m: RegExpExecArray | null;
@@ -1076,10 +1051,9 @@ function rnEventEdges(ctx: ResolutionContext): Edge[] {
       }
     }
 
-    // JVM side: `.emit("X", …)` in Java/Kotlin, plus the common
-    // `sendEvent(ctx, "X", body)` wrapper. (We pattern-match anywhere in the
-    // file; the JS in-language path uses a separate emitter object pattern and
-    // is already handled by eventEmitterEdges.)
+    // JVM 端：Java/Kotlin 中的 `.emit("X", …)`，以及常见的
+    // `sendEvent(ctx, "X", body)` 包装器。（我们在文件任意位置进行模式匹配；
+    // JS 同语言路径使用独立的发送器对象模式，已由 eventEmitterEdges 处理。）
     if (file.endsWith('.java') || file.endsWith('.kt')) {
       let m: RegExpExecArray | null;
       RN_JVM_EMIT_RE.lastIndex = 0;
@@ -1092,10 +1066,9 @@ function rnEventEdges(ctx: ResolutionContext): Edge[] {
       }
     }
 
-    // JS subscribers (.addListener("X", handler)). Restrict to JS-family
-    // files so a native file's `addListener:` (the ObjC method) doesn't
-    // get mistaken for a JS subscription — they're entirely different
-    // things despite sharing a name.
+    // JS 订阅方（.addListener("X", handler)）。限定为 JS 系列文件，
+    // 以防原生文件中的 `addListener:`（ObjC 方法）被误认为
+    // JS 订阅——尽管名称相同，但它们是完全不同的东西。
     if (
       file.endsWith('.js') ||
       file.endsWith('.jsx') ||
@@ -1104,13 +1077,12 @@ function rnEventEdges(ctx: ResolutionContext): Edge[] {
       file.endsWith('.mjs') ||
       file.endsWith('.cjs')
     ) {
-      // Match BOTH the named-handler form (`.addListener('x', fn)`) and
-      // an unnamed-handler form (`.addListener('x', listener)` where
-      // `listener` is a parameter — common in RN wrapper APIs like
-      // RNFirebase's `messaging().onMessageReceived(listener)`). For the
-      // unnamed case we attribute the subscription to the ENCLOSING JS
-      // function (the abstraction layer), giving a reachability-correct
-      // hop even when the actual user-side handler lives one call up.
+      // 同时匹配具名处理器形式（`.addListener('x', fn)`）和
+      // 未命名处理器形式（`.addListener('x', listener)`，其中
+      // `listener` 是参数——在 RNFirebase 的
+      // `messaging().onMessageReceived(listener)` 等 RN 包装 API 中很常见）。
+      // 对于未命名情况，将订阅归属到外层 JS 函数（抽象层），
+      // 即便实际的用户侧处理器在调用链上更高一层，也能给出可达性正确的跳转。
       const ADDLISTENER_ANY = /\.(?:on|once|addListener)\(\s*['"]([^'"]+)['"]\s*,\s*([A-Za-z_][\w.]*)/g;
       ADDLISTENER_ANY.lastIndex = 0;
       let m: RegExpExecArray | null;
@@ -1119,26 +1091,23 @@ function rnEventEdges(ctx: ResolutionContext): Edge[] {
         const arg = m[2];
         if (!event || !arg) continue;
         const bareName = arg.includes('.') ? arg.slice(arg.lastIndexOf('.') + 1) : arg;
-        // Try a named-symbol match first (matches the in-language semantic).
+        // 先尝试具名符号匹配（与同语言语义一致）。
         const namedHandler = ctx
           .getNodesByName(bareName)
           .find((n) => n.kind === 'function' || n.kind === 'method');
         let targetId: string | null = namedHandler?.id ?? null;
         if (!targetId) {
-          // Fall back to the enclosing function — the subscribe-wrapper
-          // pattern means the event fires THROUGH this function on its
-          // way to user code. Reachability-correct attribution.
+          // 回退到外层函数——订阅包装器模式意味着事件在到达用户代码
+          // 的途中会经过该函数。可达性正确的归因。
           const enclosing = enclosingFn(nodesInFile, lineOf(m.index));
           targetId = enclosing?.id ?? null;
         }
         if (!targetId) {
-          // Broader fallback for JS object-literal API shape
-          // (`const Foo = { watchX(...) { … addListener(...) … } }`):
-          // method shorthand inside an object literal isn't extracted
-          // as a method node, so enclosingFn returns null. Attribute to
-          // the smallest enclosing `constant` / `variable` node — that's
-          // the API surface a downstream caller would `import` and
-          // invoke. Reachability-correct.
+          // JS 对象字面量 API 形态的更宽泛回退
+          // （`const Foo = { watchX(...) { … addListener(...) … } }`）：
+          // 对象字面量中的方法简写不会被提取为方法节点，因此
+          // enclosingFn 返回 null。归属到最小的外层 `constant` / `variable` 节点——
+          // 那是下游调用者会 `import` 并调用的 API 表面。可达性正确。
           const line = lineOf(m.index);
           let smallest: typeof nodesInFile[number] | null = null;
           for (const n of nodesInFile) {
@@ -1163,9 +1132,8 @@ function rnEventEdges(ctx: ResolutionContext): Edge[] {
   for (const [event, dispatchers] of nativeDispatchersByEvent) {
     const handlers = jsHandlersByEvent.get(event);
     if (!handlers) continue;
-    // Same fan-out guard as the in-language channel: generic event names
-    // (e.g. 'change', 'error', 'data') with many handlers/dispatchers
-    // can't be matched precisely without receiver-type info.
+    // 与同语言通道相同的扇出保护：泛型事件名（如 'change'、'error'、'data'）
+    // 若有大量处理器/分发器，在缺乏接收者类型信息的情况下无法精确匹配。
     if (dispatchers.size > EVENT_FANOUT_CAP || handlers.size > EVENT_FANOUT_CAP) continue;
     for (const d of dispatchers) {
       for (const [h, registeredAt] of handlers) {
@@ -1187,40 +1155,37 @@ function rnEventEdges(ctx: ResolutionContext): Edge[] {
 }
 
 /**
- * Phase 6 — React Native Fabric/Codegen view component bridge.
+ * 第 6 阶段——React Native Fabric/Codegen 视图组件桥接。
  *
- * The Fabric framework extractor (`frameworks/fabric.ts`) emits
- * `component` nodes named after the JS-visible component (e.g.
- * `RNSScreenStack`) from each `codegenNativeComponent<Props>('Name')`
- * spec declaration. The native implementation lives in an ObjC++/.mm or
- * Kotlin/Java class whose name follows one of RN's conventions:
+ * Fabric 框架提取器（`frameworks/fabric.ts`）从每个
+ * `codegenNativeComponent<Props>('Name')` 规范声明中，
+ * 生成以 JS 可见组件命名的 `component` 节点（如 `RNSScreenStack`）。
+ * 原生实现位于 ObjC++/.mm 或 Kotlin/Java 类中，
+ * 命名遵循 RN 的以下约定之一：
  *
- *   - Exact: `RNSScreenStack`
- *   - With suffix: `RNSScreenStackView`, `RNSScreenStackViewManager`,
- *     `RNSScreenStackComponentView`, `RNSScreenStackManager`
+ *   - 精确匹配：`RNSScreenStack`
+ *   - 带后缀：`RNSScreenStackView`、`RNSScreenStackViewManager`、
+ *     `RNSScreenStackComponentView`、`RNSScreenStackManager`
  *
- * This synthesizer walks every Fabric component node and looks for a
- * native class matching one of those names; when found, emits a
- * `calls` edge `component → native class` (provenance `'heuristic'`,
- * `synthesizedBy:'fabric-native-impl'`) so trace from JSX usage of the
- * component continues into native.
+ * 本合成器遍历所有 Fabric 组件节点，查找匹配上述名称之一的
+ * 原生类；找到后，产生 `calls` 边 `component → native class`
+ * （出处 `'heuristic'`，`synthesizedBy:'fabric-native-impl'`），
+ * 使从 JSX 使用点对该组件的 trace 能够继续进入原生代码。
  *
- * The convention-based suffix lookup is precise: there's no name
- * collision in RN view-manager codebases by design (Codegen output would
- * conflict otherwise).
+ * 基于约定的后缀查找是精确的：RN 视图管理器代码库在设计上不存在
+ * 命名冲突（否则 Codegen 输出也会冲突）。
  */
 const FABRIC_NATIVE_SUFFIXES = ['', 'View', 'ViewManager', 'ComponentView', 'Manager'];
 
 /**
- * Expo Modules cross-platform pairing. An Expo Module exposes the SAME
- * JS-visible method (`AsyncFunction("getBatteryLevelAsync")`) from BOTH an iOS
- * (Swift) and an Android (Kotlin) implementation. A JS callsite name-resolves to
- * only ONE of them, so the other platform's impl looked like nothing called it
- * (and editing it showed no blast radius). Link the iOS and Android impls of the
- * same `<module>.<method>` to each other (both directions), so a JS call that
- * reaches one platform reaches the other, and editing either surfaces the JS
- * caller. The Expo method nodes are id-prefixed `expo-module:` and qualified
- * `<file>::<module>.<method>` by the framework extractor.
+ * Expo 模块跨平台配对。一个 Expo 模块从 iOS（Swift）和 Android（Kotlin）
+ * 两端暴露相同的 JS 可见方法（`AsyncFunction("getBatteryLevelAsync")`）。
+ * JS 调用点只能名称解析到其中一个平台的实现，因此另一个平台的实现
+ * 看起来没有任何调用方（修改它也不显示影响半径）。
+ * 将同一 `<module>.<method>` 的 iOS 和 Android 实现双向相互链接，
+ * 使到达一个平台的 JS 调用也能到达另一个平台，修改任意一侧都能暴露 JS 调用方。
+ * Expo 方法节点以 `expo-module:` 为 id 前缀，
+ * 由框架提取器限定为 `<file>::<module>.<method>`。
  */
 function expoCrossPlatformEdges(queries: QueryBuilder): Edge[] {
   const edges: Edge[] = [];
@@ -1238,7 +1203,7 @@ function expoCrossPlatformEdges(queries: QueryBuilder): Edge[] {
     if (group.length < 2) continue;
     for (const a of group) {
       for (const b of group) {
-        if (a.id === b.id || a.language === b.language) continue; // cross-platform only
+        if (a.id === b.id || a.language === b.language) continue; // 仅跨平台
         const key = `${a.id}>${b.id}`;
         if (seen.has(key)) continue;
         seen.add(key);
@@ -1257,26 +1222,25 @@ function expoCrossPlatformEdges(queries: QueryBuilder): Edge[] {
 }
 
 /**
- * Classic React Native NativeModules cross-platform pairing. A native module
- * method (`@ReactMethod` on Android, `RCT_EXPORT_METHOD` on iOS) is implemented
- * on BOTH platforms, but a JS callsite name-resolves to only ONE — so the other
- * platform's impl looked like nothing called it. A native method that HAS a JS
- * caller is a confirmed bridge method; link it to the same-named native method
- * in another language (the other platform's impl) so a JS call reaching one
- * platform reaches the other, and editing either surfaces the JS caller.
+ * 经典 React Native NativeModules 跨平台配对。原生模块方法
+ * （Android 上的 `@ReactMethod`，iOS 上的 `RCT_EXPORT_METHOD`）
+ * 在两个平台上均有实现，但 JS 调用点只能名称解析到其中一个——
+ * 因此另一个平台的实现看起来没有任何调用方。
+ * 有 JS 调用方的原生方法是已确认的桥接方法；将其链接到另一种语言中
+ * 同名的原生方法（另一个平台的实现），使到达一个平台的 JS 调用
+ * 也能到达另一个平台，修改任意一侧都能暴露 JS 调用方。
  *
- * Names are normalized to the first selector keyword (`getFreeDiskStorage:` →
- * `getFreeDiskStorage`) — that's the JS-visible name, and how the iOS selector
- * lines up with the bare Android method name.
+ * 名称规范化为第一个选择器关键字（`getFreeDiskStorage:` →
+ * `getFreeDiskStorage`）——那是 JS 可见名称，也是 iOS 选择器与
+ * Android 裸方法名的对应方式。
  */
 function rnCrossPlatformEdges(queries: QueryBuilder): Edge[] {
   const edges: Edge[] = [];
   const seen = new Set<string>();
   const NATIVE = new Set(['java', 'kotlin', 'objc', 'cpp']);
   const JS = new Set(['typescript', 'tsx', 'javascript', 'jsx']);
-  // RN module INFRASTRUCTURE methods exist on every native module (called by the
-  // RN runtime, not user JS), so pairing them by name would cross-link unrelated
-  // modules in a multi-module repo. Skip them — they aren't user-facing methods.
+  // RN 模块基础设施方法存在于每个原生模块上（由 RN 运行时调用，而非用户 JS），
+  // 因此按名称配对会在多模块仓库中将无关模块交叉链接。跳过它们——这些不是面向用户的方法。
   const RN_INFRA = new Set([
     'addListener', 'removeListeners', 'getConstants', 'constantsToExport', 'getName',
     'invalidate', 'initialize', 'getDefaultEventTypes', 'supportedEvents',
@@ -1287,9 +1251,9 @@ function rnCrossPlatformEdges(queries: QueryBuilder): Edge[] {
     return i >= 0 ? name.slice(0, i) : name;
   };
 
-  // Index native methods by their JS-visible (normalized) name. Only names with
-  // impls in ≥2 native languages can pair, so the per-method JS-caller check
-  // below only runs for genuine cross-platform candidates.
+  // 按 JS 可见（规范化后的）名称索引原生方法。只有在 ≥2 种原生语言中
+  // 均有实现的名称才能配对，因此下方的每方法 JS 调用方检查
+  // 仅对真正的跨平台候选项运行。
   const byName = new Map<string, Node[]>();
   for (const m of queries.iterateNodesByKind('method')) {
     if (!NATIVE.has(m.language)) continue;
@@ -1302,9 +1266,9 @@ function rnCrossPlatformEdges(queries: QueryBuilder): Edge[] {
   for (const [groupName, group] of byName) {
     if (RN_INFRA.has(groupName)) continue;
     const langs = new Set(group.map((m) => m.language));
-    if (langs.size < 2) continue; // single-platform — nothing to pair
+    if (langs.size < 2) continue; // 单平台——无需配对
     for (const m of group) {
-      // Is m a bridge method? (a JS-language `calls` edge points at it)
+      // m 是桥接方法吗？（有 JS 语言的 `calls` 边指向它）
       const incoming = queries.getIncomingEdges(m.id, ['calls']);
       if (incoming.length === 0) continue;
       const sources = queries.getNodesByIds(incoming.map((e) => e.source));
@@ -1313,7 +1277,7 @@ function rnCrossPlatformEdges(queries: QueryBuilder): Edge[] {
         return !!s && JS.has(s.language);
       });
       if (!isBridge) continue;
-      // Link to the other-platform impls (both directions).
+      // 链接到其他平台的实现（双向）。
       for (const sib of group) {
         if (sib.id === m.id || sib.language === m.language) continue;
         for (const [a, b] of [[m, sib], [sib, m]] as const) {
@@ -1339,12 +1303,12 @@ function fabricNativeImplEdges(ctx: ResolutionContext): Edge[] {
   const edges: Edge[] = [];
   const seen = new Set<string>();
 
-  // The Fabric extractor IDs are prefixed `fabric-component:` so we can
-  // filter to just those without iterating all `component` nodes.
+  // Fabric 提取器的 ID 以 `fabric-component:` 为前缀，因此
+  // 无需遍历所有 `component` 节点即可筛选出目标。
   const components = ctx.getNodesByKind('component').filter((n) => n.id.startsWith('fabric-component:'));
   if (components.length === 0) return edges;
 
-  // Pre-index native classes by name for O(1) lookup.
+  // 按名称预索引原生类，以实现 O(1) 查找。
   const nativeClassesByName = new Map<string, Node[]>();
   for (const n of ctx.getNodesByKind('class')) {
     if (n.language !== 'objc' && n.language !== 'kotlin' && n.language !== 'java' && n.language !== 'cpp') continue;
@@ -1358,8 +1322,7 @@ function fabricNativeImplEdges(ctx: ResolutionContext): Edge[] {
       const candidate = component.name + suffix;
       const matches = nativeClassesByName.get(candidate);
       if (!matches || matches.length === 0) continue;
-      // Link the component node to every matching native class (iOS +
-      // Android each have one).
+      // 将组件节点链接到所有匹配的原生类（iOS + Android 各一个）。
       for (const native of matches) {
         const key = `${component.id}>${native.id}`;
         if (seen.has(key)) continue;
@@ -1383,24 +1346,23 @@ function fabricNativeImplEdges(ctx: ResolutionContext): Edge[] {
 }
 
 /**
- * MyBatis: link a Java mapper interface method to the XML statement that holds
- * its SQL. The XML extractor (`src/extraction/mybatis-extractor.ts`) qualifies
- * each `<select|insert|update|delete|sql id="X">` as `<namespace>::<id>` where
- * `<namespace>` is the Java FQN of the mapper interface. A Java method's
- * qualifiedName ends with `<ClassName>::<methodName>`, so we suffix-match the
- * last two segments of the XML qualified name to find a unique Java method by
- * `<ClassName>::<methodName>` (`ClassName` = last dotted segment of the XML
- * namespace). Cross-mapper `<include refid="other.X">` references go through
- * the normal qualified-name resolver — only the Java↔XML bridge is synthetic.
+ * MyBatis：将 Java mapper 接口方法链接到持有其 SQL 的 XML 语句。
+ * XML 提取器（`src/extraction/mybatis-extractor.ts`）将每条
+ * `<select|insert|update|delete|sql id="X">` 限定为 `<namespace>::<id>`，
+ * 其中 `<namespace>` 是 mapper 接口的 Java FQN。Java 方法的
+ * qualifiedName 以 `<ClassName>::<methodName>` 结尾，因此我们对
+ * XML 限定名的最后两段进行后缀匹配，以 `<ClassName>::<methodName>`
+ * 找到唯一的 Java 方法（`ClassName` = XML namespace 的最后一个点分段）。
+ * 跨 mapper 的 `<include refid="other.X">` 引用通过普通限定名解析器处理——
+ * 只有 Java↔XML 桥接是合成的。
  *
- * Precision over recall: ambiguous mappers (multiple Java classes with the
- * same simple name) are dropped. We need-not bridge by package because Java
- * mapper interfaces are typically uniquely named within a project.
+ * 精度优先于召回：存在歧义的 mapper（多个同简单名称的 Java 类）被丢弃。
+ * 无需按包名桥接，因为 Java mapper 接口在项目中通常具有唯一名称。
  */
 function mybatisJavaXmlEdges(queries: QueryBuilder): Edge[] {
   const edges: Edge[] = [];
   const seen = new Set<string>();
-  // Index Java methods by `<ClassName>::<methodName>` for O(1) lookup.
+  // 按 `<ClassName>::<methodName>` 索引 Java 方法，以实现 O(1) 查找。
   const javaIndex = new Map<string, Node[]>();
   for (const m of queries.iterateNodesByKind('method')) {
     if (m.language !== 'java' && m.language !== 'kotlin') continue;
@@ -1415,7 +1377,7 @@ function mybatisJavaXmlEdges(queries: QueryBuilder): Edge[] {
 
   for (const xml of queries.iterateNodesByKind('method')) {
     if (xml.language !== 'xml') continue;
-    // Qualified name: `<namespace>::<id>`. Extract the simple class name.
+    // 限定名：`<namespace>::<id>`。提取简单类名。
     const colonIdx = xml.qualifiedName.lastIndexOf('::');
     if (colonIdx < 0) continue;
     const namespace = xml.qualifiedName.slice(0, colonIdx);
@@ -1425,8 +1387,8 @@ function mybatisJavaXmlEdges(queries: QueryBuilder): Edge[] {
     const className = dotIdx >= 0 ? namespace.slice(dotIdx + 1) : namespace;
     const candidates = javaIndex.get(`${className}::${id}`);
     if (!candidates || candidates.length === 0) continue;
-    // Drop ambiguous matches (multiple same-name classes); the user can
-    // disambiguate by adding the package-suffix match in a future enhancement.
+    // 丢弃有歧义的匹配（多个同名类）；用户可在后续增强中
+    // 通过添加包名后缀匹配来消歧。
     if (candidates.length > 1) continue;
     const java = candidates[0]!;
     const key = `${java.id}>${xml.id}`;
@@ -1449,34 +1411,31 @@ function mybatisJavaXmlEdges(queries: QueryBuilder): Edge[] {
 }
 
 /**
- * Gin middleware chain. Gin runs its entire handler chain through one dynamic
- * line in `(*Context).Next`:
+ * Gin 中间件链。Gin 通过 `(*Context).Next` 中的一行动态代码运行整个处理器链：
  *     for c.index < len(c.handlers) { c.handlers[c.index](c); c.index++ }
- * `c.handlers` is a `HandlersChain` (`[]HandlerFunc`) assembled at registration
- * time by `combineHandlers` from the funcs passed to `r.Use(...)` /
- * `r.GET("/path", h...)` / `r.Handle(...)`. Because the call is a computed index
- * into a runtime-built slice, tree-sitter resolves `c.handlers[c.index](c)` to
- * NOTHING — so `callees(Next)` is just the `len()` helper and the flow
- * `ServeHTTP → handleHTTPRequest → Next` dead-ends at the exact symbol the
- * "how do requests flow through the middleware chain" question is about. The
- * agent then re-queries Next and falls back to Read/grep (validated: the gin
- * WITH-arm rabbit-holed on precisely this dead-end).
+ * `c.handlers` 是一个 `HandlersChain`（`[]HandlerFunc`），在注册时由
+ * `combineHandlers` 从传入 `r.Use(...)`/`r.GET("/path", h...)`/`r.Handle(...)`
+ * 的函数中组装而成。由于调用是对运行时构建的切片进行的计算索引，
+ * tree-sitter 将 `c.handlers[c.index](c)` 解析为空——因此 `callees(Next)` 只有
+ * `len()` 辅助函数，而"请求如何流经中间件链"这一问题所关注的
+ * `ServeHTTP → handleHTTPRequest → Next` 流程恰恰在此中断。
+ * 智能体随后重新查询 Next 并回退到 Read/grep（已验证：gin WITH-arm 正是
+ * 陷入了这个死胡同）。
  *
- * Bridge it: find the chain DISPATCHER (a Go method whose body invokes a
- * `handlers` slice by index) and link it → every HandlerFunc registered via a
- * gin registration call, so `callees(Next)` and `trace(ServeHTTP, <handler>)`
- * connect end-to-end. Named handlers only (`gin.Logger()` → `Logger`,
- * `authMiddleware`); inline closures are anonymous and skipped. Like
- * react-render / interface-impl this is a deliberate over-approximation —
- * reachability-correct (any registered handler CAN run for some route), capped,
- * and gated on the dispatcher existing so it never runs on non-gin Go repos.
- * Provenance `heuristic`, `synthesizedBy:'gin-middleware-chain'`; `registeredAt`
- * is the `.Use`/`.GET` site an agent would otherwise grep for.
+ * 桥接：找到链分发器（一个 Go 方法，其方法体通过索引调用 `handlers` 切片），
+ * 将其链接到所有通过 gin 注册调用注册的 HandlerFunc，使 `callees(Next)` 和
+ * `trace(ServeHTTP, <handler>)` 能够端到端连通。仅处理具名处理器
+ * （`gin.Logger()` → `Logger`，`authMiddleware`）；匿名内联闭包跳过。
+ * 与 react-render / interface-impl 一样，这是刻意的过度近似——
+ * 可达性正确（任何已注册的处理器都可能在某条路由上运行），设有上限，
+ * 并以分发器存在为门控，因此在非 gin 的 Go 仓库上永远不会运行。
+ * 出处 `heuristic`，`synthesizedBy:'gin-middleware-chain'`；`registeredAt`
+ * 是智能体原本需要 grep 查找的 `.Use`/`.GET` 调用点。
  */
 const GIN_DISPATCH_RE = /\.handlers\s*\[[^\]]*\]\s*\(/;                 // c.handlers[c.index](c)
 const GIN_REG_RE = /\.(?:Use|GET|POST|PUT|PATCH|DELETE|OPTIONS|HEAD|Any|Handle)\s*\(/g;
 
-/** Balanced `(...)` body starting at the '(' index; null if unbalanced. */
+/** 从 '(' 索引开始的平衡 `(...)` 体；不平衡时返回 null。 */
 function goBalancedArgs(s: string, openIdx: number): string | null {
   let depth = 0;
   for (let i = openIdx; i < s.length; i++) {
@@ -1486,7 +1445,7 @@ function goBalancedArgs(s: string, openIdx: number): string | null {
   }
   return null;
 }
-/** Split a top-level comma list, respecting nested () [] {}. */
+/** 分割顶层逗号列表，遵循嵌套的 () [] {}。 */
 function goSplitArgs(args: string): string[] {
   const out: string[] = [];
   let depth = 0, cur = '';
@@ -1499,7 +1458,7 @@ function goSplitArgs(args: string): string[] {
   if (cur.trim()) out.push(cur);
   return out;
 }
-/** Tail ident of a handler arg: `gin.Logger()`→`Logger`, `mw`→`mw`; null for string paths / closures. */
+/** 处理器参数的尾部标识符：`gin.Logger()`→`Logger`，`mw`→`mw`；字符串路径/闭包返回 null。 */
 function goHandlerIdent(expr: string): string | null {
   const cleaned = expr.trim().replace(/\(\s*\)$/, '');                  // drop a trailing call ()
   if (!cleaned || cleaned.startsWith('"') || cleaned.startsWith('`') || cleaned.startsWith('func')) return null;
@@ -1508,7 +1467,7 @@ function goHandlerIdent(expr: string): string | null {
 }
 
 function ginMiddlewareChainEdges(queries: QueryBuilder, ctx: ResolutionContext): Edge[] {
-  // 1. Find the chain dispatcher(s): a Go method that invokes a `handlers` slice by index.
+  // 1. 找到链分发器：通过索引调用 `handlers` 切片的 Go 方法。
   const dispatchers: Node[] = [];
   for (const n of queries.iterateNodesByKind('method')) {
     if (n.language !== 'go') continue;
@@ -1516,12 +1475,11 @@ function ginMiddlewareChainEdges(queries: QueryBuilder, ctx: ResolutionContext):
     const src = content && sliceLines(content, n.startLine, n.endLine);
     if (src && GIN_DISPATCH_RE.test(src)) dispatchers.push(n);
   }
-  if (dispatchers.length === 0) return [];                              // not a gin repo — bail
+  if (dispatchers.length === 0) return [];                              // 非 gin 仓库——退出
 
-  // 2. Collect handler identifiers registered via gin registration calls
-  //    (.Use / .GET / … / .Handle). String args (paths/methods) and inline
-  //    closures are dropped by goHandlerIdent; the rest are HandlerFuncs.
-  const registered = new Map<string, string>();                         // name → registeredAt (file:line)
+  // 2. 收集通过 gin 注册调用（.Use / .GET / … / .Handle）注册的处理器标识符。
+  //    字符串参数（路径/方法）和内联闭包由 goHandlerIdent 丢弃；其余均为 HandlerFunc。
+  const registered = new Map<string, string>();                         // 名称 → registeredAt（file:line）
   for (const file of ctx.getAllFiles()) {
     if (!file.endsWith('.go')) continue;
     const content = ctx.readFile(file);
@@ -1542,7 +1500,7 @@ function ginMiddlewareChainEdges(queries: QueryBuilder, ctx: ResolutionContext):
   }
   if (registered.size === 0) return [];
 
-  // 3. Link each dispatcher → each registered handler node (dedup, capped).
+  // 3. 将每个分发器链接到每个已注册的处理器节点（去重，设上限）。
   const edges: Edge[] = [];
   const seen = new Set<string>();
   for (const disp of dispatchers) {
@@ -1568,11 +1526,11 @@ function ginMiddlewareChainEdges(queries: QueryBuilder, ctx: ResolutionContext):
 }
 
 /**
- * Delphi form code-behind: a form unit `UFRMAbout.pas` owns its visual form
- * definition `UFRMAbout.dfm` (VCL) / `.fmx` (FireMonkey) — paired by basename in
- * the same directory, wired by the `{$R *.dfm}` directive rather than a `uses`
- * clause. Link the unit → its form so a `.dfm`/`.fmx` used only as a form
- * definition isn't orphaned, and editing the form surfaces its code-behind unit.
+ * Delphi 窗体代码后置：窗体单元 `UFRMAbout.pas` 拥有其可视化窗体定义
+ * `UFRMAbout.dfm`（VCL）/ `.fmx`（FireMonkey）——通过同目录下相同
+ * basename 配对，由 `{$R *.dfm}` 指令而非 `uses` 子句连接。
+ * 将单元链接到其窗体，使仅作为窗体定义使用的 `.dfm`/`.fmx` 不会孤立，
+ * 修改窗体时也能暴露其代码后置单元。
  */
 function pascalFormEdges(ctx: ResolutionContext): Edge[] {
   const edges: Edge[] = [];
@@ -1597,19 +1555,17 @@ function pascalFormEdges(ctx: ResolutionContext): Edge[] {
 }
 
 /**
- * SvelteKit file-convention data flow. A route directory's `+page.svelte` (a
- * `component` node) receives its `data` from the sibling `+page.server.{ts,js}`
- * / `+page.{ts,js}` `load` function and posts forms to its `actions` — wired by
- * the framework BY FILE PATH, with no static import between them. So editing a
- * `load` shows no impact on the page it feeds, and the page looks like it has no
- * server-side dependency. Link the page component to its sibling loader's
- * `load` / `actions` (same for `+layout`). The pairing is path-deterministic
- * (same directory, matching `+page`/`+layout` prefix), so it's precise — but
- * it's a framework-convention edge, so provenance stays `heuristic`.
+ * SvelteKit 文件约定数据流。路由目录下的 `+page.svelte`（一个
+ * `component` 节点）从同级的 `+page.server.{ts,js}` / `+page.{ts,js}`
+ * 的 `load` 函数接收 `data`，并将表单提交到其 `actions`——
+ * 由框架通过文件路径连接，两者之间没有静态导入。因此修改 `load`
+ * 不会显示对其所服务页面的影响，页面也看起来没有服务端依赖。
+ * 将页面组件链接到同级加载器的 `load` / `actions`（`+layout` 同理）。
+ * 配对是路径确定性的（同目录，匹配 `+page`/`+layout` 前缀），因此是精确的——
+ * 但这是框架约定边，出处保持 `heuristic`。
  *
- * Direction: page → load, so `getImpactRadius(load)` surfaces the page (editing
- * a loader's data shows the page it feeds) and the page's dependencies include
- * its loader.
+ * 方向：page → load，使 `getImpactRadius(load)` 能暴露 page（修改加载器数据时
+ * 显示其所服务的页面），page 的依赖项也包含其加载器。
  */
 function svelteKitLoadEdges(ctx: ResolutionContext): Edge[] {
   const edges: Edge[] = [];
@@ -1647,24 +1603,22 @@ function svelteKitLoadEdges(ctx: ResolutionContext): Edge[] {
 }
 
 /**
- * Synthesize dispatcher→callback edges (field observers + EventEmitters +
- * React re-render + JSX children + Vue templates + SvelteKit load + RN event
- * channel + Fabric native-impl + MyBatis Java↔XML + Gin middleware chain).
- * Returns the count added. Never throws into indexing — callers wrap in try/catch.
+ * 合成分发器→回调边（字段观察者 + EventEmitter + React 重渲染 +
+ * JSX 子组件 + Vue 模板 + SvelteKit load + RN 事件通道 +
+ * Fabric 原生实现 + MyBatis Java↔XML + Gin 中间件链）。
+ * 返回新增的边数量。绝不向索引抛出异常——调用方使用 try/catch 包裹。
  */
 export function synthesizeCallbackEdges(queries: QueryBuilder, ctx: ResolutionContext): number {
-  // Cross-file Go method→type `contains` edges must be synthesized AND persisted
-  // FIRST: a method declared in a different file from its receiver type is
-  // otherwise orphaned from the struct, and goImplementsEdges (next) derives a
-  // struct's method set from its `contains` edges — so without this it would
-  // under-count the interfaces a cross-file struct satisfies. (#583)
+  // 跨文件 Go 方法→类型 `contains` 边必须首先合成并持久化：
+  // 在接收者类型与方法不在同一文件的情况下，方法会与 struct 孤立，
+  // 而 goImplementsEdges（下一步）从 `contains` 边推导 struct 的方法集——
+  // 若不先处理，它会少计跨文件 struct 满足的接口。（#583）
   const goMethodContains = goCrossFileMethodContainsEdges(queries);
   if (goMethodContains.length > 0) queries.insertEdges(goMethodContains);
 
-  // Go implicit `implements` edges must be synthesized AND persisted next: the
-  // interface-dispatch bridge below reads `implements` edges from the DB, and
-  // Go has none statically. (Other languages already have static implements
-  // edges from extraction, so they don't need this pre-pass.)
+  // Go 隐式 `implements` 边必须紧接着合成并持久化：下方的接口分发桥接
+  // 从数据库读取 `implements` 边，而 Go 静态提取中没有此类边。
+  // （其他语言已在提取时产生静态 implements 边，无需此预处理。）
   const goImpl = goImplementsEdges(queries);
   if (goImpl.length > 0) queries.insertEdges(goImpl);
 

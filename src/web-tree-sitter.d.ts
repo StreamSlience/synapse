@@ -1,13 +1,12 @@
 /**
- * Local type override for web-tree-sitter.
+ * web-tree-sitter 的本地类型覆盖。
  *
- * The upstream types declare children/namedChildren as (Node | null)[],
- * but in practice they never contain null entries. This override uses
- * non-nullable arrays to match native tree-sitter's API and avoid
- * pervasive null-check changes across the extraction pipeline.
+ * 上游类型将 children/namedChildren 声明为 (Node | null)[]，
+ * 但实际上它们从不包含 null 条目。本覆盖使用非空数组以匹配
+ * 原生 tree-sitter 的 API，避免在提取流水线中大量引入 null 检查。
  *
- * This file takes precedence over node_modules/web-tree-sitter/web-tree-sitter.d.ts
- * because TypeScript resolves local declarations first.
+ * 本文件优先于 node_modules/web-tree-sitter/web-tree-sitter.d.ts，
+ * 因为 TypeScript 优先解析本地声明。
  */
 declare module 'web-tree-sitter' {
   export interface Point {
@@ -129,7 +128,7 @@ declare module 'web-tree-sitter' {
     get firstNamedChild(): Node | null;
     get lastChild(): Node | null;
     get lastNamedChild(): Node | null;
-    // Override: non-nullable arrays (tree-sitter never returns null in these)
+    // 覆盖：非空数组（tree-sitter 在这些字段中从不返回 null）
     get children(): Node[];
     get namedChildren(): Node[];
     descendantsOfType(types: string | string[], startPosition?: Point, endPosition?: Point): Node[];

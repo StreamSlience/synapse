@@ -1,7 +1,7 @@
 /**
- * Python Framework Resolver
+ * Python 框架解析器
  *
- * Handles Django, Flask, and FastAPI patterns.
+ * 处理 Django、Flask 和 FastAPI 模式。
  */
 
 import { Node } from '../../types';
@@ -35,12 +35,12 @@ export const djangoResolver: FrameworkResolver = {
       const result = resolveByNameAndKind(ref.referenceName, CLASS_KINDS, FORM_DIRS, context);
       if (result) return { original: ref, targetNodeId: result, confidence: 0.8, resolvedBy: 'framework' };
     }
-    // ORM dynamic dispatch: QuerySet._fetch_all (and siblings) call
-    // `self._iterable_class(self)` — a runtime dispatch to the iterable class
-    // (default ModelIterable) whose __iter__ runs the SQL compiler. Static
-    // parsing can't resolve an attribute-as-callable, so it leaves an unresolved
-    // `_iterable_class` ref and a hole in the QuerySet→compiler chain. Bridge it
-    // to ModelIterable.__iter__ so the flow actually exists in the graph.
+    // ORM 动态分发：QuerySet._fetch_all（及其同级方法）调用
+    // `self._iterable_class(self)`——运行时分发到 iterable 类
+    // （默认为 ModelIterable），其 __iter__ 运行 SQL 编译器。静态
+    // 解析无法解析属性调用，因此留下了未解析的 `_iterable_class` 引用，
+    // 在 QuerySet→编译器调用链中造成断口。将其桥接到 ModelIterable.__iter__，
+    // 使流程在图中真实存在。
     if (ref.referenceName === '_iterable_class') {
       const target = resolveModelIterableIter(context);
       if (target) return { original: ref, targetNodeId: target, confidence: 0.7, resolvedBy: 'framework' };
@@ -48,12 +48,11 @@ export const djangoResolver: FrameworkResolver = {
     return null;
   },
 
-  // Let two ref shapes past resolveOne's "no possible match" pre-filter so they
-  // reach resolution: the ORM dynamic-dispatch `_iterable_class` (a QuerySet
-  // attribute, not a declared symbol), and a Django `include('app.urls')` module
-  // path — a dotted module name with no symbol/import to match, which resolution
-  // (resolvePythonAbsoluteModule) then maps to its `urls.py` file so the included
-  // URLconf records a dependency on the root urlconf.
+  // 让两种引用形式通过 resolveOne 的"无可能匹配"预过滤器，从而到达解析阶段：
+  // ORM 动态分发的 `_iterable_class`（QuerySet 属性，而非已声明符号），以及
+  // Django 的 `include('app.urls')` 模块路径——一个无符号/无导入可匹配的点分
+  // 模块名，解析（resolvePythonAbsoluteModule）随后将其映射到对应的 `urls.py`
+  // 文件，使被包含的 URLconf 记录对根 urlconf 的依赖。
   claimsReference(name) {
     return name === '_iterable_class' || name.endsWith('.urls');
   },
@@ -67,8 +66,8 @@ export const djangoResolver: FrameworkResolver = {
     const safe = stripCommentsForRegex(content, 'python');
 
     // path('url', handler, name=...) / re_path(r'...', handler) / url(r'...', handler)
-    // Capture groups: 1=function name, 2=url string, 3=handler expr
-    // Handler expr may contain one balanced () pair (e.g. View.as_view(), include('x.y'))
+    // 捕获组：1=函数名，2=url 字符串，3=处理器表达式
+    // 处理器表达式可包含一对平衡括号（如 View.as_view()、include('x.y')）
     const routeRegex = /\b(path|re_path|url)\s*\(\s*r?['"]([^'"]+)['"]\s*,\s*([\w.]+(?:\s*\([^)]*\))?)/g;
 
     let match: RegExpExecArray | null;
@@ -106,11 +105,11 @@ export const djangoResolver: FrameworkResolver = {
       }
     }
 
-    // DRF router registration: `router.register(r'articles', ArticleViewSet)` →
-    // route → the ViewSet class (the core CRUD endpoints, which path()/url() miss).
-    // The STRING first arg separates this from `admin.site.register(Model, Admin)`
-    // (whose first arg is a model class, not a string); the View/ViewSet suffix on
-    // the 2nd arg keeps it to DRF viewsets.
+    // DRF 路由注册：`router.register(r'articles', ArticleViewSet)` →
+    // 路由 → ViewSet 类（核心 CRUD 端点，path()/url() 无法捕获）。
+    // 第一个 STRING 参数将其与 `admin.site.register(Model, Admin)`
+    // （第一个参数是模型类而非字符串）区分开；第二个参数的 View/ViewSet 后缀
+    // 限定其仅匹配 DRF viewset。
     const routerRegex = /\.register\s*\(\s*r?['"]([^'"]+)['"]\s*,\s*([\w.]+)/g;
     while ((match = routerRegex.exec(safe)) !== null) {
       const prefix = match[1]!.replace(/^\^|\/?\$$/g, '');
@@ -139,11 +138,11 @@ export const djangoResolver: FrameworkResolver = {
 };
 
 /**
- * Find ModelIterable.__iter__ — the default iterable QuerySet invokes via
- * `self._iterable_class(self)`. Its __iter__ statically calls the SQL compiler,
- * so linking the dynamic dispatch here closes the QuerySet→SQL call chain.
- * (Over-approximates to the default iterable; .values()/.values_list() swap in
- * other BaseIterable subclasses, but ModelIterable is the canonical path.)
+ * 查找 ModelIterable.__iter__——QuerySet 通过 `self._iterable_class(self)` 调用的
+ * 默认 iterable。其 __iter__ 静态调用 SQL 编译器，因此在此桥接动态分发，
+ * 可闭合 QuerySet→SQL 调用链。
+ * （过度近似为默认 iterable；.values()/.values_list() 会切换到其他
+ * BaseIterable 子类，但 ModelIterable 是规范路径。）
  */
 function resolveModelIterableIter(context: ResolutionContext): string | null {
   const cls = context.getNodesByName('ModelIterable').find((n) => n.kind === 'class');
@@ -155,17 +154,17 @@ function resolveModelIterableIter(context: ResolutionContext): string | null {
 }
 
 /**
- * Parse a Django URL handler expression and return the symbol/module to link.
- * Returns null for shapes we can't confidently link (e.g. lambdas).
+ * 解析 Django URL 处理器表达式，返回要链接的符号/模块。
+ * 对于无法可靠链接的形式（如 lambda），返回 null。
  */
 function resolveHandlerName(expr: string): { name: string; kind: 'references' | 'imports' } | null {
   // include('module.path')
   const includeMatch = expr.match(/^include\s*\(\s*['"]([^'"]+)['"]/);
   if (includeMatch) return { name: includeMatch[1]!, kind: 'imports' };
 
-  // Strip trailing .as_view(...) or .as_view()
+  // 去掉尾部的 .as_view(...) 或 .as_view()
   let head = expr.replace(/\.as_view\s*\([^)]*\)\s*$/, '');
-  // Drop any other trailing method call
+  // 去掉其他尾部方法调用
   head = head.replace(/\.\w+\s*\([^)]*\)\s*$/, '');
 
   const dotted = head.split('.').filter(Boolean);
@@ -185,9 +184,9 @@ export const flaskResolver: FrameworkResolver = {
       const c = context.readFile(f);
       if (c && /\bflask\b/i.test(c)) return true;
     }
-    // Any app entrypoint (root OR subdir, e.g. conduit/app.py) that imports flask
-    // and instantiates Flask(...) — covers Flask(__name__), Flask(__name__.split…),
-    // and the app-factory pattern. Bounded to entrypoint-named files.
+    // 任何入口文件（根目录或子目录，如 conduit/app.py），只要导入了 flask
+    // 并实例化了 Flask(...)——涵盖 Flask(__name__)、Flask(__name__.split…)
+    // 以及应用工厂模式。限定为以入口文件命名的文件。
     const entrypoints = context
       .getAllFiles()
       .filter((f) => /(?:^|\/)(app|application|main|wsgi|__init__)\.py$/.test(f))
@@ -211,9 +210,9 @@ export const flaskResolver: FrameworkResolver = {
     if (!filePath.endsWith('.py')) return { nodes: [], references: [] };
     const safe = stripCommentsForRegex(content, 'python');
     const decorator = extractDecoratorRoutes(filePath, safe, {
-      // Flask: @x.route('/path', methods=[...] | (...)) — the handler is the next
-      // `def`, allowing intervening decorators (@login_required) and stacked
-      // @x.route() lines. methods may be a list OR a tuple (methods=('GET',)).
+      // Flask：@x.route('/path', methods=[...] | (...)) — 处理器是下一个
+      // `def`，允许中间有其他装饰器（@login_required）和堆叠的 @x.route() 行。
+      // methods 可以是列表或元组（methods=('GET',)）。
       decoratorRegex: /@(\w+)\.route\s*\(\s*['"]([^'"]*)['"](?:\s*,\s*methods\s*=\s*[[(]([^\])]+)[\])])?\s*\)/g,
       defaultMethod: 'GET',
       methodFromGroup: 3,
@@ -260,8 +259,8 @@ export const fastapiResolver: FrameworkResolver = {
   extract(filePath, content) {
     if (!filePath.endsWith('.py')) return { nodes: [], references: [] };
     return extractDecoratorRoutes(filePath, stripCommentsForRegex(content, 'python'), {
-      // FastAPI: @x.METHOD('/path') -> handler on the next def line. Path may be
-      // empty ("") for routes mounted at the router/prefix root.
+      // FastAPI：@x.METHOD('/path') -> 下一个 def 行上的处理器。路径可以为
+      // 空（""），用于挂载到路由器/前缀根路径的路由。
       decoratorRegex: /@(\w+)\.(get|post|put|patch|delete|options|head)\s*\(\s*['"]([^'"]*)['"]/g,
       defaultMethod: '',
       methodGroup: 2,
@@ -338,11 +337,10 @@ function extractDecoratorRoutes(filePath: string, content: string, opts: Decorat
 }
 
 /**
- * Flask-RESTful: `api.add_resource(ResourceClass, '/path'[, '/path2'])`
- * (and variants like redash's `add_org_resource`). The ResourceClass holds the
- * HTTP-verb methods (get/post/…), so the route references the class — its verb
- * methods resolve as the handlers via the class. Method is ANY (the class
- * decides which verbs it serves).
+ * Flask-RESTful：`api.add_resource(ResourceClass, '/path'[, '/path2'])`
+ * （以及 redash 的 `add_org_resource` 等变体）。ResourceClass 持有各 HTTP
+ * 动词方法（get/post/…），因此路由引用该类——其动词方法通过类来解析为处理器。
+ * method 为 ANY（由类决定它处理哪些动词）。
  */
 function extractFlaskRestful(filePath: string, safe: string): FrameworkExtractionResult {
   const nodes: Node[] = [];
@@ -383,7 +381,7 @@ function extractFlaskRestful(filePath: string, safe: string): FrameworkExtractio
   return { nodes, references };
 }
 
-// Directory patterns
+// 目录模式
 const MODEL_DIRS = ['models', 'app/models', 'src/models'];
 const VIEW_DIRS = ['views', 'app/views', 'src/views', 'api/views'];
 const FORM_DIRS = ['forms', 'app/forms', 'src/forms'];
@@ -396,7 +394,7 @@ const VARIABLE_KINDS = new Set(['variable']);
 const FUNCTION_KINDS = new Set(['function']);
 
 /**
- * Resolve a symbol by name using indexed queries instead of scanning all files.
+ * 使用索引查询按名称解析符号，而非扫描所有文件。
  */
 function resolveByNameAndKind(
   name: string,
@@ -410,7 +408,7 @@ function resolveByNameAndKind(
   const kindFiltered = candidates.filter((n) => kinds.has(n.kind));
   if (kindFiltered.length === 0) return null;
 
-  // Prefer candidates in framework-conventional directories
+  // 优先选择框架约定目录中的候选
   if (preferredDirPatterns.length > 0) {
     const preferred = kindFiltered.filter((n) =>
       preferredDirPatterns.some((d) => n.filePath.includes(d))
@@ -418,6 +416,6 @@ function resolveByNameAndKind(
     if (preferred.length > 0) return preferred[0]!.id;
   }
 
-  // Fall back to any match
+  // 回退到任意匹配
   return kindFiltered[0]!.id;
 }

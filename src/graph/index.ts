@@ -1,7 +1,7 @@
 /**
- * Graph Module
+ * 图模块
  *
- * Provides graph traversal and query functionality for the code knowledge graph.
+ * 为代码知识图谱提供图遍历与查询功能。
  */
 
 export { GraphTraverser } from './traversal';

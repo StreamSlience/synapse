@@ -1,25 +1,22 @@
 ﻿/**
- * Kiro CLI / IDE target. Writes:
+ * Kiro CLI / IDE target。写入：
  *
- *   - MCP server entry to `~/.kiro/settings/mcp.json` (global) or
- *     `./.kiro/settings/mcp.json` (local). Standard `mcpServers.synapse`
- *     shape, same as Claude / Cursor / Gemini.
- *   - Instructions to `~/.kiro/steering/synapse.md` (global) or
- *     `./.kiro/steering/synapse.md` (local). Kiro's "steering" system
- *     loads every `*.md` file in the steering dir as agent context, so
- *     a dedicated `synapse.md` is the natural surface — we own the
- *     whole file outright (no marker-based merging needed) and delete
- *     it on uninstall.
+ *   - MCP 服务器条目到 `~/.kiro/settings/mcp.json`（全局）或
+ *     `./.kiro/settings/mcp.json`（本地）。标准 `mcpServers.synapse`
+ *     格式，与 Claude / Cursor / Gemini 相同。
+ *   - Instructions 到 `~/.kiro/steering/synapse.md`（全局）或
+ *     `./.kiro/steering/synapse.md`（本地）。Kiro 的"steering"系统
+ *     将 steering 目录中的每个 `*.md` 文件加载为智能体上下文，因此
+ *     专用的 `synapse.md` 是自然的配置面——我们完全拥有该文件
+ *     （无需基于标记的合并），并在卸载时删除它。
  *
- * No permissions concept — Kiro gates tool invocations through its own
- * UI prompts rather than an external allowlist. `autoAllow` is silently
- * ignored.
+ * 无权限概念——Kiro 通过其自有 UI 提示而非外部允许列表控制工具调用。
+ * `autoAllow` 会被静默忽略。
  *
- * Paths are identical on macOS / Linux / Windows because Kiro resolves
- * its config root from `os.homedir()` on all three (Windows `~` →
- * `%USERPROFILE%\.kiro`).
+ * 路径在 macOS / Linux / Windows 上完全相同，因为 Kiro 在所有三个平台
+ * 上都从 `os.homedir()` 解析配置根目录（Windows 的 `~` → `%USERPROFILE%\.kiro`）。
  *
- * Docs: https://kiro.dev/docs/cli/mcp/
+ * 文档：https://kiro.dev/docs/cli/mcp/
  *       https://kiro.dev/docs/cli/steering/
  */
 
@@ -75,20 +72,18 @@ class KiroTarget implements AgentTarget {
     const files: WriteResult['files'] = [];
     files.push(writeMcpEntry(loc));
 
-    // The steering doc is no longer written — the synapse usage
-    // guidance ships in the MCP server's `initialize` response (issue
-    // #529). Delete a `synapse.md` a previous install created so an
-    // upgrade self-heals.
+    // steering 文档不再写入——synapse 使用指南已通过 MCP 服务器的
+    // `initialize` 响应传递（issue #529）。删除之前安装创建的 `synapse.md`
+    // 以使升级自愈。
     const steeringCleanup = removeSteeringEntry(loc);
     if (steeringCleanup.action === 'removed') files.push(steeringCleanup);
 
     return {
       files,
-      // The IDE-only enable-MCP step is load-bearing: Kiro IDE ships
-      // with MCP support disabled by default, so even a valid
-      // `~/.kiro/settings/mcp.json` at the documented path is ignored
-      // until the user flips the toggle. Kiro CLI reads the same file
-      // without a gate, so we call out which audience this applies to.
+      // 仅 IDE 的启用 MCP 步骤是必不可少的：Kiro IDE 默认禁用 MCP 支持，
+      // 因此即使在文档路径下存在有效的 `~/.kiro/settings/mcp.json`，
+      // 也会被忽略，直到用户切换开关。Kiro CLI 读取同一文件时没有此限制，
+      // 因此我们在此说明适用对象。
       notes: [
         'Restart Kiro for MCP changes to take effect.',
         'Kiro IDE: also enable MCP in Settings (search "MCP" → "Enabled"). Kiro CLI users can skip this step.',
@@ -149,11 +144,9 @@ function writeMcpEntry(loc: Location): WriteResult['files'][number] {
 }
 
 /**
- * Delete the steering file we own. If a user has hand-edited the file
- * out of recognition we still remove it — synapse.md is a name we
- * claim, and a partial install leaving the file behind is worse than
- * a clean delete. Used by both install (self-heal on upgrade — see
- * issue #529) and uninstall.
+ * 删除我们拥有的 steering 文件。即使用户已将文件改得面目全非，我们仍会
+ * 删除它——synapse.md 是我们声明的名称，部分安装留下文件比彻底清除更糟。
+ * install（升级时自愈——见 issue #529）和 uninstall 均会使用。
  */
 function removeSteeringEntry(loc: Location): WriteResult['files'][number] {
   const file = steeringPath(loc);

@@ -1,66 +1,59 @@
 ﻿/**
- * Dynamic-dispatch boundary detection for synapse_explore (#687).
+ * `synapse_explore` 的动态分发边界检测（#687）。
  *
- * When the flow an agent asked about does NOT connect statically, the cause is
- * almost always a dynamic-dispatch site: a computed member call, getattr,
- * reflection, a string-keyed bus, a typed command/mediator dispatch. Guessing
- * the missing edge was rejected (silent beats wrong — a wrong edge poisons the
- * map and teaches abandonment). Instead, explore ANNOUNCES the boundary
- * honestly: the exact site where the static path ends, the dispatch form, and
- * — when a key is statically visible (string literal, `:symbol`, `new Type`)
- * — that key, so the caller can shortlist candidate targets.
+ * 当智能体请求的流程在静态层面无法连通时，原因几乎总是动态分发点：
+ * 计算型成员调用、getattr、反射、字符串键总线、类型化命令/中介者分发。
+ * 猜测缺失的边被明确拒绝（沉默胜于错误 — 错误的边会污染地图并让智能体习得放弃行为）。
+ * 取而代之，explore 诚实地"宣告"边界：静态路径终止的精确位置、分发形式，
+ * 以及——当键在静态层面可见时（字符串字面量、`:symbol`、`new Type`）——
+ * 该键，以便调用方可以缩短候选目标列表。
  *
- * Detection is deterministic regex over the comment/string-stripped bodies of
- * the symbols the agent named, at QUERY TIME only. The graph is never mutated;
- * an unbroken flow never triggers a scan. Matching runs on the stripped text
- * (so commented-out / string-embedded code can't fire) but snippets and keys
- * are sliced from the ORIGINAL source at the same offsets — both strippers
- * blank contents in place, preserving offsets, precisely for this.
- * (`stripCommentsForRegex` blanks comments but deliberately KEEPS string
- * contents — framework extractors need route literals; here a dispatch shape
- * inside a string is a false positive, so {@link blankStringContents} blanks
- * them too, quotes preserved.)
+ * 检测仅在查询时对智能体命名符号的注释/字符串去除后的函数体执行确定性正则匹配。
+ * 图谱从不发生变更；未断裂的流程永远不会触发扫描。匹配在去除后的文本上运行
+ * （防止注释或字符串内的代码误触发），但代码片段和键从相同偏移处的*原始*源码切取 —
+ * 两个去除器均以原地替换空格的方式保留偏移量，正是为了实现这一点。
+ * （`stripCommentsForRegex` 去除注释但刻意*保留*字符串内容 — 框架提取器需要路由字面量；
+ * 而此处字符串内的分发形式属于误报，故 {@link blankStringContents} 也会将其清空，
+ * 引号保留。）
  */
 import { stripCommentsForRegex, type CommentLang } from '../resolution/strip-comments';
 
 export interface BoundaryMatch {
-  /** Stable form id, e.g. 'computed-call' — used for per-form dedupe. */
+  /** 稳定的形式 id，例如 'computed-call' — 用于按形式去重。 */
   form: string;
-  /** Human label for the dispatch form, e.g. 'computed member call'. */
+  /** 分发形式的可读标签，例如 'computed member call'。 */
   label: string;
-  /** One-line source snippet of the site (from the original, untrimmed text). */
+  /** 该位置的单行源码片段（来自原始未裁剪的文本）。 */
   snippet: string;
-  /** 1-based line within the scanned body's FILE (absolute, ready to print). */
+  /** 被扫描函数体在其*文件*中的 1-based 行号（绝对行号，可直接打印）。 */
   line: number;
   /**
-   * Statically-visible dispatch key, when one exists: the string literal in
-   * `handlers['save']`, the `:symbol` in ruby `send`, the type name in
-   * `Send(new CreateCmd(...))`. Drives candidate lookup. Undefined when the
-   * key is a runtime value (variable, computed expression).
+   * 静态可见的分发键（若存在）：`handlers['save']` 中的字符串字面量、
+   * ruby `send` 中的 `:symbol`、`Send(new CreateCmd(...))` 中的类型名。
+   * 用于驱动候选目标查找。键为运行时值（变量、计算表达式）时为 undefined。
    */
   key?: string;
-  /** For typed-bus matches the key is a TYPE name (candidates ~ `${key}Handler`). */
+  /** 对于类型化总线匹配，键是一个类型名（候选项 ~ `${key}Handler`）。 */
   keyIsType?: boolean;
-  /** Additional sites of the same form+key in this body beyond the reported one. */
+  /** 同一函数体中相同 form+key 超出已报告的额外站点数。 */
   moreSites?: number;
 }
 
 interface FormSpec {
   form: string;
   label: string;
-  /** Languages this form applies to; undefined = all. Node.language values. */
+  /** 此形式适用的语言；undefined 表示所有语言。Node.language 的值。 */
   langs?: Set<string>;
   re: RegExp;
   /**
-   * Derive the dispatch key from the ORIGINAL-source snippet around the match
-   * (match start .. match end + keyWindow). Return undefined when no static key.
+   * 从匹配项周围的*原始源码*片段（匹配起始..匹配结束 + keyWindow）中推导分发键。
+   * 无静态键时返回 undefined。
    */
   keyFrom?: (orig: string) => { key: string; keyIsType?: boolean } | undefined;
   /**
-   * Extra ORIGINAL chars after the match end handed to keyFrom, capped at the
-   * first newline — for forms whose key trails the matched prefix, e.g.
-   * `.getMethod(` → `"handlePing"`. Forms with $-anchored keyFrom regexes
-   * must leave this unset (the anchor relies on the slice ending at the match).
+   * 匹配结束后传给 keyFrom 的额外原始字符数，以第一个换行符为上限 —
+   * 用于键位于匹配前缀之后的形式，例如 `.getMethod(` → `"handlePing"`。
+   * 使用 $-锚定 keyFrom 正则的形式必须不设此项（锚定依赖切片在匹配处结束）。
    */
   keyWindow?: number;
 }
@@ -72,7 +65,7 @@ const PHP = new Set(['php']);
 const JVM_CS_GO = new Set(['java', 'kotlin', 'scala', 'csharp', 'go']);
 const SWIFT_OBJC = new Set(['swift', 'objc', 'objcpp', 'objective-c']);
 
-/** Exactly one quoted literal and no concatenation → that literal is the key. */
+/** 恰好一个带引号的字面量且无拼接 → 该字面量即为键。 */
 function singleStringLiteral(text: string): string | undefined {
   const m = text.match(/^[^'"`]*(['"`])([\w.:-]{2,64})\1[^'"`]*$/);
   return m ? m[2] : undefined;
@@ -81,8 +74,8 @@ function singleStringLiteral(text: string): string | undefined {
 const FORMS: FormSpec[] = [
   {
     // handlers[action.type](payload) / registry[key](args) / table[k](...) —
-    // the `](` adjacency is the gate; a word/`)`/`]` char must precede `[` so
-    // array literals and markdown-ish text in prose can't fire.
+    // `](`相邻是门控条件；`[`前必须是单词字符/`)`/`]`，
+    // 以防止数组字面量和散文中的 markdown 格式误触发。
     form: 'computed-call',
     label: 'computed member call',
     re: /[\w$)\]]\s*\[([^[\]\n]{1,80})\]\s*\(/g,
@@ -93,8 +86,8 @@ const FORMS: FormSpec[] = [
     },
   },
   {
-    // import(expr) / require(expr) with a NON-literal argument → runtime module
-    // choice. Literal imports are ordinary edges and never reach this scanner.
+    // import(expr) / require(expr) 的参数为*非字面量*时 → 运行时模块选择。
+    // 字面量导入是普通边，永远不会到达此扫描器。
     form: 'dynamic-import',
     label: 'dynamic import',
     langs: JS_FAMILY,
@@ -107,7 +100,7 @@ const FORMS: FormSpec[] = [
     re: /\bimportlib\.import_module\s*\(|\b__import__\s*\(/g,
   },
   {
-    // obj.send(:method_name) / public_send / method(:name) — ruby metaprogramming.
+    // obj.send(:method_name) / public_send / method(:name) — ruby 元编程。
     form: 'ruby-send',
     label: 'send dispatch',
     langs: RB,
@@ -119,7 +112,7 @@ const FORMS: FormSpec[] = [
   },
   {
     // call_user_func([$this, 'method']) / $this->$method() / $callback() —
-    // PHP variable functions and callables.
+    // PHP 变量函数和可调用项。
     form: 'php-dynamic',
     label: 'dynamic call',
     langs: PHP,
@@ -131,8 +124,8 @@ const FORMS: FormSpec[] = [
     },
   },
   {
-    // Reflection: Method.invoke / getMethod("x") / Class.forName / Go
-    // reflect MethodByName / C# Activator.CreateInstance, GetMethod.
+    // 反射：Method.invoke / getMethod("x") / Class.forName / Go
+    // reflect MethodByName / C# Activator.CreateInstance, GetMethod。
     form: 'reflection',
     label: 'reflective dispatch',
     langs: JVM_CS_GO,
@@ -144,7 +137,7 @@ const FORMS: FormSpec[] = [
     },
   },
   {
-    // new Proxy(target, handler) / Reflect.get|apply — JS metaobject dispatch.
+    // new Proxy(target, handler) / Reflect.get|apply — JS 元对象分发。
     form: 'proxy-reflect',
     label: 'Proxy/Reflect dispatch',
     langs: JS_FAMILY,
@@ -152,8 +145,8 @@ const FORMS: FormSpec[] = [
   },
   {
     // mediator.Send(new CreateTodoItemCommand(...)) / bus.publish(new OrderEvent(...))
-    // — typed message dispatch (MediatR/CQRS/event-bus). The request TYPE is the
-    // key; the conventional target is `<Type>Handler`.
+    // — 类型化消息分发（MediatR/CQRS/event-bus）。请求类型是键；
+    // 约定的目标是 `<Type>Handler`。
     form: 'typed-bus',
     label: 'typed message dispatch',
     re: /\.(?:[Ss]end|[Pp]ublish|[Dd]ispatch|[Ee]xecute|[Pp]ost|[Ee]mit)(?:Async)?\s*(?:<[^<>\n]{0,80}>)?\s*\(\s*new\s+([A-Z]\w*)/g,
@@ -163,15 +156,14 @@ const FORMS: FormSpec[] = [
     },
   },
   {
-    // emitter.emit(eventVar, ...) / store.dispatch(action) — string-keyed
-    // dispatch where the key is a RUNTIME value. (Literal-keyed emits are the
-    // synthesizer's territory and connect statically when a handler matches.)
+    // emitter.emit(eventVar, ...) / store.dispatch(action) — 字符串键分发，
+    // 但键是*运行时*值。（字面量键的 emit 由合成器处理，当有匹配的处理器时会静态连通。）
     form: 'var-key-dispatch',
     label: 'string-keyed dispatch (runtime key)',
     re: /\.(?:emit|dispatch|trigger|fire|publish|broadcast)\s*\(\s*[A-Za-z_$][\w$]*(?:\.[\w$]+){0,3}\s*[,)]/g,
   },
   {
-    // Swift/ObjC: #selector(name) / NSClassFromString — runtime selector dispatch.
+    // Swift/ObjC：#selector(name) / NSClassFromString — 运行时 selector 分发。
     form: 'selector',
     label: 'selector dispatch',
     langs: SWIFT_OBJC,
@@ -185,7 +177,7 @@ const FORMS: FormSpec[] = [
   },
 ];
 
-/** Map a Node.language to the comment-stripper's language set. */
+/** 将 Node.language 映射到注释去除器的语言集。 */
 function commentLang(language: string): CommentLang | null {
   switch (language) {
     case 'python': return 'python';
@@ -213,22 +205,21 @@ function commentLang(language: string): CommentLang | null {
     case 'cpp':
     case 'objc':
     case 'objcpp':
-      return 'java'; // C-style comments + double-quoted strings — close enough for blanking
+      return 'java'; // C 风格注释 + 双引号字符串 — 对于清空来说足够接近
     default: return null;
   }
 }
 
 const MAX_MATCHES_PER_BODY = 3;
-const MAX_BODY_CHARS = 60_000; // a god-function tail is still scannable; beyond this, truncate
+const MAX_BODY_CHARS = 60_000; // 上帝函数的尾部仍可扫描；超过此限制则截断
 
 /**
- * Blank the CONTENTS of string literals (quotes preserved, offsets preserved)
- * so dispatch-shaped prose — docs, error messages, template text — can't fire
- * a matcher. Run AFTER comment stripping (comments are already spaces).
- * Backslash escapes are honored; `'`/`"` strings end at a newline (treated as
- * unterminated, matching the comment stripper); backticks span lines, and
- * `${...}` interpolations inside them are blanked too — missing a dispatch
- * inside a template literal is acceptable, false-firing on prose is not.
+ * 清空字符串字面量的*内容*（引号保留，偏移量保留），
+ * 以防止文档、错误消息、模板文本中的分发形式误触发匹配器。
+ * 在注释去除*之后*运行（注释已替换为空格）。
+ * 反斜杠转义已处理；`'`/`"` 字符串在换行时结束（视为未终止，与注释去除器一致）；
+ * 反引号跨行，其中的 `${...}` 插值也会被清空 — 遗漏模板字面量内的分发可以接受，
+ * 在散文上误触发则不可接受。
  */
 export function blankStringContents(text: string): string {
   const out = text.split('');
@@ -259,12 +250,12 @@ export function blankStringContents(text: string): string {
 }
 
 /**
- * Scan one symbol's body for dynamic-dispatch sites.
+ * 扫描一个符号的函数体，查找动态分发位置。
  *
- * @param body       the symbol's source text (sliced from the file)
- * @param language   Node.language of the symbol
- * @param fileStartLine 1-based line where `body` starts in its file — returned
- *                      line numbers are absolute file lines.
+ * @param body       符号的源码文本（从文件中切取）
+ * @param language   符号的 Node.language
+ * @param fileStartLine `body` 在其文件中的 1-based 起始行 —
+ *                      返回的行号为绝对文件行号。
  */
 export function scanDynamicDispatch(body: string, language: string, fileStartLine: number): BoundaryMatch[] {
   const original = body.length > MAX_BODY_CHARS ? body.slice(0, MAX_BODY_CHARS) : body;
@@ -272,7 +263,7 @@ export function scanDynamicDispatch(body: string, language: string, fileStartLin
   const stripped = blankStringContents(lang ? stripCommentsForRegex(original, lang) : original);
 
   const out: BoundaryMatch[] = [];
-  const seen = new Map<string, BoundaryMatch>(); // form+key → first match (counts extras)
+  const seen = new Map<string, BoundaryMatch>(); // form+key → 首个匹配（统计额外次数）
 
   if (language === 'python') scanPythonGetattr(stripped, original, fileStartLine, out, seen);
 
@@ -313,12 +304,12 @@ export function scanDynamicDispatch(body: string, language: string, fileStartLin
 }
 
 /**
- * Python getattr dispatch — handled in code, not the FORMS table, because real
- * getattr calls have nested-call arguments spanning lines
- * (`getattr(self, request.method.lower(),\n  self.http_method_not_allowed)` —
- * DRF's APIView.dispatch) that a regex argument class can't bound. Two shapes:
- *   getattr(obj, name)(args)                      → immediate call
- *   handler = getattr(obj, name) ... handler(...)  → assigned, called later
+ * Python getattr 分发 — 在代码中处理而非放入 FORMS 表，因为真实的 getattr 调用
+ * 的嵌套调用参数可能跨行
+ * （`getattr(self, request.method.lower(),\n  self.http_method_not_allowed)` —
+ * DRF 的 APIView.dispatch），正则参数类无法限定范围。两种形式：
+ *   getattr(obj, name)(args)                      → 立即调用
+ *   handler = getattr(obj, name) ... handler(...)  → 赋值后调用
  */
 const GETATTR_RE = /\bgetattr\s*\(/g;
 const MAX_GETATTR_ARGS = 300;
@@ -333,13 +324,13 @@ function scanPythonGetattr(stripped: string, original: string, fileStartLine: nu
 
     let form: string | undefined;
     let label = '';
-    // Immediate call: getattr(...)(
+    // 立即调用：getattr(...)(
     const after = stripped.slice(close + 1, close + 8);
     if (/^\s*\(/.test(after)) {
       form = 'getattr-call';
       label = 'getattr dispatch';
     } else {
-      // Assigned form: look back for `name =` and forward for `name(`.
+      // 赋值形式：向前查找 `name =`，向后查找 `name(`。
       const lineStart = stripped.lastIndexOf('\n', m.index) + 1;
       const before = stripped.slice(lineStart, m.index);
       const assign = before.match(/(\w+)\s*=\s*$/);
@@ -369,7 +360,7 @@ function scanPythonGetattr(stripped: string, original: string, fileStartLine: nu
   }
 }
 
-/** Index of the `)` balancing `text[open]`, or -1 (cap: MAX_GETATTR_ARGS chars). */
+/** `text[open]` 对应的 `)` 的索引，若未找到则返回 -1（上限：MAX_GETATTR_ARGS 个字符）。 */
 function matchBalancedParen(text: string, open: number): number {
   let depth = 0;
   const end = Math.min(text.length, open + MAX_GETATTR_ARGS);
@@ -387,7 +378,7 @@ function countNewlines(text: string, end: number): number {
   return n;
 }
 
-/** The full source line containing `index`, trimmed and capped for display. */
+/** 包含 `index` 的完整源码行，已裁剪并截断以供显示。 */
 function snippetAround(text: string, index: number): string {
   const lineStart = text.lastIndexOf('\n', index) + 1;
   let lineEnd = text.indexOf('\n', index);

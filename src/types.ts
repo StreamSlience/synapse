@@ -1,19 +1,19 @@
 ﻿/**
- * Synapse Type Definitions
+ * Synapse 类型定义
  *
- * Core types for the semantic knowledge graph system.
+ * 语义知识图谱系统的核心类型。
  */
 
 // =============================================================================
-// Union Types
+// 联合类型
 // =============================================================================
 
 /**
- * Types of nodes in the knowledge graph.
+ * 知识图谱中节点的类型。
  *
- * Defined as a runtime-iterable `as const` array so the same source
- * of truth backs both the TS type and any runtime validation
- * (e.g. the search query parser).
+ * 定义为运行时可迭代的 `as const` 数组，使同一来源
+ * 同时支撑 TS 类型和任何运行时校验
+ * （例如搜索查询解析器）。
  */
 export const NODE_KINDS = [
   'file',
@@ -43,25 +43,24 @@ export const NODE_KINDS = [
 export type NodeKind = (typeof NODE_KINDS)[number];
 
 /**
- * Types of edges (relationships) between nodes
+ * 节点之间的边（关系）类型
  */
 export type EdgeKind =
-  | 'contains'        // Parent contains child (file→class, class→method)
-  | 'calls'           // Function/method calls another
-  | 'imports'         // File imports from another
-  | 'exports'         // File exports a symbol
-  | 'extends'         // Class/interface extends another
-  | 'implements'      // Class implements interface
-  | 'references'      // Generic reference to another symbol
-  | 'type_of'         // Variable/parameter has type
-  | 'returns'         // Function returns type
-  | 'instantiates'    // Creates instance of class
-  | 'overrides'       // Method overrides parent method
-  | 'decorates';      // Decorator applied to symbol
+  | 'contains'        // 父节点包含子节点（file→class，class→method）
+  | 'calls'           // 函数/方法调用另一个
+  | 'imports'         // 文件从另一文件导入
+  | 'exports'         // 文件导出某个符号
+  | 'extends'         // 类/接口继承另一个
+  | 'implements'      // 类实现接口
+  | 'references'      // 对另一符号的泛型引用
+  | 'type_of'         // 变量/参数具有类型
+  | 'returns'         // 函数返回类型
+  | 'instantiates'    // 创建类的实例
+  | 'overrides'       // 方法覆盖父方法
+  | 'decorates';      // 装饰器应用于符号
 
 /**
- * Supported programming languages. See NODE_KINDS for why this is a
- * runtime-iterable const array.
+ * 支持的编程语言。关于为何使用运行时可迭代的 const 数组，参见 NODE_KINDS。
  */
 export const LANGUAGES = [
   'typescript',
@@ -101,504 +100,502 @@ export const LANGUAGES = [
 export type Language = (typeof LANGUAGES)[number];
 
 // =============================================================================
-// Core Graph Types
+// 核心图类型
 // =============================================================================
 
 /**
- * A node in the knowledge graph representing a code symbol
+ * 知识图谱中表示代码符号的节点
  */
 export interface Node {
-  /** Unique identifier (hash of file path + qualified name) */
+  /** 唯一标识符（文件路径 + 限定名的哈希值） */
   id: string;
 
-  /** Type of code element */
+  /** 代码元素的类型 */
   kind: NodeKind;
 
-  /** Simple name (e.g., "calculateTotal") */
+  /** 简单名称（例如 "calculateTotal"） */
   name: string;
 
-  /** Fully qualified name (e.g., "src/utils.ts::MathHelper.calculateTotal") */
+  /** 完全限定名（例如 "src/utils.ts::MathHelper.calculateTotal"） */
   qualifiedName: string;
 
-  /** File path relative to project root */
+  /** 相对于项目根目录的文件路径 */
   filePath: string;
 
-  /** Programming language */
+  /** 编程语言 */
   language: Language;
 
-  /** Starting line number (1-indexed) */
+  /** 起始行号（从 1 开始） */
   startLine: number;
 
-  /** Ending line number (1-indexed) */
+  /** 结束行号（从 1 开始） */
   endLine: number;
 
-  /** Starting column (0-indexed) */
+  /** 起始列号（从 0 开始） */
   startColumn: number;
 
-  /** Ending column (0-indexed) */
+  /** 结束列号（从 0 开始） */
   endColumn: number;
 
-  /** Documentation string if present */
+  /** 文档字符串（如有） */
   docstring?: string;
 
-  /** Function/method signature */
+  /** 函数/方法签名 */
   signature?: string;
 
-  /** Visibility modifier */
+  /** 可见性修饰符 */
   visibility?: 'public' | 'private' | 'protected' | 'internal';
 
-  /** Whether symbol is exported */
+  /** 符号是否已导出 */
   isExported?: boolean;
 
-  /** Whether symbol is async */
+  /** 符号是否为异步 */
   isAsync?: boolean;
 
-  /** Whether symbol is static */
+  /** 符号是否为静态 */
   isStatic?: boolean;
 
-  /** Whether symbol is abstract */
+  /** 符号是否为抽象 */
   isAbstract?: boolean;
 
-  /** Decorators/annotations applied */
+  /** 应用的装饰器/注解 */
   decorators?: string[];
 
-  /** Generic type parameters */
+  /** 泛型类型参数 */
   typeParameters?: string[];
 
   /**
-   * Normalized return/result type name for a function/method (the bare class
-   * name, smart-pointer pointee unwrapped). Captured for C/C++ so resolution
-   * can infer a chained receiver's type from what the inner call returns —
-   * `Foo::instance().bar()` resolves `bar` on `Foo` (issue #645). Undefined for
-   * languages/symbols where it isn't captured.
+   * 函数/方法的标准化返回/结果类型名（裸类名，已解包智能指针指向的类型）。
+   * 为 C/C++ 捕获，以便解析器可以从内层调用的返回值推断链式接收方的类型——
+   * `Foo::instance().bar()` 会将 `bar` 解析到 `Foo` 上（issue #645）。
+   * 未捕获该信息的语言/符号此字段为 undefined。
    */
   returnType?: string;
 
-  /** When the node was last updated */
+  /** 节点最后更新时间 */
   updatedAt: number;
 }
 
 /**
- * An edge representing a relationship between two nodes
+ * 表示两个节点之间关系的边
  */
 export interface Edge {
-  /** Source node ID */
+  /** 源节点 ID */
   source: string;
 
-  /** Target node ID */
+  /** 目标节点 ID */
   target: string;
 
-  /** Type of relationship */
+  /** 关系类型 */
   kind: EdgeKind;
 
-  /** Additional context about the relationship */
+  /** 关系的附加上下文 */
   metadata?: Record<string, unknown>;
 
-  /** Line number where relationship occurs (e.g., call site) */
+  /** 关系发生的行号（例如调用点） */
   line?: number;
 
-  /** Column number where relationship occurs */
+  /** 关系发生的列号 */
   column?: number;
 
-  /** How this edge was created */
+  /** 此边的创建方式 */
   provenance?: 'tree-sitter' | 'scip' | 'heuristic';
 }
 
 /**
- * Metadata about a tracked file
+ * 被追踪文件的元数据
  */
 export interface FileRecord {
-  /** File path relative to project root */
+  /** 相对于项目根目录的文件路径 */
   path: string;
 
-  /** Content hash for change detection */
+  /** 用于变更检测的内容哈希 */
   contentHash: string;
 
-  /** Detected language */
+  /** 检测到的语言 */
   language: Language;
 
-  /** File size in bytes */
+  /** 文件大小（字节） */
   size: number;
 
-  /** Last modification timestamp */
+  /** 最后修改时间戳 */
   modifiedAt: number;
 
-  /** When last indexed */
+  /** 最后索引时间 */
   indexedAt: number;
 
-  /** Number of nodes extracted */
+  /** 提取的节点数量 */
   nodeCount: number;
 
-  /** Any extraction errors */
+  /** 提取时的任何错误 */
   errors?: ExtractionError[];
 }
 
 // =============================================================================
-// Extraction Types
+// 提取类型
 // =============================================================================
 
 /**
- * Result from parsing a source file
+ * 解析源文件的结果
  */
 export interface ExtractionResult {
-  /** Extracted nodes */
+  /** 提取的节点 */
   nodes: Node[];
 
-  /** Extracted edges */
+  /** 提取的边 */
   edges: Edge[];
 
-  /** References that couldn't be resolved yet */
+  /** 尚未解析的引用 */
   unresolvedReferences: UnresolvedReference[];
 
-  /** Any errors during extraction */
+  /** 提取过程中的任何错误 */
   errors: ExtractionError[];
 
-  /** Extraction duration in milliseconds */
+  /** 提取耗时（毫秒） */
   durationMs: number;
 }
 
 /**
- * Error during code extraction
+ * 代码提取过程中的错误
  */
 export interface ExtractionError {
-  /** Error message */
+  /** 错误信息 */
   message: string;
 
-  /** File path where the error occurred */
+  /** 发生错误的文件路径 */
   filePath?: string;
 
-  /** Line number if available */
+  /** 行号（如有） */
   line?: number;
 
-  /** Column number if available */
+  /** 列号（如有） */
   column?: number;
 
-  /** Error severity */
+  /** 错误严重程度 */
   severity: 'error' | 'warning';
 
-  /** Error code for categorization */
+  /** 用于分类的错误码 */
   code?: string;
 }
 
 /**
- * Kinds an unresolved reference can carry. `function_ref` is internal-only —
- * a function name used as a VALUE (callback registration, #756). It never
- * becomes an edge kind: resolution maps it to a `references` edge targeting
- * function/method nodes only (see `matchFunctionRef`).
+ * 未解析引用可携带的类型。`function_ref` 仅供内部使用——
+ * 函数名作为值使用（回调注册，#756）。它永远不会变成边类型：
+ * 解析器将其映射为仅指向 function/method 节点的 `references` 边
+ *（参见 `matchFunctionRef`）。
  */
 export type ReferenceKind = EdgeKind | 'function_ref';
 
 /**
- * A reference that couldn't be resolved during extraction
+ * 提取过程中无法解析的引用
  */
 export interface UnresolvedReference {
-  /** ID of the node containing the reference */
+  /** 包含该引用的节点 ID */
   fromNodeId: string;
 
-  /** Name being referenced */
+  /** 被引用的名称 */
   referenceName: string;
 
-  /** Type of reference (call, type, import, etc.) */
+  /** 引用类型（调用、类型、导入等） */
   referenceKind: ReferenceKind;
 
-  /** Location of the reference */
+  /** 引用的位置 */
   line: number;
   column: number;
 
-  /** File path where reference occurs (denormalized for performance) */
+  /** 引用所在的文件路径（反规范化以提高性能） */
   filePath?: string;
 
-  /** Language of the source file (denormalized for performance) */
+  /** 源文件的语言（反规范化以提高性能） */
   language?: Language;
 
-  /** Possible qualified names it might resolve to */
+  /** 可能解析到的候选限定名 */
   candidates?: string[];
 }
 
 // =============================================================================
-// Query Types
+// 查询类型
 // =============================================================================
 
 /**
- * A subgraph containing a subset of the knowledge graph
+ * 包含知识图谱子集的子图
  */
 export interface Subgraph {
-  /** Nodes in this subgraph */
+  /** 此子图中的节点 */
   nodes: Map<string, Node>;
 
-  /** Edges in this subgraph */
+  /** 此子图中的边 */
   edges: Edge[];
 
-  /** Root node IDs (entry points) */
+  /** 根节点 ID（入口点） */
   roots: string[];
 
   /**
-   * Retrieval confidence for context-style queries. `'low'` means the query
-   * resolved only to isolated common-word matches (no entry point corroborated
-   * by 2+ distinct query terms) — callers should surface an honest handoff to
-   * explore/trace rather than present the results as comprehensive. Undefined
-   * for graph traversals that don't run the search-ranking path.
+   * 上下文风格查询的检索置信度。`'low'` 表示查询
+   * 只解析到孤立的常用词匹配（没有被 2 个以上不同查询词佐证的入口点）——
+   * 调用方应给出诚实的衔接提示，引导使用 explore/trace，
+   * 而非将结果呈现为全面的答案。对于不走搜索排名路径的图遍历，此字段为 undefined。
    */
   confidence?: 'high' | 'low';
 }
 
 /**
- * Options for graph traversal
+ * 图遍历选项
  */
 export interface TraversalOptions {
-  /** Maximum depth to traverse (default: Infinity) */
+  /** 最大遍历深度（默认：Infinity） */
   maxDepth?: number;
 
-  /** Edge types to follow (default: all) */
+  /** 要跟随的边类型（默认：全部） */
   edgeKinds?: EdgeKind[];
 
-  /** Node types to include (default: all) */
+  /** 要包含的节点类型（默认：全部） */
   nodeKinds?: NodeKind[];
 
-  /** Direction of traversal */
+  /** 遍历方向 */
   direction?: 'outgoing' | 'incoming' | 'both';
 
-  /** Maximum nodes to return */
+  /** 最多返回的节点数 */
   limit?: number;
 
-  /** Whether to include the starting node */
+  /** 是否包含起始节点 */
   includeStart?: boolean;
 }
 
 /**
- * Options for searching the graph
+ * 图搜索选项
  */
 export interface SearchOptions {
-  /** Node types to search */
+  /** 要搜索的节点类型 */
   kinds?: NodeKind[];
 
-  /** Languages to include */
+  /** 要包含的语言 */
   languages?: Language[];
 
-  /** File path patterns to include */
+  /** 要包含的文件路径模式 */
   includePatterns?: string[];
 
-  /** File path patterns to exclude */
+  /** 要排除的文件路径模式 */
   excludePatterns?: string[];
 
-  /** Maximum results to return */
+  /** 最多返回的结果数 */
   limit?: number;
 
-  /** Offset for pagination */
+  /** 分页偏移量 */
   offset?: number;
 
-  /** Whether search is case-sensitive */
+  /** 搜索是否区分大小写 */
   caseSensitive?: boolean;
 }
 
 /**
- * A search result with relevance scoring
+ * 带相关性评分的搜索结果
  */
 export interface SearchResult {
-  /** Matching node */
+  /** 匹配的节点 */
   node: Node;
 
-  /** Relevance score (0-1) */
+  /** 相关性评分（0-1） */
   score: number;
 
-  /** Matched text snippets for highlighting */
+  /** 用于高亮显示的匹配文本片段 */
   highlights?: string[];
 }
 
 // =============================================================================
-// Context Types
+// 上下文类型
 // =============================================================================
 
 /**
- * Context information for code understanding
+ * 用于代码理解的上下文信息
  */
 export interface Context {
-  /** Primary node being examined */
+  /** 被检查的主要节点 */
   focal: Node;
 
-  /** Nodes containing the focal node (file, class, etc.) */
+  /** 包含主节点的节点（文件、类等） */
   ancestors: Node[];
 
-  /** Nodes directly contained by focal node */
+  /** 主节点直接包含的节点 */
   children: Node[];
 
-  /** Incoming references (who calls/uses this) */
+  /** 入向引用（谁调用/使用了这个） */
   incomingRefs: Array<{ node: Node; edge: Edge }>;
 
-  /** Outgoing references (what this calls/uses) */
+  /** 出向引用（这个调用/使用了什么） */
   outgoingRefs: Array<{ node: Node; edge: Edge }>;
 
-  /** Related type information */
+  /** 相关类型信息 */
   types: Node[];
 
-  /** Relevant imports */
+  /** 相关导入 */
   imports: Node[];
 }
 
 /**
- * A block of code with context
+ * 带上下文的代码块
  */
 export interface CodeBlock {
-  /** The code content */
+  /** 代码内容 */
   content: string;
 
-  /** File path */
+  /** 文件路径 */
   filePath: string;
 
-  /** Starting line */
+  /** 起始行 */
   startLine: number;
 
-  /** Ending line */
+  /** 结束行 */
   endLine: number;
 
-  /** Language for syntax highlighting */
+  /** 用于语法高亮的语言 */
   language: Language;
 
-  /** Associated node if extracted */
+  /** 关联的节点（如已提取） */
   node?: Node;
 }
 
 // =============================================================================
-// Database Types
+// 数据库类型
 // =============================================================================
 
 /**
- * Database schema version info
+ * 数据库 schema 版本信息
  */
 export interface SchemaVersion {
-  /** Current schema version */
+  /** 当前 schema 版本 */
   version: number;
 
-  /** When schema was created/updated */
+  /** schema 创建/更新时间 */
   appliedAt: number;
 
-  /** Description of this version */
+  /** 此版本的描述 */
   description?: string;
 }
 
 /**
- * Statistics about the knowledge graph
+ * 知识图谱的统计信息
  */
 export interface GraphStats {
-  /** Total number of nodes */
+  /** 节点总数 */
   nodeCount: number;
 
-  /** Total number of edges */
+  /** 边总数 */
   edgeCount: number;
 
-  /** Number of tracked files */
+  /** 被追踪的文件数 */
   fileCount: number;
 
-  /** Node counts by kind */
+  /** 按类型统计的节点数 */
   nodesByKind: Record<NodeKind, number>;
 
-  /** Edge counts by kind */
+  /** 按类型统计的边数 */
   edgesByKind: Record<EdgeKind, number>;
 
-  /** File counts by language */
+  /** 按语言统计的文件数 */
   filesByLanguage: Record<Language, number>;
 
-  /** Database size in bytes */
+  /** 数据库大小（字节） */
   dbSizeBytes: number;
 
-  /** Last update timestamp */
+  /** 最后更新时间戳 */
   lastUpdated: number;
 }
 
 // =============================================================================
-// Task Context Types (for buildContext)
+// 任务上下文类型（用于 buildContext）
 // =============================================================================
 
 /**
- * Input for building task context
+ * 构建任务上下文的输入
  */
 export type TaskInput = string | { title: string; description?: string };
 
 /**
- * Options for building task context
+ * 构建任务上下文的选项
  */
 export interface BuildContextOptions {
-  /** Maximum number of nodes to include (default: 50) */
+  /** 最多包含的节点数（默认：50） */
   maxNodes?: number;
 
-  /** Maximum number of code blocks to include (default: 10) */
+  /** 最多包含的代码块数（默认：10） */
   maxCodeBlocks?: number;
 
-  /** Maximum characters per code block (default: 2000) */
+  /** 每个代码块的最大字符数（默认：2000） */
   maxCodeBlockSize?: number;
 
-  /** Whether to include code blocks (default: true) */
+  /** 是否包含代码块（默认：true） */
   includeCode?: boolean;
 
-  /** Output format (default: 'markdown') */
+  /** 输出格式（默认：'markdown'） */
   format?: 'markdown' | 'json';
 
-  /** Number of semantic search results (default: 5) */
+  /** 语义搜索结果数量（默认：5） */
   searchLimit?: number;
 
-  /** Graph traversal depth from entry points (default: 2) */
+  /** 从入口点开始的图遍历深度（默认：2） */
   traversalDepth?: number;
 
-  /** Minimum semantic similarity score (default: 0.3) */
+  /** 最低语义相似度分数（默认：0.3） */
   minScore?: number;
 }
 
 /**
- * Full context for a task, ready for Claude
+ * 任务的完整上下文，已准备好供 Claude 使用
  */
 export interface TaskContext {
-  /** The original query/task */
+  /** 原始查询/任务 */
   query: string;
 
-  /** Subgraph of relevant nodes and edges */
+  /** 相关节点和边的子图 */
   subgraph: Subgraph;
 
-  /** Entry point nodes (from semantic search) */
+  /** 入口点节点（来自语义搜索） */
   entryPoints: Node[];
 
-  /** Code blocks extracted from key nodes */
+  /** 从关键节点提取的代码块 */
   codeBlocks: CodeBlock[];
 
-  /** Files involved in this context */
+  /** 此上下文涉及的文件 */
   relatedFiles: string[];
 
-  /** Brief summary of the context */
+  /** 上下文的简要摘要 */
   summary: string;
 
-  /** Statistics about the context */
+  /** 上下文的统计数据 */
   stats: {
-    /** Number of nodes included */
+    /** 包含的节点数 */
     nodeCount: number;
-    /** Number of edges included */
+    /** 包含的边数 */
     edgeCount: number;
-    /** Number of files touched */
+    /** 涉及的文件数 */
     fileCount: number;
-    /** Number of code blocks included */
+    /** 包含的代码块数 */
     codeBlockCount: number;
-    /** Total characters in code blocks */
+    /** 代码块的总字符数 */
     totalCodeSize: number;
   };
 }
 
 /**
- * Options for finding relevant context
+ * 查找相关上下文的选项
  */
 export interface FindRelevantContextOptions {
-  /** Number of semantic search results (default: 5) */
+  /** 语义搜索结果数量（默认：5） */
   searchLimit?: number;
 
-  /** Graph traversal depth (default: 2) */
+  /** 图遍历深度（默认：2） */
   traversalDepth?: number;
 
-  /** Maximum nodes in result (default: 50) */
+  /** 结果中的最大节点数（默认：50） */
   maxNodes?: number;
 
-  /** Minimum semantic similarity score (default: 0.3) */
+  /** 最低语义相似度分数（默认：0.3） */
   minScore?: number;
 
-  /** Edge types to follow in traversal */
+  /** 遍历时跟随的边类型 */
   edgeKinds?: EdgeKind[];
 
-  /** Node types to include */
+  /** 要包含的节点类型 */
   nodeKinds?: NodeKind[];
 }

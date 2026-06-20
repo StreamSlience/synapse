@@ -1,7 +1,7 @@
 /**
- * Laravel Framework Resolver
+ * Laravel 框架解析器
  *
- * Handles Laravel-specific patterns for reference resolution.
+ * 处理 Laravel 专属模式的引用解析。
  */
 
 import { Node } from '../../types';
@@ -9,8 +9,8 @@ import { FrameworkResolver, UnresolvedRef, ResolvedRef, ResolutionContext } from
 import { stripCommentsForRegex } from '../strip-comments';
 
 /**
- * Laravel facade mappings to underlying classes
- * Exported for potential use in facade resolution
+ * Laravel facade 到底层类的映射
+ * 导出供 facade 解析时使用
  */
 export const FACADE_MAPPINGS: Record<string, string> = {
   Auth: 'Illuminate\\Auth\\AuthManager',
@@ -40,19 +40,19 @@ export const laravelResolver: FrameworkResolver = {
   languages: ['php'],
 
   detect(context: ResolutionContext): boolean {
-    // Check for artisan file (Laravel signature)
+    // 检查 artisan 文件（Laravel 特征文件）
     return context.fileExists('artisan') || context.fileExists('app/Http/Kernel.php');
   },
 
-  // `Controller@method` route refs name no declared symbol, so resolveOne's
-  // pre-filter would drop them before resolve() runs (Pattern 4). Claim them —
-  // same hook the django ORM / Rails routing work needed.
+  // `Controller@method` 路由引用不对应任何已声明的符号，因此 resolveOne 的
+  // 预过滤器会在 resolve() 运行前将其丢弃（模式 4）。在此声明认领——
+  // 与 django ORM / Rails 路由所需的钩子相同。
   claimsReference(name: string): boolean {
     return /^[A-Za-z_][A-Za-z0-9_]*Controller@\w+$/.test(name);
   },
 
   resolve(ref: UnresolvedRef, context: ResolutionContext): ResolvedRef | null {
-    // Pattern 1: Model::method() - Eloquent static calls
+    // 模式 1：Model::method() - Eloquent 静态调用
     const modelMatch = ref.referenceName.match(/^([A-Z][a-zA-Z]+)::(\w+)$/);
     if (modelMatch) {
       const [, className, methodName] = modelMatch;
@@ -67,21 +67,21 @@ export const laravelResolver: FrameworkResolver = {
       }
     }
 
-    // Pattern 2: Facade calls - Auth::user(), Cache::get()
+    // 模式 2：Facade 调用 - Auth::user()、Cache::get()
     const facadeMatch = ref.referenceName.match(/^(Auth|Cache|DB|Log|Mail|Queue|Session|Storage|Validator|Route|Request|Response)::(\w+)$/);
     if (facadeMatch) {
-      // Facades typically resolve to external Laravel code
-      // Mark as external but note the facade
-      return null; // External, can't resolve to local node
+      // Facade 通常解析到外部 Laravel 代码
+      // 标记为外部，但记录该 facade
+      return null; // 外部函数，无法解析到本地节点
     }
 
-    // Pattern 3: Helper function calls - route(), view(), config()
+    // 模式 3：辅助函数调用 - route()、view()、config()
     if (['route', 'view', 'config', 'env', 'app', 'abort', 'redirect', 'response', 'request', 'session', 'url', 'asset', 'mix'].includes(ref.referenceName)) {
-      // These are Laravel helpers - external
+      // 这些是 Laravel 辅助函数——外部函数
       return null;
     }
 
-    // Pattern 4: Controller method references
+    // 模式 4：Controller 方法引用
     const controllerMatch = ref.referenceName.match(/^([A-Z][a-zA-Z]+Controller)@(\w+)$/);
     if (controllerMatch) {
       const [, controller, method] = controllerMatch;
@@ -107,7 +107,7 @@ export const laravelResolver: FrameworkResolver = {
     const safe = stripCommentsForRegex(content, 'php');
 
     // Route::METHOD('/path', handler-expr)
-    // handler-expr can be: [Class::class, 'method'] | 'Controller@method' | Closure | Class::class
+    // handler-expr 可以是：[Class::class, 'method'] | 'Controller@method' | Closure | Class::class
     const routeRegex = /Route::(get|post|put|patch|delete|options|any)\s*\(\s*['"]([^'"]+)['"]\s*,\s*([^)]+)\)/g;
     let match: RegExpExecArray | null;
     while ((match = routeRegex.exec(safe)) !== null) {
@@ -184,27 +184,26 @@ export const laravelResolver: FrameworkResolver = {
 };
 
 /**
- * Parse a Laravel route handler expression and return the symbol to link.
+ * 解析 Laravel 路由 handler 表达式并返回需要链接的符号。
  *  - `[Class::class, 'method']`  -> `method`
  *  - `'Controller@method'`       -> `method`
  *  - `Class::class`              -> `Class`
- *  - anything else (closure etc) -> null
+ *  - 其他情况（闭包等）          -> null
  */
 function extractLaravelHandler(expr: string): string | null {
   const trimmed = expr.trim();
-  const short = (s: string) => s.split('\\').pop()!; // strip namespace
+  const short = (s: string) => s.split('\\').pop()!; // 去除命名空间
 
-  // [Class::class, 'method'] → `Class@method` (PRECISE — keep the controller, so
-  // common action names like `index`/`show` resolve to the RIGHT controller, not
-  // whichever one name-matching happens to pick first).
+  // [Class::class, 'method'] → `Class@method`（精确——保留 controller，避免
+  // `index`/`show` 等常见 action 名称被名称匹配解析到错误的 controller）。
   const tupleMatch = trimmed.match(/^\[\s*([A-Za-z_\\][\w\\]*)::class\s*,\s*['"]([^'"]+)['"]\s*\]/);
   if (tupleMatch) return `${short(tupleMatch[1]!)}@${tupleMatch[2]!}`;
 
-  // 'Controller@method' (possibly namespaced) → `Controller@method`
+  // 'Controller@method'（可能带命名空间）→ `Controller@method`
   const atMatch = trimmed.match(/^['"]([^'"@]+)@([^'"]+)['"]$/);
   if (atMatch) return `${short(atMatch[1]!)}@${atMatch[2]!}`;
 
-  // Class::class (Route::resource controller) → `Class`
+  // Class::class（Route::resource controller）→ `Class`
   const classMatch = trimmed.match(/^([A-Za-z_\\][\w\\]*)::class/);
   if (classMatch) return short(classMatch[1]!);
 
@@ -212,25 +211,25 @@ function extractLaravelHandler(expr: string): string | null {
 }
 
 /**
- * Resolve a Model::method() call
+ * 解析 Model::method() 调用
  */
 function resolveModelCall(
   className: string,
   methodName: string,
   context: ResolutionContext
 ): string | null {
-  // Try app/Models/ first (Laravel 8+)
+  // 先尝试 app/Models/（Laravel 8+）
   let modelPath = `app/Models/${className}.php`;
   if (context.fileExists(modelPath)) {
     const nodes = context.getNodesInFile(modelPath);
-    // Look for the method in this class
+    // 在该类中查找方法
     const methodNode = nodes.find(
       (n) => n.kind === 'method' && n.name === methodName
     );
     if (methodNode) {
       return methodNode.id;
     }
-    // Return the class itself if method not found
+    // 若方法未找到，返回类本身
     const classNode = nodes.find(
       (n) => n.kind === 'class' && n.name === className
     );
@@ -239,7 +238,7 @@ function resolveModelCall(
     }
   }
 
-  // Try app/ (Laravel 7 and below)
+  // 尝试 app/（Laravel 7 及以下）
   modelPath = `app/${className}.php`;
   if (context.fileExists(modelPath)) {
     const nodes = context.getNodesInFile(modelPath);
@@ -261,14 +260,14 @@ function resolveModelCall(
 }
 
 /**
- * Resolve a Controller@method reference
+ * 解析 Controller@method 引用
  */
 function resolveControllerMethod(
   controller: string,
   method: string,
   context: ResolutionContext
 ): string | null {
-  // Try app/Http/Controllers/
+  // 尝试 app/Http/Controllers/
   const controllerPath = `app/Http/Controllers/${controller}.php`;
   if (context.fileExists(controllerPath)) {
     const nodes = context.getNodesInFile(controllerPath);
@@ -280,7 +279,7 @@ function resolveControllerMethod(
     }
   }
 
-  // Try name-based lookup for namespaced controllers
+  // 对命名空间 controller 尝试基于名称的查找
   const controllerCandidates = context.getNodesByName(controller);
   for (const ctrl of controllerCandidates) {
     if (ctrl.kind === 'class' && ctrl.filePath.includes('Controllers')) {

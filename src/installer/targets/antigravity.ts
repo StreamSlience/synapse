@@ -1,56 +1,49 @@
 ﻿/**
- * Google Antigravity IDE target. Antigravity is Google's VS Code-derived
- * multi-agent IDE; the Gemini CLI is in the process of consolidating with
- * it under a single agent platform. Antigravity reads MCP server
- * definitions from a separate config file from the CLI.
+ * Google Antigravity IDE target。Antigravity 是 Google 基于 VS Code 的
+ * 多智能体 IDE；Gemini CLI 正在与其整合，统一到单一智能体平台下。
+ * Antigravity 从独立于 CLI 的配置文件中读取 MCP 服务器定义。
  *
- * ## Config path: unified vs legacy
+ * ## 配置路径：统一版 vs 遗留版
  *
- * Antigravity recently migrated to a **unified** MCP config path shared
- * across all Antigravity tools:
+ * Antigravity 最近迁移到跨所有 Antigravity 工具共享的**统一** MCP 配置路径：
  *
- *   - **Unified** (post-migration, current): `~/.gemini/config/mcp_config.json`
- *     — signalled by the `~/.gemini/config/.migrated` marker file.
- *   - **Legacy** (pre-migration): `~/.gemini/antigravity/mcp_config.json`
- *     — what the github-mcp-server install guide still documents.
+ *   - **统一版**（迁移后，当前）：`~/.gemini/config/mcp_config.json`
+ *     ——由 `~/.gemini/config/.migrated` 标记文件标识。
+ *   - **遗留版**（迁移前）：`~/.gemini/antigravity/mcp_config.json`
+ *     ——github-mcp-server 安装指南仍记录此路径。
  *
- * We detect the marker at install time and write to the right path. On
- * uninstall we sweep BOTH — so a user who installed on the legacy path,
- * was then auto-migrated by Antigravity, and re-ran `synapse install`
- * doesn't end up with stale synapse entries in two files.
+ * 我们在安装时检测标记并写入正确路径。卸载时同时清扫两个路径——
+ * 这样，安装在遗留路径后被 Antigravity 自动迁移、再次运行 `synapse install`
+ * 的用户不会在两个文件中留下过时的 synapse 条目。
  *
- * ## Entry shape: no `type: stdio` field
+ * ## 条目格式：无 `type: stdio` 字段
  *
- * Antigravity rejects MCP entries that carry the `type: "stdio"` field
- * the rest of our targets use — the working entries it manages itself
- * (e.g. `code-review-graph`) omit it, and dropping it was load-bearing
- * to get synapse to appear in the Customizations UI. We build the
- * entry locally instead of routing through `getMcpServerConfig()`.
+ * Antigravity 会拒绝携带其他 target 使用的 `type: "stdio"` 字段的 MCP 条目——
+ * 它自身管理的有效条目（如 `code-review-graph`）均省略该字段，
+ * 去掉该字段是让 synapse 出现在 Customizations UI 中的关键。
+ * 我们在本地构建条目，而非通过 `getMcpServerConfig()` 路由。
  *
- * ## macOS GUI app PATH resolution
+ * ## macOS GUI 应用 PATH 解析
  *
- * Antigravity is a GUI Electron app. macOS gives Dock/Finder-launched
- * apps a stripped PATH (`/usr/bin:/bin:/usr/sbin:/sbin`) — nvm-managed
- * tools live outside that, so a bare `synapse` command fails to spawn
- * even when `which synapse` resolves in the user's shell. We resolve
- * `synapse` to its absolute path on macOS at install time. (Linux GUI
- * apps inherit user PATH; Windows uses `PATH` env directly — both are
- * fine with the bare command.)
+ * Antigravity 是 GUI Electron 应用。macOS 给 Dock/Finder 启动的应用
+ * 一个精简的 PATH（`/usr/bin:/bin:/usr/sbin:/sbin`）——nvm 管理的工具不在
+ * 其中，因此即使 `which synapse` 在用户 shell 中可以解析，裸 `synapse` 命令
+ * 也无法派生。我们在安装时将 `synapse` 解析为其在 macOS 上的绝对路径。
+ * （Linux GUI 应用继承用户 PATH；Windows 直接使用 `PATH` 环境变量——两者
+ * 使用裸命令均无问题。）
  *
- * ## Shared instructions (no GEMINI.md from here)
+ * ## 共享 instructions（此处不写 GEMINI.md）
  *
- * The IDE shares `~/.gemini/GEMINI.md` with Gemini CLI for instructions
- * — written by the `./gemini.ts` target. We deliberately don't touch it
- * here so uninstalling Antigravity without uninstalling Gemini CLI
- * leaves CLI instructions intact. Users who install only Antigravity
- * still get a working MCP integration; the prefer-synapse-over-grep
- * guidance just won't be present unless they also install the gemini
- * target.
+ * IDE 与 Gemini CLI 共享 `~/.gemini/GEMINI.md` 作为 instructions——由
+ * `./gemini.ts` target 写入。我们故意不在此处触碰它，这样卸载 Antigravity
+ * 而不卸载 Gemini CLI 时，CLI 的 instructions 保持完整。仅安装了 Antigravity
+ * 的用户仍能获得可用的 MCP 集成；只是在未同时安装 gemini target 的情况下，
+ * 优先使用 synapse 而非 grep 的指引不会出现。
  *
- * ## Location
+ * ## 位置
  *
- * `supportsLocation('local')` returns false — Antigravity has no
- * project-scoped config concept as of 2026-05.
+ * `supportsLocation('local')` 返回 false——截至 2026-05，Antigravity 没有
+ * 项目范围的配置概念。
  */
 
 import * as fs from 'fs';
@@ -87,14 +80,12 @@ function migratedMarkerPath(): string {
 }
 
 /**
- * Pick the right MCP config path to write to.
+ * 选择要写入的 MCP 配置路径。
  *
- * Prefers the unified `~/.gemini/config/mcp_config.json` when Antigravity
- * has signalled it's migrated (`.migrated` marker present, OR the
- * unified file already exists — Antigravity creates it on first
- * launch post-migration). Falls back to the legacy
- * `~/.gemini/antigravity/mcp_config.json` for users on a pre-migration
- * Antigravity build.
+ * 当 Antigravity 已发出迁移信号时（`.migrated` 标记存在，或统一文件已存在——
+ * Antigravity 在迁移后首次启动时会创建该文件），优先使用统一的
+ * `~/.gemini/config/mcp_config.json`。对于使用迁移前 Antigravity 版本的用户，
+ * 回退到遗留的 `~/.gemini/antigravity/mcp_config.json`。
  */
 function preferredMcpConfigPath(): string {
   if (fs.existsSync(migratedMarkerPath())) return unifiedMcpConfigPath();
@@ -103,19 +94,16 @@ function preferredMcpConfigPath(): string {
 }
 
 /**
- * Resolve the on-disk path of the `synapse` binary so a Mac GUI app
- * launched from Dock/Finder (with a stripped PATH) can find it. Falls
- * back to the bare `synapse` name when:
+ * 解析 `synapse` 二进制的磁盘路径，使从 Dock/Finder 启动的 Mac GUI 应用
+ * （PATH 已精简）也能找到它。以下情况回退到裸 `synapse` 名称：
  *
- *  - we're not on macOS (Linux GUI apps inherit user PATH; Windows
- *    uses env PATH directly), OR
- *  - the lookup fails for any reason (preserving install in restricted
- *    environments where `which`/`command -v` aren't available).
+ *  - 非 macOS（Linux GUI 应用继承用户 PATH；Windows 直接使用 env PATH），或
+ *  - 因任何原因查找失败（在 `which`/`command -v` 不可用的受限环境中
+ *    保留安装能力）。
  *
- * Resolution prefers `command -v` (built-in, no PATH manipulation),
- * with `which` as a fallback. Both are read via the user's interactive
- * shell PATH at install time — that's the right PATH for finding
- * nvm-managed tools like ours.
+ * 解析优先使用 `command -v`（内置，不操控 PATH），以 `which` 作为备选。
+ * 两者均通过用户交互式 shell 的 PATH 在安装时读取——这正是查找
+ * nvm 管理工具（如我们的工具）所需的 PATH。
  */
 function resolveSynapseCommand(): string {
   if (process.platform !== 'darwin') return 'synapse';
@@ -134,10 +122,9 @@ function resolveSynapseCommand(): string {
 }
 
 /**
- * Build the synapse MCP-server entry for Antigravity. Distinct from
- * `getMcpServerConfig()` because Antigravity (a) rejects the `type`
- * field and (b) needs an absolute command path on macOS — see file
- * header.
+ * 构建 Antigravity 的 synapse MCP 服务器条目。与 `getMcpServerConfig()`
+ * 不同，原因在于 Antigravity (a) 拒绝 `type` 字段，(b) 在 macOS 上需要
+ * 命令的绝对路径——见文件头注释。
  */
 function buildAntigravityEntry(): { command: string; args: string[] } {
   return {
@@ -162,9 +149,8 @@ class AntigravityTarget implements AgentTarget {
     const file = preferredMcpConfigPath();
     const config = readJsonFile(file);
     const alreadyConfigured = !!config.mcpServers?.synapse;
-    // "Installed" heuristic: either the unified config dir, the legacy
-    // config dir, or one of the config files exists. Antigravity creates
-    // ~/.gemini/ on first launch even before MCP configs.
+    // "已安装"启发式：统一配置目录、遗留配置目录或配置文件之一存在。
+    // Antigravity 在首次启动时即会创建 ~/.gemini/，早于任何 MCP 配置。
     const installed =
       fs.existsSync(unifiedConfigDir()) ||
       fs.existsSync(legacyConfigDir()) ||
@@ -181,9 +167,8 @@ class AntigravityTarget implements AgentTarget {
     }
     const files: WriteResult['files'] = [];
     files.push(writeMcpEntry());
-    // If the user originally installed on the legacy path and Antigravity
-    // has since migrated, strip the stale legacy entry so they don't
-    // wind up with two competing synapse configs.
+    // 若用户最初在遗留路径上安装了 synapse，而 Antigravity 此后已完成迁移，
+    // 则清除遗留的过时条目，避免留下两个相互竞争的 synapse 配置。
     const legacyCleanup = cleanupLegacyEntry();
     if (legacyCleanup) files.push(legacyCleanup);
     return {
@@ -196,20 +181,19 @@ class AntigravityTarget implements AgentTarget {
     if (loc !== 'global') return { files: [] };
     const files: WriteResult['files'] = [];
 
-    // Remove from the preferred path.
+    // 删除首选路径中的条目。
     const preferred = preferredMcpConfigPath();
     files.push(removeSynapseFromFile(preferred));
 
-    // Also sweep the OTHER path (legacy when preferred is unified, and
-    // vice versa) — handles the migration-half-state case where synapse
-    // got written to one file but Antigravity now reads from the other.
+    // 同时清扫另一个路径（首选为统一版时清扫遗留版，反之亦然）——
+    // 处理 synapse 写入一个文件但 Antigravity 现在从另一个读取的半迁移状态。
     const other = preferred === unifiedMcpConfigPath()
       ? legacyMcpConfigPath()
       : unifiedMcpConfigPath();
     if (preferred !== other) {
       const otherResult = removeSynapseFromFile(other);
-      // Only surface the secondary file if we actually touched it —
-      // a `not-found` on a file the user never had is noise.
+      // 仅在实际触碰了次要文件时展示它——
+      // 用户从未有过的文件出现 `not-found` 只是噪声。
       if (otherResult.action === 'removed') files.push(otherResult);
     }
 
@@ -252,11 +236,10 @@ function writeMcpEntry(): WriteResult['files'][number] {
 }
 
 /**
- * Strip the synapse entry from the legacy `~/.gemini/antigravity/mcp_config.json`
- * if it's present AND we're writing to the unified path. Used by install
- * to migrate users who had synapse configured on the legacy path
- * before Antigravity migrated their config. Returns the file action for
- * reporting, or `null` when there's nothing to clean up.
+ * 若遗留的 `~/.gemini/antigravity/mcp_config.json` 中存在 synapse 条目，
+ * 且我们正在写入统一路径，则清除该条目。用于在 Antigravity 迁移配置后，
+ * 将在遗留路径上配置了 synapse 的用户迁移过来。返回文件 action 用于报告，
+ * 无需清理时返回 `null`。
  */
 function cleanupLegacyEntry(): WriteResult['files'][number] | null {
   if (preferredMcpConfigPath() !== unifiedMcpConfigPath()) return null;
@@ -280,8 +263,8 @@ function removeSynapseFromFile(file: string): WriteResult['files'][number] {
   if (Object.keys(config.mcpServers).length === 0) {
     delete config.mcpServers;
   }
-  // Leave a now-empty `{}` in place — Antigravity manages this file and
-  // a stray empty file is less surprising than a deletion.
+  // 保留现在为空的 `{}` 不删除——Antigravity 管理此文件，
+  // 一个多余的空文件比意外删除更不令人惊讶。
   writeJsonFile(file, config);
   return { path: file, action: 'removed' };
 }

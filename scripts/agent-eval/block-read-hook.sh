@@ -1,10 +1,10 @@
 ﻿#!/usr/bin/env bash
-# PreToolUse hook (experiment): deny Read of synapse-indexed source files and
-# steer the agent to synapse_explore/synapse_node instead. Tests whether
-# synapse can FULLY replace Read for code-understanding once the escape hatch
-# is removed. Non-source reads (config, .env, markdown, new files) pass through.
+# PreToolUse hook（实验性）：拒绝读取 synapse 已索引的源文件，
+# 并将 agent 引导至 synapse_explore/synapse_node。验证一旦移除逃生通道，
+# synapse 能否完全替代 Read 来理解代码。
+# 非源文件读取（配置、.env、markdown、新文件）直接放行。
 #
-# Wire via:  claude ... --settings scripts/agent-eval/hook-settings.json
+# 接入方式：claude ... --settings scripts/agent-eval/hook-settings.json
 set -uo pipefail
 input="$(cat)"
 fp="$(printf '%s' "$input" | jq -r '.tool_input.file_path // empty' 2>/dev/null)"

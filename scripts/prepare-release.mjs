@@ -1,49 +1,45 @@
 ﻿#!/usr/bin/env node
 /**
- * Promote `## [Unreleased]` content into `## [<version>]` in CHANGELOG.md
- * so the release.yml workflow's `extract-release-notes.mjs <version>` call
- * picks up everything that landed since the last release.
+ * 将 CHANGELOG.md 中 `## [Unreleased]` 的内容提升为 `## [<version>]`，
+ * 使 release.yml workflow 的 `extract-release-notes.mjs <version>` 调用
+ * 能获取到自上次发布以来落地的所有内容。
  *
- * **Why this exists:** the release workflow used to do a literal
- * `extract-release-notes.mjs <version>` lookup with an `[Unreleased]`
- * fallback. The fallback only triggers if the `[<version>]` block
- * doesn't exist at all — and in practice maintainers sometimes had a
- * sparse `[<version>]` block pre-populated (e.g. one early fix
- * documented before the rest of the work landed). The workflow then
- * extracted that sparse block, ignoring the much larger `[Unreleased]`
- * section above it — so the published release notes were missing most
- * of what shipped. See v0.9.5 for the canonical post-mortem.
+ * **存在原因：** 以前 release workflow 直接执行
+ * `extract-release-notes.mjs <version>` 查找，带 `[Unreleased]` 回退。
+ * 回退仅在 `[<version>]` 块完全不存在时触发——而实际上维护者有时
+ * 会预先填充一个稀疏的 `[<version>]` 块（如在其余工作落地前就记录了
+ * 某个早期修复）。workflow 会提取那个稀疏块，忽略其上方内容丰富的
+ * `[Unreleased]` 节——导致已发布说明遗漏了大部分实际内容。
+ * 参见 v0.9.5 的典型复盘。
  *
- * **What it does**, idempotently:
+ * **幂等操作内容：**
  *
- *   Case A — `[<version>]` does not exist yet:
- *     Rename the `[Unreleased]` header to `[<version>] - <YYYY-MM-DD>`
- *     and add a fresh empty `## [Unreleased]` block above it. This is
- *     the common case.
+ *   情况 A — `[<version>]` 尚不存在：
+ *     将 `[Unreleased]` 标题重命名为 `[<version>] - <YYYY-MM-DD>`，
+ *     并在其上方添加一个新的空 `## [Unreleased]` 块。这是常见情况。
  *
- *   Case B — `[<version>]` exists AND `[Unreleased]` has content:
- *     Merge `[Unreleased]`'s sub-sections (### Added / ### Fixed /
- *     ### Changed / ### Removed / ### Deprecated / ### Security) into
- *     the corresponding sub-sections of `[<version>]`. Unmatched
- *     sub-sections are appended to `[<version>]`. The `[Unreleased]`
- *     block is then emptied.
+ *   情况 B — `[<version>]` 已存在且 `[Unreleased]` 有内容：
+ *     将 `[Unreleased]` 的子节（### Added / ### Fixed /
+ *     ### Changed / ### Removed / ### Deprecated / ### Security）
+ *     合并到 `[<version>]` 对应子节。未匹配的子节追加到 `[<version>]`。
+ *     然后清空 `[Unreleased]` 块。
  *
- *   Case C — `[Unreleased]` has no content:
- *     No-op. Exit 0. Re-runs of the workflow are safe.
+ *   情况 C — `[Unreleased]` 无内容：
+ *     空操作，退出码 0。workflow 重复运行是安全的。
  *
- * **Where the date comes from:** for Case A, `<YYYY-MM-DD>` is the
- * UTC date at run time. Matches the existing CHANGELOG convention.
+ * **日期来源：** 情况 A 中，`<YYYY-MM-DD>` 为运行时的 UTC 日期，
+ * 与现有 CHANGELOG 约定一致。
  *
- * **Usage:**
+ * **用法：**
  *
- *   node scripts/prepare-release.mjs                # reads version from package.json
- *   node scripts/prepare-release.mjs 1.2.3          # explicit version
+ *   node scripts/prepare-release.mjs                # 从 package.json 读取版本号
+ *   node scripts/prepare-release.mjs 1.2.3          # 显式指定版本号
  *
- * **Output:**
+ * **输出：**
  *
- *   Writes CHANGELOG.md in place. Prints a summary line to stdout
- *   like `prepare-release: 0.9.5 — promoted 6 Unreleased entries`.
- *   Exits non-zero on parse failures.
+ *   原地写入 CHANGELOG.md，并向 stdout 打印摘要行，
+ *   如 `prepare-release: 0.9.5 — promoted 6 Unreleased entries`。
+ *   解析失败时退出码非零。
  */
 
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -58,17 +54,15 @@ function readPackageVersion() {
 }
 
 function todayUtcIsoDate() {
-  // YYYY-MM-DD in UTC. Matches the CHANGELOG's existing convention
-  // (the existing dated entries don't disclose a timezone, but UTC is
-  // stable across runners and is what the workflow's runner produces
-  // by default anyway).
+  // UTC 格式 YYYY-MM-DD。与 CHANGELOG 现有约定一致
+  //（现有日期条目未注明时区，但 UTC 在各 runner 上稳定，
+  // 也是 workflow runner 默认产生的格式）。
   return new Date().toISOString().slice(0, 10);
 }
 
 /**
- * Split the CHANGELOG into a header preface + an ordered list of
- * version blocks `{ header, body[] }`, preserving line content
- * verbatim so we can re-join without surprises.
+ * 将 CHANGELOG 拆分为头部前置内容 + 有序的版本块列表 `{ header, body[] }`，
+ * 逐字保留行内容，以便重新合并时无意外。
  */
 function parseChangelog(text) {
   const lines = text.split('\n');
@@ -94,18 +88,16 @@ function parseChangelog(text) {
 function joinChangelog({ preface, blocks }) {
   const parts = [preface.join('\n')];
   for (const b of blocks) {
-    // Reconstruct: header + body. The block body INCLUDES the blank
-    // line after the header (it was captured verbatim).
+    // 重建：header + body。块的 body 包含标题后的空行（原样捕获）。
     parts.push([b.header, ...b.body].join('\n'));
   }
   return parts.join('\n');
 }
 
 /**
- * Split a block body into ordered sub-sections keyed by their
- * `### Heading`. Lines before the first `### Heading` go in
- * `leading`. Preserves the original (line-array) body inside each
- * sub-section so we can splice cleanly when merging.
+ * 将块的 body 拆分为有序子节，以 `### Heading` 为键。
+ * 第一个 `### Heading` 之前的行归入 `leading`。
+ * 在每个子节内保留原始（行数组）body，以便合并时能干净地拼接。
  */
 function splitSubsections(body) {
   const subsectionRe = /^### (\w+)\s*$/;
@@ -137,9 +129,8 @@ function rebuildBody({ leading, subs }) {
 }
 
 /**
- * Return true when the block has any meaningful entries (a bullet line
- * starting with `-`, `*`, or a digit) — vs. being empty / just
- * whitespace / just sub-section headers with nothing under them.
+ * 当块中含有任何实质性条目（以 `-`、`*` 或数字开头的条目行）时返回 true，
+ * 而非空块 / 仅有空白 / 仅有子节标题但无内容的情况。
  */
 function blockHasContent(body) {
   for (const line of body) {
@@ -149,8 +140,8 @@ function blockHasContent(body) {
 }
 
 /**
- * Trim trailing blank lines from an array of lines, then return.
- * Keeps the output tidy when merging.
+ * 去除行数组末尾的空行并返回。
+ * 使合并时的输出保持整洁。
  */
 function trimTrailingBlank(arr) {
   let i = arr.length;
@@ -180,7 +171,7 @@ function main() {
   }
 
   if (verIdx === -1) {
-    // Case A — promote Unreleased → [version].
+    // 情况 A — 将 Unreleased 提升为 [version]。
     const today = todayUtcIsoDate();
     const promoted = {
       header: `## [${version}] - ${today}`,
@@ -201,9 +192,8 @@ function main() {
     return;
   }
 
-  // Case B — merge Unreleased sub-sections into the existing
-  // [version] sub-sections. New sub-section headings encountered in
-  // Unreleased that don't exist in [version] get appended.
+  // 情况 B — 将 Unreleased 子节合并到已有的 [version] 子节中。
+  // Unreleased 中出现但 [version] 中不存在的子节标题，追加到末尾。
   const ver = parsed.blocks[verIdx];
   const unrelSubs = splitSubsections(unrel.body);
   const verSubs = splitSubsections(ver.body);
@@ -214,9 +204,8 @@ function main() {
     const usBody = trimTrailingBlank(us.body);
     if (usBody.length === 0) continue;
     if (target) {
-      // Append Unreleased's entries to the end of the version's matching
-      // sub-section, keeping their original ordering. Insert a separating
-      // blank line if the existing sub-section doesn't already end in one.
+      // 将 Unreleased 的条目追加到 version 匹配子节的末尾，保留原始顺序。
+      // 若现有子节末尾不是空行，则插入一个分隔空行。
       const existing = trimTrailingBlank(target.body);
       const sep = existing.length && !/^\s*$/.test(existing[existing.length - 1]) ? [''] : [];
       target.body = existing.concat(sep, usBody, ['']);
@@ -232,7 +221,7 @@ function main() {
   }
 
   ver.body = rebuildBody(verSubs);
-  // Empty out Unreleased.
+  // 清空 Unreleased。
   unrel.body = ['', ''];
 
   const merged_text = joinChangelog(parsed);
@@ -241,23 +230,20 @@ function main() {
 }
 
 /**
- * Append a `[X.Y.Z]: https://github.com/colbymchenry/synapse/releases/tag/vX.Y.Z`
- * link reference at the end of the file IF one doesn't already exist. The
- * link ref is what makes `## [X.Y.Z]` heading text auto-link to its tag in
- * GitHub's renderer; without it the heading still renders, just unlinked.
+ * 如果文件末尾尚无 `[X.Y.Z]: https://github.com/colbymchenry/synapse/releases/tag/vX.Y.Z`
+ * 链接引用，则追加一个。该链接引用使 `## [X.Y.Z]` 标题文本在 GitHub 渲染器中
+ * 自动链接到对应 tag；没有它标题仍会渲染，但不会超链接。
  *
- * Idempotent. The existing CHANGELOG mixes link refs scattered through the
- * file and a sorted block at the bottom — we just append at the very end,
- * which CommonMark accepts regardless.
+ * 幂等。现有 CHANGELOG 混合了分散在文件中的链接引用和底部的有序块——
+ * 我们直接追加到最末尾，CommonMark 无论如何都接受。
  */
 function appendLinkRef(text, version) {
   const refLine = `[${version}]: https://github.com/colbymchenry/synapse/releases/tag/v${version}`;
-  // Already there? Look for a line that EQUALS this (anywhere in the file)
-  // to keep idempotency robust against the scattered-vs-block layout.
+  // 已存在？在文件任意位置查找与此完全相等的行，
+  // 使幂等性对分散 vs 块状布局均健壮。
   const lines = text.split('\n');
   if (lines.some((l) => l.trim() === refLine)) return text;
-  // Append, separated by a blank line from the prior content. Preserve a
-  // single trailing newline at EOF.
+  // 追加，与前面内容之间用空行分隔。保留 EOF 处的单个换行符。
   const trailingNewline = text.endsWith('\n') ? '' : '\n';
   return text + trailingNewline + refLine + '\n';
 }

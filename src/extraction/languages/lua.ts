@@ -2,10 +2,10 @@ import type { Node as SyntaxNode } from 'web-tree-sitter';
 import { getNodeText, getChildByField } from '../tree-sitter-helpers';
 import type { LanguageExtractor } from '../tree-sitter-types';
 
-// Node names follow the vendored ABI-15 grammar (@tree-sitter-grammars/
-// tree-sitter-lua), NOT the older tree-sitter-wasms build — see grammars.ts.
+// 节点名称遵循内置 ABI-15 语法（@tree-sitter-grammars/
+// tree-sitter-lua），而非旧版 tree-sitter-wasms 构建版本——参见 grammars.ts。
 
-/** First descendant of a given type (breadth-first), or null. */
+/** 给定类型的第一个后代节点（广度优先），或 null。 */
 function findDescendant(node: SyntaxNode, type: string): SyntaxNode | null {
   const queue: SyntaxNode[] = [...node.namedChildren];
   while (queue.length) {
@@ -17,26 +17,25 @@ function findDescendant(node: SyntaxNode, type: string): SyntaxNode | null {
 }
 
 /**
- * If `callNode` is a `require(...)` call, return the module name; otherwise null.
- * Lua/Luau have no import statement — modules are loaded by calling the global
- * `require`. Handles both:
- *   - string requires:  `require("net.http")` / `require "net.http"`  → "net.http"
- *   - Roblox/Luau path requires: `require(script.Parent.Signal)`      → "Signal"
- *     (the dominant idiom in Roblox code, where the argument is an instance path
- *     rather than a string — use the trailing field as the module name).
+ * 如果 `callNode` 是 `require(...)` 调用，返回模块名；否则返回 null。
+ * Lua/Luau 没有 import 语句——模块通过调用全局 `require` 加载。支持两种形式：
+ *   - 字符串 require：`require("net.http")` / `require "net.http"` → "net.http"
+ *   - Roblox/Luau 路径 require：`require(script.Parent.Signal)` → "Signal"
+ *     （Roblox 代码中的主流用法，参数是实例路径而非字符串——
+ *     使用路径的最后一个字段作为模块名）。
  */
 function requireModule(callNode: SyntaxNode, source: string): string | null {
   // function_call > name: <callee>, arguments: arguments
   const name = getChildByField(callNode, 'name');
-  // A dotted/colon callee (e.g. `socket.connect`) is dot/method_index_expression,
-  // never a bare `require`.
+  // 带点/冒号的被调用方（如 `socket.connect`）是 dot/method_index_expression，
+  // 永远不是裸 `require`。
   if (!name || name.type !== 'identifier') return null;
   if (getNodeText(name, source) !== 'require') return null;
 
   const args = getChildByField(callNode, 'arguments');
   if (!args) return null;
 
-  // String require — `string > content: string_content` gives the bare name.
+  // 字符串 require——`string > content: string_content` 给出裸名。
   const content = findDescendant(args, 'string_content');
   if (content) return getNodeText(content, source).trim() || null;
   const str = findDescendant(args, 'string');
@@ -50,7 +49,7 @@ function requireModule(callNode: SyntaxNode, source: string): string | null {
     if (mod) return mod;
   }
 
-  // Roblox/Luau instance-path require: `require(script.Parent.Signal)` → "Signal".
+  // Roblox/Luau 实例路径 require：`require(script.Parent.Signal)` → "Signal"。
   const idx = findDescendant(args, 'dot_index_expression') ?? findDescendant(args, 'method_index_expression');
   if (idx) {
     const field = getChildByField(idx, 'field') ?? getChildByField(idx, 'method');
@@ -60,22 +59,22 @@ function requireModule(callNode: SyntaxNode, source: string): string | null {
 }
 
 export const luaExtractor: LanguageExtractor = {
-  // function_declaration covers global (`function f`), table (`function t.f`),
-  // method (`function t:m`), and local (`local function f`) forms — the form is
-  // distinguished by the `name:` child (identifier / dot_index_expression /
-  // method_index_expression) and a `local` token, not by separate node types.
-  // Anonymous `function() ... end` (function_definition) has no name and is
-  // captured via its enclosing variable instead.
+  // function_declaration 涵盖全局（`function f`）、表（`function t.f`）、
+  // 方法（`function t:m`）和局部（`local function f`）形式——形式
+  // 由 `name:` 子节点（identifier / dot_index_expression /
+  // method_index_expression）和 `local` token 区分，而非独立的节点类型。
+  // 匿名 `function() ... end`（function_definition）没有名称，
+  // 通过其外层变量捕获。
   functionTypes: ['function_declaration'],
-  classTypes: [], // Lua has no classes/structs/interfaces/enums — tables are used for everything
+  classTypes: [], // Lua 没有类/结构体/接口/枚举——一切都用表实现
   methodTypes: [],
   interfaceTypes: [],
   structTypes: [],
   enumTypes: [],
   typeAliasTypes: [],
-  importTypes: [], // `require` is a function_call — handled in visitNode below
+  importTypes: [], // `require` 是 function_call——在下方 visitNode 中处理
   callTypes: ['function_call'],
-  variableTypes: ['variable_declaration'], // see the `lua` branch in extractVariable
+  variableTypes: ['variable_declaration'], // 参见 extractVariable 中的 `lua` 分支
   nameField: 'name',
   bodyField: 'body',
   paramsField: 'parameters',
@@ -85,10 +84,10 @@ export const luaExtractor: LanguageExtractor = {
     return params ? getNodeText(params, source) : undefined;
   },
 
-  // `function t.f()` / `function t:m()` are methods on table `t`: return the
-  // table as the receiver so they extract as methods with a `t::f` qualified
-  // name. Plain `function f()` / `local function f()` have no receiver and stay
-  // functions. (For `a.b.c`, the receiver is the nested `a.b`.)
+  // `function t.f()` / `function t:m()` 是表 `t` 上的方法：返回
+  // 表作为接收者，使其以 `t::f` 限定名被提取为方法。
+  // 普通 `function f()` / `local function f()` 没有接收者，保持为函数。
+  //（对于 `a.b.c`，接收者是嵌套的 `a.b`。）
   getReceiverType: (node, source) => {
     const name = getChildByField(node, 'name');
     if (name && (name.type === 'dot_index_expression' || name.type === 'method_index_expression')) {
@@ -98,10 +97,9 @@ export const luaExtractor: LanguageExtractor = {
     return undefined;
   },
 
-  // Emit import nodes for `require(...)`. The local-declaration form is handled
-  // explicitly because the variable branch skips the initializer subtree; bare
-  // and global `require` calls are caught when the walker reaches the
-  // function_call node.
+  // 为 `require(...)` 触发 import 节点。局部声明形式在此显式处理，
+  // 因为 variable 分支会跳过初始化器子树；裸 require 和全局 require 调用
+  // 在遍历器到达 function_call 节点时被捕获。
   visitNode: (node, ctx) => {
     const source = ctx.source;
 
@@ -125,7 +123,7 @@ export const luaExtractor: LanguageExtractor = {
       }
     };
 
-    // Bare / global `require("x")` — claim it so it isn't double-counted as a call.
+    // 裸 / 全局 `require("x")`——声明它，使其不被重复计为一次调用。
     if (node.type === 'function_call') {
       if (requireModule(node, source)) {
         emit(node);
@@ -134,8 +132,8 @@ export const luaExtractor: LanguageExtractor = {
       return false;
     }
 
-    // `local x = require("x")` — variable_declaration wraps an assignment_statement
-    // whose initializer subtree the variable branch will skip, so dig it out here.
+    // `local x = require("x")`——variable_declaration 包装了一个 assignment_statement，
+    // 其初始化器子树会被 variable 分支跳过，因此在此处挖出。
     if (node.type === 'variable_declaration') {
       const assign = node.namedChildren.find((c) => c.type === 'assignment_statement');
       const exprList = assign?.namedChildren.find((c) => c.type === 'expression_list');

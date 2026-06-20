@@ -1,14 +1,11 @@
 ﻿/**
- * Backwards-compat shim — original Claude-only writer functions.
+ * 向后兼容的 shim——原始仅针对 Claude 的写入函数。
  *
- * The installer now uses the multi-target architecture in
- * `./targets/`. This file is preserved so existing imports (the test
- * suite, downstream tooling) keep working unchanged. Each function
- * delegates to the Claude target. New code should import the target
- * registry from `./targets/registry` directly.
+ * 安装器现已采用 `./targets/` 下的多目标架构。保留此文件是为了让现有的
+ * 导入（测试套件、下游工具）保持不变。每个函数均委托给 Claude target。
+ * 新代码应直接从 `./targets/registry` 导入 target 注册表。
  *
- * @deprecated Use `targets/registry.ts` and the `AgentTarget`
- *   abstraction instead.
+ * @deprecated 请改用 `targets/registry.ts` 和 `AgentTarget` 抽象。
  */
 
 import * as path from 'path';
@@ -22,14 +19,12 @@ import { readJsonFile } from './targets/shared';
 export type InstallLocation = 'global' | 'local';
 
 /**
- * Each shim calls ONLY the named per-file helper — writeMcpConfig
- * writes only the MCP JSON, writePermissions only settings.json. The
- * full multi-file install lives in `claudeTarget.install()` which the
- * new orchestrator uses.
+ * 每个 shim 仅调用指定的单文件辅助函数——writeMcpConfig 只写 MCP JSON，
+ * writePermissions 只写 settings.json。完整的多文件安装逻辑位于
+ * `claudeTarget.install()` 中，由新的编排器调用。
  *
- * There is no `writeClaudeMd` shim anymore: synapse stopped writing a
- * CLAUDE.md instructions block (issue #529) now that the MCP server's
- * `initialize` instructions are the single source of truth.
+ * 不再存在 `writeClaudeMd` shim：自从 MCP 服务器的 `initialize` 指令成为
+ * 唯一真实来源后，synapse 已停止向 CLAUDE.md 写入 instructions 块（issue #529）。
  */
 export function writeMcpConfig(location: InstallLocation): void {
   writeMcpEntry(location);
@@ -40,8 +35,8 @@ export function writePermissions(location: InstallLocation): void {
 }
 
 export function hasMcpConfig(location: InstallLocation): boolean {
-  // local scope lives in ./.mcp.json (project scope); global is the
-  // user-scope ~/.claude.json. Mirrors the Claude target's paths.
+  // 本地作用域存放于 ./.mcp.json（项目范围）；全局为用户范围的 ~/.claude.json。
+  // 与 Claude target 的路径保持镜像。
   const file = location === 'global'
     ? path.join(os.homedir(), '.claude.json')
     : path.join(process.cwd(), '.mcp.json');

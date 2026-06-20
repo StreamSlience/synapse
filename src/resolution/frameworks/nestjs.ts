@@ -1,25 +1,23 @@
 /**
- * NestJS Framework Resolver
+ * NestJS 框架解析器
  *
- * Handles NestJS decorator-based routing across its transport layers:
- *   - HTTP:          @Controller(prefix) + @Get/@Post/@Put/@Patch/@Delete/@Head/@Options/@All
- *   - GraphQL:       @Resolver + @Query/@Mutation/@Subscription
- *   - Microservices: @MessagePattern / @EventPattern
- *   - WebSockets:    @WebSocketGateway(namespace) + @SubscribeMessage(event)
+ * 处理 NestJS 基于装饰器的路由，覆盖以下传输层：
+ *   - HTTP：         @Controller(prefix) + @Get/@Post/@Put/@Patch/@Delete/@Head/@Options/@All
+ *   - GraphQL：      @Resolver + @Query/@Mutation/@Subscription
+ *   - 微服务：       @MessagePattern / @EventPattern
+ *   - WebSockets：   @WebSocketGateway(namespace) + @SubscribeMessage(event)
  *
- * Like the other framework extractors this is regex-over-source (comment-
- * stripped), not AST traversal. NestJS differs from Spring/ASP.NET in two ways
- * that this resolver has to account for:
+ * 与其他框架提取器相同，这里采用正则扫描源码（剥离注释后），而非 AST 遍历。
+ * NestJS 与 Spring/ASP.NET 有两点不同，本解析器需要处理：
  *
- *   1. An HTTP route's path is split across TWO decorators — the class-level
- *      `@Controller` prefix and the method-level `@Get`/`@Post` path — and both
- *      are frequently empty (`@Controller()`, `@Get()`). We pair each method
- *      decorator with its enclosing class and join the two paths.
+ *   1. HTTP 路由的路径分散在两个装饰器中——类级别的 `@Controller` 前缀和
+ *      方法级别的 `@Get`/`@Post` 路径——两者都可能为空
+ *      （`@Controller()`、`@Get()`）。我们将每个方法装饰器与其所在的类配对，
+ *      然后拼接两段路径。
  *
- *   2. `@Query()` is overloaded: it's a GraphQL *method* decorator (from
- *      `@nestjs/graphql`) AND a REST *parameter* decorator (from
- *      `@nestjs/common`). We only treat it as GraphQL when it sits inside an
- *      `@Resolver` class, which is what disambiguates the two.
+ *   2. `@Query()` 存在重载：它既是来自 `@nestjs/graphql` 的 GraphQL *方法*
+ *      装饰器，也是来自 `@nestjs/common` 的 REST *参数*装饰器。只有当它
+ *      位于 `@Resolver` 类内部时，才将其视为 GraphQL，这是区分两者的依据。
  */
 
 import { Node } from '../../types';
@@ -32,9 +30,9 @@ import {
 import { stripCommentsForRegex } from '../strip-comments';
 
 // ---------------------------------------------------------------------------
-// Public surface — see comment at top of file. This file owns four NestJS
-// concerns: HTTP routes, GraphQL ops, microservice handlers, WebSocket
-// handlers, and (in postExtract below) cross-file RouterModule prefixing.
+// 公开接口——参见文件顶部注释。本文件负责四项 NestJS 关注点：HTTP 路由、
+// GraphQL 操作、微服务处理器、WebSocket 处理器，以及（在下方 postExtract 中）
+// 跨文件的 RouterModule 前缀处理。
 // ---------------------------------------------------------------------------
 
 type JsLang = 'typescript' | 'javascript';
@@ -47,7 +45,7 @@ export const nestjsResolver: FrameworkResolver = {
   languages: ['typescript', 'javascript'],
 
   detect(context: ResolutionContext): boolean {
-    // Primary, fast path: any @nestjs/* dependency in package.json.
+    // 主路径，快速：检查 package.json 中是否有任何 @nestjs/* 依赖。
     const packageJson = context.readFile('package.json');
     if (packageJson) {
       try {
@@ -57,11 +55,11 @@ export const nestjsResolver: FrameworkResolver = {
           return true;
         }
       } catch {
-        // Invalid JSON — fall through to the source scan.
+        // JSON 格式无效——继续扫描源码。
       }
     }
 
-    // Fallback: NestJS-specific decorators in conventionally named files.
+    // 回退：在按约定命名的文件中查找 NestJS 特有装饰器。
     const allFiles = context.getAllFiles();
     for (const file of allFiles) {
       if (
@@ -89,9 +87,8 @@ export const nestjsResolver: FrameworkResolver = {
   },
 
   resolve(ref: UnresolvedRef, context: ResolutionContext): ResolvedRef | null {
-    // Resolve provider/controller references (e.g. constructor-injected
-    // `UsersService`) to their class, preferring the Nest file-name
-    // convention (`*.service.ts`, `*.controller.ts`, …).
+    // 解析 provider/controller 引用（例如构造函数注入的 `UsersService`）
+    // 到其对应的类，优先按 Nest 文件命名约定（`*.service.ts`、`*.controller.ts` 等）。
     for (const [suffix, convention] of PROVIDER_CONVENTIONS) {
       if (!suffix.test(ref.referenceName)) continue;
       const candidates = context
@@ -155,7 +152,7 @@ export const nestjsResolver: FrameworkResolver = {
 
     const scopes = buildClassScopes(safe);
 
-    // HTTP routes: method decorator path joined onto the enclosing controller's prefix.
+    // HTTP 路由：方法装饰器路径与外层控制器前缀拼接。
     for (const hit of findDecorators(safe, HTTP_METHODS)) {
       const scope = scopeFor(scopes, hit.index);
       const prefix = scope && scope.kind === 'controller' ? scope.prefix : '';
@@ -163,8 +160,8 @@ export const nestjsResolver: FrameworkResolver = {
       addRoute(hit.index, hit.name.toUpperCase(), path, hit.length, methodNameAfter(safe, hit.end));
     }
 
-    // GraphQL operations: only inside an @Resolver class (disambiguates the
-    // REST `@Query()` parameter decorator, which lives inside @Controller classes).
+    // GraphQL 操作：仅在 @Resolver 类内部（用于区分 REST `@Query()` 参数装饰器，
+    // 后者位于 @Controller 类中）。
     for (const hit of findDecorators(safe, GQL_OPS)) {
       const scope = scopeFor(scopes, hit.index);
       if (!scope || scope.kind !== 'resolver') continue;
@@ -173,14 +170,14 @@ export const nestjsResolver: FrameworkResolver = {
       addRoute(hit.index, hit.name.toUpperCase(), name, hit.length, handler);
     }
 
-    // Microservice message/event handlers.
+    // 微服务消息/事件处理器。
     for (const hit of findDecorators(safe, ['MessagePattern', 'EventPattern'])) {
       const verb = hit.name === 'EventPattern' ? 'EVENT' : 'MESSAGE';
       const handler = methodNameAfter(safe, hit.end);
       addRoute(hit.index, verb, parseStringArg(hit.args) || handler || '', hit.length, handler);
     }
 
-    // WebSocket message handlers, prefixed with the gateway namespace when present.
+    // WebSocket 消息处理器，当存在网关命名空间时添加前缀。
     for (const hit of findDecorators(safe, ['SubscribeMessage'])) {
       const scope = scopeFor(scopes, hit.index);
       const namespace = scope && scope.kind === 'gateway' ? scope.prefix : '';
@@ -193,26 +190,22 @@ export const nestjsResolver: FrameworkResolver = {
   },
 
   /**
-   * Cross-file finalization for `RouterModule.register([...])`. The per-file
-   * extract() above only sees `@Controller(prefix) + @Get(path)` — it can't
-   * learn about the route prefix supplied by a sibling `app.module.ts` like:
+   * 针对 `RouterModule.register([...])` 的跨文件后处理。每个文件的 extract()
+   * 只能看到 `@Controller(prefix) + @Get(path)`——无法获知同级 `app.module.ts`
+   * 中类似如下的路由前缀：
    *
    *   RouterModule.register([
    *     { path: 'admin', module: AdminModule, children: [
    *       { path: 'users', module: UsersModule } ] } ])
    *
-   * This pass scans every `*.module.{ts,js}` file, walks the registration
-   * tree to build a `Module → /full/prefix` map, walks each `@Module({
-   * controllers: [...] })` to build a `Controller → Module` map, and rewrites
-   * affected route nodes so `GET /` becomes `GET /admin/users` (and
-   * `@Controller('foo') + @Get(':id')` under that same module becomes
-   * `GET /admin/users/foo/:id`).
+   * 本轮次扫描所有 `*.module.{ts,js}` 文件，遍历注册树构建 `Module → /full/prefix`
+   * 映射，再遍历每个 `@Module({ controllers: [...] })` 构建 `Controller → Module`
+   * 映射，最终重写受影响的路由节点，使 `GET /` 变为 `GET /admin/users`
+   * （同一模块下 `@Controller('foo') + @Get(':id')` 变为 `GET /admin/users/foo/:id`）。
    *
-   * The route node's `id` and `qualifiedName` are deliberately preserved
-   * across the update: `id` because existing route→handler edges reference
-   * it, `qualifiedName` because it still encodes the *original* in-file
-   * `method:path` — which keeps this pass idempotent (a second run recovers
-   * the same input regardless of how many times it has already prefixed).
+   * 路由节点的 `id` 和 `qualifiedName` 在更新中刻意保持不变：`id` 因为现有的
+   * 路由→处理器边引用了它；`qualifiedName` 仍然编码了文件内的原始 `method:path`
+   * ——这使本轮次具有幂等性（无论已执行多少次前缀操作，再次运行均能恢复相同输入）。
    */
   postExtract(context: ResolutionContext): Node[] {
     const moduleToPrefix = new Map<string, string>();
@@ -230,8 +223,8 @@ export const nestjsResolver: FrameworkResolver = {
     const controllerToPrefix = new Map<string, string>();
     for (const [controller, module] of controllerToModule) {
       const prefix = moduleToPrefix.get(module);
-      // `''` and `'/'` are no-op prefixes; skip them so we don't run updates
-      // that would set name to the value it already has.
+      // `''` 和 `'/'` 是无操作前缀；跳过它们以避免执行
+      // 将 name 设为与当前值相同的无效更新。
       if (prefix && prefix !== '' && prefix !== '/') {
         controllerToPrefix.set(controller, prefix);
       }
@@ -249,10 +242,8 @@ export const nestjsResolver: FrameworkResolver = {
           .getNodesInFile(cls.filePath)
           .filter((n) => n.kind === 'route');
         for (const route of routes) {
-          // Multiple controllers can live in one file (covered by the
-          // existing "attributes methods to the right controller" test);
-          // each route must be associated with the controller whose line
-          // range contains it.
+      // 一个文件中可以存在多个控制器（已由现有的"将方法归属到正确控制器"
+      // 测试覆盖）；每条路由必须关联到其行范围包含该路由的控制器。
           if (route.startLine < cls.startLine || route.startLine > cls.endLine) {
             continue;
           }
@@ -267,7 +258,7 @@ export const nestjsResolver: FrameworkResolver = {
 };
 
 // ---------------------------------------------------------------------------
-// Provider resolution conventions
+// Provider 解析约定
 // ---------------------------------------------------------------------------
 
 const PROVIDER_CONVENTIONS: Array<[RegExp, string]> = [
@@ -283,27 +274,26 @@ const PROVIDER_CONVENTIONS: Array<[RegExp, string]> = [
 ];
 
 // ---------------------------------------------------------------------------
-// Decorator scanning
+// 装饰器扫描
 // ---------------------------------------------------------------------------
 
 interface DecoratorHit {
-  /** Decorator name without the leading `@` (e.g. `Get`). */
+  /** 不含前导 `@` 的装饰器名称（如 `Get`）。 */
   name: string;
-  /** Raw text between the decorator's parentheses. */
+  /** 装饰器括号内的原始文本。 */
   args: string;
-  /** Index of the leading `@` in the (comment-stripped) source. */
+  /** 前导 `@` 在（剥离注释后的）源码中的索引。 */
   index: number;
-  /** Index just past the decorator's closing `)`. */
+  /** 装饰器闭合 `)` 之后的索引。 */
   end: number;
-  /** Character length of the whole `@Name(...)` decorator. */
+  /** 整个 `@Name(...)` 装饰器的字符长度。 */
   length: number;
 }
 
 /**
- * Find every `@Name(...)` decorator whose name is in `names`. Uses a
- * string-aware balanced-paren reader for the argument list so type thunks
- * like `@Query(() => [User])` are captured whole rather than truncated at the
- * inner `()`.
+ * 查找所有名称在 `names` 中的 `@Name(...)` 装饰器。使用字符串感知的平衡括号
+ * 读取器解析参数列表，以便像 `@Query(() => [User])` 这样含类型 thunk 的装饰器
+ * 能被完整捕获，而不会在内层 `()` 处截断。
  */
 function findDecorators(safe: string, names: string[]): DecoratorHit[] {
   const hits: DecoratorHit[] = [];
@@ -326,9 +316,9 @@ function findDecorators(safe: string, names: string[]): DecoratorHit[] {
 }
 
 /**
- * Read a balanced `(...)` starting at `openIndex` (which must point at `(`).
- * String-aware, so parens inside string literals don't unbalance the count.
- * Returns the inner text and the index just past the closing `)`.
+ * 从 `openIndex`（必须指向 `(`）开始读取平衡的 `(...)`。
+ * 字符串感知，因此字符串字面量内的括号不会破坏计数。
+ * 返回内部文本及闭合 `)` 之后的索引。
  */
 function readArgs(s: string, openIndex: number): { args: string; end: number } | null {
   if (s[openIndex] !== '(') return null;
@@ -358,9 +348,8 @@ function readArgs(s: string, openIndex: number): { args: string; end: number } |
 }
 
 /**
- * Starting just after a method decorator's `)`, return the name of the method
- * it decorates. Skips any further stacked decorators (`@UseGuards(...)`,
- * `@HttpCode(204)`, …) and access/async modifiers in between.
+ * 从方法装饰器的 `)` 之后开始，返回被装饰方法的名称。跳过其间的其他堆叠
+ * 装饰器（`@UseGuards(...)`、`@HttpCode(204)` 等）以及访问/async 修饰符。
  */
 function methodNameAfter(safe: string, start: number): string | null {
   let i = start;
@@ -374,7 +363,7 @@ function methodNameAfter(safe: string, start: number): string | null {
     if (ws.exec(safe)) i = ws.lastIndex;
   };
 
-  // Skip stacked decorators.
+    // 跳过堆叠的装饰器。
   for (;;) {
     eatWs();
     if (safe[i] !== '@') break;
@@ -389,7 +378,7 @@ function methodNameAfter(safe: string, start: number): string | null {
     }
   }
 
-  // Skip access/async/static modifiers.
+  // 跳过访问/async/static 修饰符。
   for (;;) {
     eatWs();
     modifier.lastIndex = i;
@@ -407,24 +396,22 @@ function methodNameAfter(safe: string, start: number): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// Class scopes (controller / resolver / gateway boundaries)
+// 类作用域（controller / resolver / gateway 边界）
 // ---------------------------------------------------------------------------
 
 type ClassKind = 'controller' | 'resolver' | 'gateway' | 'other';
 
 interface ClassScope {
   kind: ClassKind;
-  /** HTTP prefix (controller) or WS namespace (gateway); '' otherwise. */
+  /** HTTP 前缀（controller）或 WS 命名空间（gateway）；其他情况为 ''。 */
   prefix: string;
   start: number;
   end: number;
 }
 
 /**
- * Build the list of class-level decorator scopes, sorted by position. Each
- * scope runs from its decorator up to the next class decorator (of any kind),
- * which lets a method decorator find its enclosing class regardless of how
- * many classes share a file.
+ * 构建按位置排序的类级装饰器作用域列表。每个作用域从其装饰器延伸至下一个
+ * 类装饰器（任意类型），使方法装饰器能找到其所属的类，无论文件中有多少个类。
  */
 function buildClassScopes(safe: string): ClassScope[] {
   const defs: Array<{ kind: ClassKind; name: string; prefixOf: (a: string) => string }> = [
@@ -460,32 +447,32 @@ function scopeFor(scopes: ClassScope[], index: number): ClassScope | null {
 }
 
 // ---------------------------------------------------------------------------
-// Argument parsing
+// 参数解析
 // ---------------------------------------------------------------------------
 
-/** First string literal anywhere in the args, or '' (covers `'x'`, `{ k: 'x' }`). */
+/** 参数中第一个字符串字面量，或 ''（支持 `'x'`、`{ k: 'x' }` 等形式）。 */
 function parseStringArg(args: string): string {
   const m = args.match(/['"`]([^'"`]*)['"`]/);
   return m ? m[1]! : '';
 }
 
-/** `@Controller('users')` | `@Controller({ path: 'users', host })` | `@Controller(['a','b'])` | `@Controller()`. */
+/** `@Controller('users')` | `@Controller({ path: 'users', host })` | `@Controller(['a','b'])` | `@Controller()`。 */
 function parseControllerPrefix(args: string): string {
   const obj = args.match(/path\s*:\s*['"`]([^'"`]*)['"`]/);
   if (obj) return obj[1]!;
   return parseStringArg(args);
 }
 
-/** `@WebSocketGateway({ namespace: 'chat' })` | `@WebSocketGateway(81, { namespace: '/chat' })` | `@WebSocketGateway()`. */
+/** `@WebSocketGateway({ namespace: 'chat' })` | `@WebSocketGateway(81, { namespace: '/chat' })` | `@WebSocketGateway()`。 */
 function parseGatewayNamespace(args: string): string {
   const m = args.match(/namespace\s*:\s*['"`]([^'"`]*)['"`]/);
   return m ? m[1]! : '';
 }
 
 /**
- * GraphQL operation name. Prefers an explicit `{ name: 'x' }` or a leading
- * string literal (`@Query('users')`); otherwise the field name defaults to the
- * handler method name. Avoids mistaking a `description` string for the name.
+ * GraphQL 操作名称。优先使用显式的 `{ name: 'x' }` 或前导字符串字面量
+ * （`@Query('users')`）；否则字段名默认为处理器方法名。避免将 `description`
+ * 字符串误认为名称。
  */
 function parseGraphqlName(args: string, handler: string | null): string {
   const named = args.match(/name\s*:\s*['"`]([^'"`]*)['"`]/);
@@ -496,10 +483,10 @@ function parseGraphqlName(args: string, handler: string | null): string {
 }
 
 // ---------------------------------------------------------------------------
-// Path helpers
+// 路径辅助函数
 // ---------------------------------------------------------------------------
 
-/** Join a controller prefix and method path into a single normalised `/path`. */
+/** 将控制器前缀和方法路径拼接为规范化的单个 `/path`。 */
 function joinHttpPath(prefix: string, sub: string): string {
   const parts = [prefix, sub]
     .map((p) => p.trim().replace(/^\/+|\/+$/g, ''))
@@ -517,17 +504,16 @@ function detectLanguage(filePath: string): JsLang {
 }
 
 // ---------------------------------------------------------------------------
-// RouterModule + @Module walkers (used by postExtract above)
+// RouterModule + @Module 遍历器（由 postExtract 调用）
 // ---------------------------------------------------------------------------
 
 /**
- * Walk every `RouterModule.register([...])` call (and the equivalent
- * `RouterModule.forRoot([...])` and `forChild([...])` aliases) and populate
- * `out` with `Module → /full/prefix`. Recursive `children` arrays inherit
- * their parent's prefix.
+ * 遍历每个 `RouterModule.register([...])` 调用（以及等价的
+ * `RouterModule.forRoot([...])` 和 `forChild([...])` 别名），并将
+ * `Module → /full/prefix` 写入 `out`。递归的 `children` 数组继承其父级前缀。
  *
- * First-write-wins: if the same module appears in two registrations we keep
- * the first prefix seen rather than overwriting. NestJS itself does the same.
+ * 首次写入优先：若同一模块出现在两个注册中，保留第一个前缀而不覆盖。
+ * NestJS 本身的行为与此相同。
  */
 function collectRouterModuleRegistrations(safe: string, out: Map<string, string>): void {
   const re = /\bRouterModule\s*\.\s*(?:register|forRoot|forChild)\s*\(/g;
@@ -549,15 +535,14 @@ interface RouteItem {
 }
 
 /**
- * Parse a `[ {...}, {...} ]` argument list into a list of `RouteItem`s. The
- * args are expected to be an inline literal — references to a `const routes:
- * Routes = [...]` declared earlier in the file aren't followed (rare in
- * practice; the registration is usually inline).
+ * 将 `[ {...}, {...} ]` 参数列表解析为 `RouteItem` 列表。参数应为内联字面量——
+ * 不追踪文件中早先声明的 `const routes: Routes = [...]` 引用
+ * （实际中很少见；注册通常是内联的）。
  */
 function parseRoutesArray(args: string): RouteItem[] {
   const trimmed = args.trim();
   if (!trimmed.startsWith('[')) return [];
-  // Strip outer [ ... ] respecting balanced brackets.
+  // 去掉外层 [ ... ]，保持括号平衡。
   const close = matchingClose(trimmed, 0);
   if (close < 0) return [];
   return parseRouteObjects(trimmed.slice(1, close));
@@ -592,19 +577,17 @@ function walkRoutesTree(
 }
 
 /**
- * Walk every `@Module(...)` decorator and populate `out` with
- * `Controller → enclosingModuleClassName`, based on the decorator's
- * `controllers: [...]` field and the class declaration that follows the
- * decorator (skipping stacked decorators and export/default/abstract
- * modifiers).
+ * 遍历每个 `@Module(...)` 装饰器，根据装饰器的 `controllers: [...]` 字段
+ * 以及装饰器后紧跟的类声明（跳过堆叠装饰器和 export/default/abstract 修饰符），
+ * 将 `Controller → enclosingModuleClassName` 写入 `out`。
  */
 function collectModuleControllers(safe: string, out: Map<string, string>): void {
   for (const hit of findDecorators(safe, ['Module'])) {
     const className = classNameAfter(safe, hit.end);
     if (!className) continue;
     for (const controller of parseControllersField(hit.args)) {
-      // First-write-wins, same as RouterModule, so a controller listed in two
-      // modules picks up the one declared earliest in source.
+      // 首次写入优先，与 RouterModule 相同；若一个控制器同时出现在两个模块中，
+      // 取源码中最早声明的那个。
       if (!out.has(controller)) out.set(controller, className);
     }
   }
@@ -620,9 +603,8 @@ function parseControllersField(args: string): string[] {
 }
 
 /**
- * Starting just after a class decorator's `)`, return the name of the class
- * it decorates. Mirrors `methodNameAfter` for methods: skips stacked
- * decorators and `export`/`default`/`abstract` modifiers.
+ * 从类装饰器的 `)` 之后开始，返回被装饰类的名称。镜像方法版的
+ * `methodNameAfter`：跳过堆叠装饰器以及 `export`/`default`/`abstract` 修饰符。
  */
 function classNameAfter(safe: string, start: number): string | null {
   let i = start;
@@ -656,10 +638,10 @@ function classNameAfter(safe: string, start: number): string | null {
 }
 
 /**
- * Recompute a route node's `name` by prepending `prefix` to the *original*
- * in-file path. The original is recovered from `qualifiedName`, which the
- * per-file extract emits as `${filePath}::${method}:${path}` and which this
- * pass deliberately never mutates — that's what keeps the update idempotent.
+ * 通过在原始文件内路径前加上 `prefix` 来重新计算路由节点的 `name`。
+ * 原始路径从 `qualifiedName` 中恢复，该字段由每个文件的 extract 以
+ * `${filePath}::${method}:${path}` 格式写入，本轮次刻意不对其修改——
+ * 这正是保证更新幂等性的关键。
  */
 function applyModulePrefix(route: Node, prefix: string): Node | null {
   const sep = '::';
@@ -675,10 +657,10 @@ function applyModulePrefix(route: Node, prefix: string): Node | null {
 }
 
 // ---------------------------------------------------------------------------
-// Small string utilities (object/array literal splitters)
+// 小型字符串工具函数（对象/数组字面量分割器）
 // ---------------------------------------------------------------------------
 
-/** Return the index of the bracket that closes the one at `open`, or -1. */
+/** 返回闭合 `open` 处括号的索引，若未找到则返回 -1。 */
 function matchingClose(s: string, open: number): number {
   const opener = s[open];
   if (opener !== '[' && opener !== '{' && opener !== '(') return -1;
@@ -702,9 +684,8 @@ function matchingClose(s: string, open: number): number {
 }
 
 /**
- * Split `s` into the contents of each top-level object literal. Brackets and
- * string literals are balanced so nested arrays/objects/strings inside an
- * object don't cause an early split.
+ * 将 `s` 拆分为每个顶层对象字面量的内容。括号和字符串字面量均做平衡处理，
+ * 使对象内部嵌套的数组/对象/字符串不会导致提前分割。
  */
 function splitTopLevelObjects(s: string): string[] {
   const out: string[] = [];
@@ -737,9 +718,8 @@ function splitTopLevelObjects(s: string): string[] {
 }
 
 /**
- * Read a string-valued field — `key: 'value'` — out of one object literal's
- * body. Returns `''` if not present. The leading character class guards
- * against matching a field whose name *contains* the target as a suffix.
+ * 从一个对象字面量的主体中读取字符串值字段——`key: 'value'`。
+ * 若不存在则返回 `''`。开头的字符类用于防止名称尾部包含目标字符串的字段被匹配。
  */
 function parseStringField(obj: string, name: string): string {
   const re = new RegExp(`(?:^|[,{\\s])${name}\\s*:\\s*['"\`]([^'"\`]*)['"\`]`);
@@ -747,14 +727,14 @@ function parseStringField(obj: string, name: string): string {
   return m ? m[1]! : '';
 }
 
-/** Read an identifier-valued field — `key: SomeIdent` — out of one object body. */
+/** 从一个对象主体中读取标识符值字段——`key: SomeIdent`。 */
 function parseIdentField(obj: string, name: string): string | null {
   const re = new RegExp(`(?:^|[,{\\s])${name}\\s*:\\s*([A-Za-z_$][\\w$]*)`);
   const m = obj.match(re);
   return m ? m[1]! : null;
 }
 
-/** Read an array-valued field — `key: [ ... ]` — as the raw inner text. */
+/** 将数组值字段——`key: [ ... ]`——作为原始内部文本读取。 */
 function parseArrayField(obj: string, name: string): string | null {
   const re = new RegExp(`(?:^|[,{\\s])${name}\\s*:\\s*\\[`);
   const m = re.exec(obj);

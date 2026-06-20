@@ -2,13 +2,13 @@ import { Node, Edge, ExtractionResult, ExtractionError, UnresolvedReference } fr
 import { generateNodeId } from './tree-sitter-helpers';
 
 /**
- * LiquidExtractor - Extracts relationships from Liquid template files
+ * LiquidExtractor - 从 Liquid 模板文件中提取关系
  *
- * Liquid is a templating language (used by Shopify, Jekyll, etc.) that doesn't
- * have traditional functions or classes. Instead, we extract:
- * - Section references ({% section 'name' %})
- * - Snippet references ({% render 'name' %} and {% include 'name' %})
- * - Schema blocks ({% schema %}...{% endschema %})
+ * Liquid 是一种模板语言（被 Shopify、Jekyll 等使用），没有传统意义上的
+ * 函数或类。我们提取的内容包括：
+ * - Section 引用（{% section 'name' %}）
+ * - Snippet 引用（{% render 'name' %} 和 {% include 'name' %}）
+ * - Schema 块（{% schema %}...{% endschema %}）
  */
 export class LiquidExtractor {
   private filePath: string;
@@ -24,32 +24,32 @@ export class LiquidExtractor {
   }
 
   /**
-   * Extract from Liquid source
+   * 从 Liquid 源码中提取内容
    */
   extract(): ExtractionResult {
     const startTime = Date.now();
 
     try {
-      // Create file node
+      // 创建文件节点
       const fileNode = this.createFileNode();
 
-      // Shopify OS 2.0 JSON template / section group: link each section `type`
-      // to its `sections/<type>.liquid` file. (No symbol nodes are emitted — the
-      // JSON file just carries the references — so it stays out of any
-      // symbol-bearing-file metric while its sections still get their dependents.)
+      // Shopify OS 2.0 JSON 模板 / section group：将每个 section 的 `type`
+      // 关联到其对应的 `sections/<type>.liquid` 文件。（不生成符号节点——
+      // JSON 文件仅承载引用——因此不计入任何符号承载文件指标，
+      // 但其 section 仍能获得依赖方。）
       if (this.filePath.endsWith('.json')) {
         this.extractShopifyJsonSections(fileNode.id);
       } else {
-        // Extract render/include statements (snippet references)
+        // 提取 render/include 语句（snippet 引用）
         this.extractSnippetReferences(fileNode.id);
 
-        // Extract section references
+        // 提取 section 引用
         this.extractSectionReferences(fileNode.id);
 
-        // Extract schema block
+        // 提取 schema 块
         this.extractSchema(fileNode.id);
 
-        // Extract assign statements as variables
+        // 提取 assign 语句作为变量
         this.extractAssignments(fileNode.id);
       }
     } catch (error) {
@@ -70,7 +70,7 @@ export class LiquidExtractor {
   }
 
   /**
-   * Create a file node for the Liquid template
+   * 为 Liquid 模板创建文件节点
    */
   private createFileNode(): Node {
     const lines = this.source.split('\n');
@@ -95,17 +95,17 @@ export class LiquidExtractor {
   }
 
   /**
-   * Shopify OS 2.0 JSON template / section group. Both have a `sections` object
-   * mapping an id → `{ "type": "<section-name>", ... }`; the `type` names a
-   * `sections/<type>.liquid` file. Emit a `references` edge to each, so a section
-   * used only from a JSON template (the OS 2.0 norm) is no longer orphaned.
+   * Shopify OS 2.0 JSON 模板 / section group。两者都有一个 `sections` 对象，
+   * 将 id 映射到 `{ "type": "<section-name>", ... }`；`type` 指向
+   * `sections/<type>.liquid` 文件。为每个文件生成一条 `references` 边，
+   * 这样仅从 JSON 模板引用的 section（OS 2.0 的规范做法）就不再是孤儿节点。
    */
   private extractShopifyJsonSections(fromNodeId: string): void {
     let parsed: unknown;
     try {
       parsed = JSON.parse(this.source);
     } catch {
-      return; // not valid JSON (or a partial) — nothing to link
+      return; // 无效 JSON（或不完整）——没有可关联的内容
     }
     const sections = (parsed as { sections?: Record<string, { type?: unknown }> })?.sections;
     if (!sections || typeof sections !== 'object') return;
@@ -125,10 +125,10 @@ export class LiquidExtractor {
   }
 
   /**
-   * Extract {% render 'snippet' %} and {% include 'snippet' %} references
+   * 提取 {% render 'snippet' %} 和 {% include 'snippet' %} 引用
    */
   private extractSnippetReferences(fileNodeId: string): void {
-    // Match {% render 'name' %} or {% include 'name' %} with optional parameters
+    // 匹配 {% render 'name' %} 或 {% include 'name' %}，可带可选参数
     const renderRegex = /\{%[-]?\s*(render|include)\s+['"]([^'"]+)['"]/g;
     let match;
 
@@ -136,7 +136,7 @@ export class LiquidExtractor {
       const [fullMatch, tagType, snippetName] = match;
       const line = this.getLineNumber(match.index);
 
-      // Create an import node for searchability
+      // 创建导入节点以便搜索
       const importNodeId = generateNodeId(this.filePath, 'import', snippetName!, line);
       const importNode: Node = {
         id: importNodeId,
@@ -154,14 +154,14 @@ export class LiquidExtractor {
       };
       this.nodes.push(importNode);
 
-      // Add containment edge from file to import
+      // 添加从文件到导入节点的包含边
       this.edges.push({
         source: fileNodeId,
         target: importNodeId,
         kind: 'contains',
       });
 
-      // Create a component node for the snippet reference
+      // 为 snippet 引用创建组件节点
       const nodeId = generateNodeId(this.filePath, 'component', `${tagType}:${snippetName}`, line);
 
       const node: Node = {
@@ -180,14 +180,14 @@ export class LiquidExtractor {
 
       this.nodes.push(node);
 
-      // Add containment edge from file
+      // 添加从文件出发的包含边
       this.edges.push({
         source: fileNodeId,
         target: nodeId,
         kind: 'contains',
       });
 
-      // Add unresolved reference to the snippet file
+      // 添加到 snippet 文件的未解析引用
       this.unresolvedReferences.push({
         fromNodeId: fileNodeId,
         referenceName: `snippets/${snippetName}.liquid`,
@@ -199,10 +199,10 @@ export class LiquidExtractor {
   }
 
   /**
-   * Extract {% section 'name' %} references
+   * 提取 {% section 'name' %} 引用
    */
   private extractSectionReferences(fileNodeId: string): void {
-    // Match {% section 'name' %}
+    // 匹配 {% section 'name' %}
     const sectionRegex = /\{%[-]?\s*section\s+['"]([^'"]+)['"]/g;
     let match;
 
@@ -210,7 +210,7 @@ export class LiquidExtractor {
       const [fullMatch, sectionName] = match;
       const line = this.getLineNumber(match.index);
 
-      // Create an import node for searchability
+      // 创建导入节点以便搜索
       const importNodeId = generateNodeId(this.filePath, 'import', sectionName!, line);
       const importNode: Node = {
         id: importNodeId,
@@ -228,14 +228,14 @@ export class LiquidExtractor {
       };
       this.nodes.push(importNode);
 
-      // Add containment edge from file to import
+      // 添加从文件到导入节点的包含边
       this.edges.push({
         source: fileNodeId,
         target: importNodeId,
         kind: 'contains',
       });
 
-      // Create a component node for the section reference
+      // 为 section 引用创建组件节点
       const nodeId = generateNodeId(this.filePath, 'component', `section:${sectionName}`, line);
 
       const node: Node = {
@@ -254,14 +254,14 @@ export class LiquidExtractor {
 
       this.nodes.push(node);
 
-      // Add containment edge from file
+      // 添加从文件出发的包含边
       this.edges.push({
         source: fileNodeId,
         target: nodeId,
         kind: 'contains',
       });
 
-      // Add unresolved reference to the section file
+      // 添加到 section 文件的未解析引用
       this.unresolvedReferences.push({
         fromNodeId: fileNodeId,
         referenceName: `sections/${sectionName}.liquid`,
@@ -273,10 +273,10 @@ export class LiquidExtractor {
   }
 
   /**
-   * Extract {% schema %}...{% endschema %} blocks
+   * 提取 {% schema %}...{% endschema %} 块
    */
   private extractSchema(fileNodeId: string): void {
-    // Match {% schema %}...{% endschema %}
+    // 匹配 {% schema %}...{% endschema %}
     const schemaRegex = /\{%[-]?\s*schema\s*[-]?%\}([\s\S]*?)\{%[-]?\s*endschema\s*[-]?%\}/g;
     let match;
 
@@ -285,21 +285,21 @@ export class LiquidExtractor {
       const startLine = this.getLineNumber(match.index);
       const endLine = this.getLineNumber(match.index + fullMatch.length);
 
-      // Try to parse the schema JSON to get the name
+      // 尝试解析 schema JSON 以获取名称
       let schemaName = 'schema';
       try {
         const schemaJson = JSON.parse(schemaContent!);
         if (schemaJson.name) {
-          // Shopify schema names can be translation objects like {"en": "...", "fr": "..."}
+          // Shopify schema 名称可以是翻译对象，如 {"en": "...", "fr": "..."}
           schemaName = typeof schemaJson.name === 'string'
             ? schemaJson.name
             : schemaJson.name.en || Object.values(schemaJson.name)[0] as string || 'schema';
         }
       } catch {
-        // Schema isn't valid JSON, use default name
+        // schema 不是有效 JSON，使用默认名称
       }
 
-      // Create a node for the schema
+      // 为 schema 创建节点
       const nodeId = generateNodeId(this.filePath, 'constant', `schema:${schemaName}`, startLine);
 
       const node: Node = {
@@ -313,16 +313,15 @@ export class LiquidExtractor {
         endLine,
         startColumn: match.index - this.getLineStart(startLine),
         endColumn: 0,
-        // SECURITY (#383): don't dump the raw {% schema %} JSON (section settings
-        // + default values) into the docstring — the schema name is already in
-        // `name`, so the data block adds nothing but a potential leak of any
-        // IDs/endpoints/keys a developer placed in setting defaults.
+        // 安全性（#383）：不将原始 {% schema %} JSON（section 设置及默认值）
+        // 写入 docstring——schema 名称已在 `name` 字段中，数据块除了
+        // 可能泄露开发者放在设置默认值中的 ID/端点/密钥外毫无价值。
         updatedAt: Date.now(),
       };
 
       this.nodes.push(node);
 
-      // Add containment edge from file
+      // 添加从文件出发的包含边
       this.edges.push({
         source: fileNodeId,
         target: nodeId,
@@ -332,10 +331,10 @@ export class LiquidExtractor {
   }
 
   /**
-   * Extract {% assign var = value %} statements
+   * 提取 {% assign var = value %} 语句
    */
   private extractAssignments(fileNodeId: string): void {
-    // Match {% assign variable_name = ... %}
+    // 匹配 {% assign variable_name = ... %}
     const assignRegex = /\{%[-]?\s*assign\s+(\w+)\s*=/g;
     let match;
 
@@ -343,7 +342,7 @@ export class LiquidExtractor {
       const [, variableName] = match;
       const line = this.getLineNumber(match.index);
 
-      // Create a variable node
+      // 创建变量节点
       const nodeId = generateNodeId(this.filePath, 'variable', variableName!, line);
 
       const node: Node = {
@@ -362,7 +361,7 @@ export class LiquidExtractor {
 
       this.nodes.push(node);
 
-      // Add containment edge from file
+      // 添加从文件出发的包含边
       this.edges.push({
         source: fileNodeId,
         target: nodeId,
@@ -372,7 +371,7 @@ export class LiquidExtractor {
   }
 
   /**
-   * Get the line number for a character index
+   * 根据字符索引获取行号
    */
   private getLineNumber(index: number): number {
     const substring = this.source.substring(0, index);
@@ -380,13 +379,13 @@ export class LiquidExtractor {
   }
 
   /**
-   * Get the character index of the start of a line
+   * 获取指定行起始处的字符索引
    */
   private getLineStart(lineNumber: number): number {
     const lines = this.source.split('\n');
     let index = 0;
     for (let i = 0; i < lineNumber - 1 && i < lines.length; i++) {
-      index += lines[i]!.length + 1; // +1 for newline
+      index += lines[i]!.length + 1; // +1 对应换行符
     }
     return index;
   }

@@ -10,19 +10,18 @@ function getValVarName(node: SyntaxNode, source: string): string | null {
   return identChild ? getNodeText(identChild, source) : null;
 }
 
-// Capitalized Scala primitives/ubiquitous aliases that shouldn't create refs.
+// 大写的 Scala 原始类型/常用别名，不应创建引用。
 const SCALA_BUILTIN_TYPES = new Set([
   'Int', 'Long', 'Short', 'Byte', 'Float', 'Double', 'Boolean', 'Char', 'Unit',
   'String', 'Any', 'AnyRef', 'AnyVal', 'Nothing', 'Null',
 ]);
 
 /**
- * Emit `references` edges for every type identifier in a Scala type subtree
- * (a `val`/`var` type annotation), unwrapping `generic_type` etc. Mirrors the
- * generic type-annotation extraction the core extractor runs for method
- * parameter/return types, but Scala `val`s are created here in visitNode so
- * their type is walked here too. A trait used only as a field type (the common
- * `implicit val x: Monoid[Int]` instance pattern) thus gains a dependent.
+ * 为 Scala 类型子树（`val`/`var` 类型注解）中的每个 type_identifier 触发 `references` 边，
+ * 解包 `generic_type` 等。镜像核心提取器对方法参数/返回类型运行的通用类型注解提取，
+ * 但 Scala `val` 在 visitNode 中创建，因此其类型也在此处遍历。
+ * 仅作为字段类型使用的 trait（常见的 `implicit val x: Monoid[Int]` 实例模式）
+ * 因此也会获得依赖方。
  */
 function emitScalaTypeRefs(typeNode: SyntaxNode, fromId: string, ctx: { addUnresolvedReference: (r: { fromNodeId: string; referenceName: string; referenceKind: 'references'; line: number; column: number }) => void }, source: string): void {
   if (typeNode.type === 'type_identifier') {
@@ -45,13 +44,11 @@ function emitScalaTypeRefs(typeNode: SyntaxNode, fromId: string, ctx: { addUnres
 }
 
 /**
- * Capture a Scala method's declared return type as a bare type name, for the
- * chained static-factory / fluent call mechanism (#750). `def create(): Bar`
- * yields `Bar`; a generic `List[Bar]` yields its base `List` (the method is on
- * the container, not the element); a qualified `pkg.Bar` yields `Bar`. A
- * singleton self-type (`this.type`, the fluent-builder idiom) is left undefined
- * — its type can't be recovered here, so the chain falls through rather than
- * inferring a wrong receiver.
+ * 捕获 Scala 方法的声明返回类型为裸类型名，用于链式静态工厂 / 流式调用机制
+ *（#750）。`def create(): Bar` 返回 `Bar`；泛型 `List[Bar]` 返回其基类型 `List`
+ *（方法在容器上，而非元素上）；限定名 `pkg.Bar` 返回 `Bar`。
+ * 单例自类型（`this.type`，流式构建器惯用法）保持 undefined——
+ * 其类型无法在此处恢复，链式调用会直通而不是推断错误的接收者。
  */
 function extractScalaReturnType(node: SyntaxNode, source: string): string | undefined {
   const rt = node.childForFieldName('return_type');
@@ -80,18 +77,18 @@ function extractVisibility(node: SyntaxNode): 'public' | 'private' | 'protected'
 }
 
 export const scalaExtractor: LanguageExtractor = {
-  // top-level function_definition is handled via methodTypes (same pattern as Kotlin)
+  // 顶层 function_definition 通过 methodTypes 处理（与 Kotlin 相同模式）
   functionTypes: [],
   classTypes: ['class_definition', 'object_definition', 'trait_definition'],
   methodTypes: ['function_definition', 'function_declaration'],
   interfaceTypes: [],
   structTypes: [],
   enumTypes: ['enum_definition'],
-  enumMemberTypes: [],        // handled in visitNode — enum_case_definitions wraps the cases
+  enumMemberTypes: [],        // 在 visitNode 中处理——enum_case_definitions 包装了 case
   typeAliasTypes: ['type_definition'],
   importTypes: ['import_declaration'],
   callTypes: ['call_expression'],
-  variableTypes: [],          // val/var handled in visitNode (use `pattern` field, not `name`)
+  variableTypes: [],          // val/var 在 visitNode 中处理（使用 `pattern` 字段，而非 `name`）
   fieldTypes: [],
   extraClassNodeTypes: [],
 
@@ -131,18 +128,16 @@ export const scalaExtractor: LanguageExtractor = {
   visitNode: (node: SyntaxNode, ctx) => {
     const t = node.type;
 
-    // val/var: name is in `pattern` field (identifier), not `name`
+    // val/var：名称在 `pattern` 字段（identifier）中，而非 `name`
     if (t === 'val_definition' || t === 'var_definition') {
       const name = getValVarName(node, ctx.source);
       if (!name) return false;
 
-      // An `object` is a singleton: its `val`s are shared constants (the Scala
-      // idiom for `static final` — `object Config { val Timeout = 30 }`), so
-      // emit them as `constant`/`variable` like a top-level val, which lets
-      // value-reference edges target them. A `class`/`trait`/`enum`/`given` val
-      // is a per-instance immutable field. Both an `object` and a `class`
-      // extract as `class` kind, so the AST node type of the enclosing
-      // definition — not the parent node's kind — is what distinguishes them.
+      // `object` 是单例：其 `val` 是共享常量（Scala 中 `static final` 的惯用法——
+      // `object Config { val Timeout = 30 }`），因此将其触发为 `constant`/`variable`，
+      // 类似顶层 val，使值引用边能够指向它们。`class`/`trait`/`enum`/`given` 的 val
+      // 是每实例不可变字段。`object` 和 `class` 都以 `class` 类型提取，
+      // 因此区分它们的是外层定义的 AST 节点类型，而非父节点的 kind。
       let enclosingDef: string | null = null;
       for (let p = node.parent; p; p = p.parent) {
         if (
@@ -169,7 +164,7 @@ export const scalaExtractor: LanguageExtractor = {
       return true;
     }
 
-    // enum_case_definitions wraps simple_enum_case / full_enum_case children
+    // enum_case_definitions 包装 simple_enum_case / full_enum_case 子节点
     if (t === 'enum_case_definitions') {
       for (let i = 0; i < node.namedChildCount; i++) {
         const child = node.namedChild(i);
@@ -182,7 +177,7 @@ export const scalaExtractor: LanguageExtractor = {
       return true;
     }
 
-    // extension_definition: visit body children directly, no container node
+    // extension_definition：直接访问函数体子节点，不创建容器节点
     if (t === 'extension_definition') {
       const body = node.childForFieldName('body');
       if (body) {

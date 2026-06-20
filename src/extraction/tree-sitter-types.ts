@@ -1,9 +1,9 @@
 /**
- * Tree-sitter Extraction Types
+ * Tree-sitter 提取类型
  *
- * Defines the LanguageExtractor interface and related types used by
- * the core TreeSitterExtractor and per-language extraction configs.
- * Extracted to a leaf module to avoid circular imports.
+ * 定义核心 TreeSitterExtractor 和各语言提取配置所使用的
+ * LanguageExtractor 接口及相关类型。
+ * 提取为独立叶模块，避免循环导入。
  */
 
 import { Node as SyntaxNode } from 'web-tree-sitter';
@@ -14,250 +14,243 @@ import {
 } from '../types';
 
 /**
- * Information returned by a language's extractImport hook.
+ * 语言的 extractImport 钩子返回的信息。
  */
 export interface ImportInfo {
-  /** The module/package name being imported */
+  /** 被导入的模块/包名称 */
   moduleName: string;
-  /** Full import statement text for display */
+  /** 用于显示的完整导入语句文本 */
   signature: string;
-  /** If true, the hook already created unresolved references itself */
+  /** 若为 true，则钩子已自行创建未解析引用 */
   handledRefs?: boolean;
 }
 
 /**
- * Information about a single variable within a declaration.
- * Returned by a language's extractVariables hook.
+ * 声明中单个变量的信息。
+ * 由语言的 extractVariables 钩子返回。
  */
 export interface VariableInfo {
-  /** Variable name */
+  /** 变量名 */
   name: string;
-  /** Node kind: 'variable' or 'constant' */
+  /** 节点类型：'variable' 或 'constant' */
   kind: NodeKind;
-  /** Optional signature string */
+  /** 可选的签名字符串 */
   signature?: string;
-  /** If set, this declarator is actually a function and should be extracted as such */
+  /** 若设置，则此声明符实际上是函数，应按函数方式提取 */
   delegateToFunction?: SyntaxNode;
-  /** The AST node to use for positioning (may differ from the declaration node) */
+  /** 用于定位的 AST 节点（可能与声明节点不同） */
   positionNode?: SyntaxNode;
 }
 
 /**
- * Context object passed to language hooks that need to call back into the core extractor.
- * Provides a controlled API surface — hooks can create nodes, visit children, and add
- * references without accessing the full TreeSitterExtractor internals.
+ * 传递给需要回调核心提取器的语言钩子的上下文对象。
+ * 提供受控的 API 接口——钩子可以创建节点、访问子节点并添加引用，
+ * 而无需访问完整的 TreeSitterExtractor 内部状态。
  */
 export interface ExtractorContext {
-  /** Create a node and add it to the extraction result */
+  /** 创建节点并将其添加到提取结果中 */
   createNode(kind: NodeKind, name: string, node: SyntaxNode, extra?: Partial<Node>): Node | null;
-  /** Visit a child node (dispatches through the standard visitNode logic) */
+  /** 访问子节点（通过标准 visitNode 逻辑分发） */
   visitNode(node: SyntaxNode): void;
-  /** Visit a function body to extract calls */
+  /** 访问函数体以提取调用关系 */
   visitFunctionBody(body: SyntaxNode, functionId: string): void;
-  /** Add an unresolved reference */
+  /** 添加未解析引用 */
   addUnresolvedReference(ref: UnresolvedReference): void;
-  /** Push a node ID onto the scope stack (for containment/qualified name building) */
+  /** 将节点 ID 压入作用域栈（用于构建包含关系/限定名） */
   pushScope(nodeId: string): void;
-  /** Pop the last node ID from the scope stack */
+  /** 从作用域栈弹出最后一个节点 ID */
   popScope(): void;
-  /** Current file path */
+  /** 当前文件路径 */
   readonly filePath: string;
-  /** Current source text */
+  /** 当前源码文本 */
   readonly source: string;
-  /** Stack of parent node IDs (current scope) */
+  /** 父节点 ID 栈（当前作用域） */
   readonly nodeStack: readonly string[];
-  /** All nodes extracted so far */
+  /** 目前已提取的所有节点 */
   readonly nodes: readonly Node[];
 }
 
 /**
- * Language-specific extraction configuration.
+ * 语言专属提取配置。
  *
- * Each supported language provides an implementation of this interface
- * that configures which AST node types to look for and how to extract
- * language-specific details like signatures, visibility, and imports.
+ * 每种受支持的语言提供此接口的实现，配置要查找的 AST 节点类型
+ * 以及如何提取语言专属细节（如签名、可见性和导入）。
  */
 export interface LanguageExtractor {
   /**
-   * Optional source transform applied immediately before the grammar parses the
-   * file. Used to work around grammar gaps that would otherwise corrupt the
-   * parse tree (e.g. C# blanks conditional-compilation directive lines the
-   * grammar mis-parses inside enum bodies). MUST preserve byte offsets (replace
-   * removed text with spaces, keep newlines) so node positions and getNodeText
-   * stay correct; the returned string is used for both parsing and extraction.
+   * 在 grammar 解析文件前立即应用的可选源码变换。用于规避 grammar 缺陷
+   * 导致的解析树损坏（例如 C# 将 enum 体内 grammar 误解析的条件编译
+   * 指令行置空）。必须保留字节偏移（用空格替换删除的文本，保留换行），
+   * 使节点位置和 getNodeText 保持正确；返回的字符串同时用于解析和提取。
    */
   preParse?: (source: string) => string;
 
-  // --- Node type mappings ---
+  // --- 节点类型映射 ---
 
-  /** Node types that represent functions */
+  /** 表示函数的节点类型 */
   functionTypes: string[];
-  /** Node types that represent classes */
+  /** 表示类的节点类型 */
   classTypes: string[];
-  /** Node types that represent methods */
+  /** 表示方法的节点类型 */
   methodTypes: string[];
-  /** Node types that represent interfaces/protocols/traits */
+  /** 表示接口/协议/trait 的节点类型 */
   interfaceTypes: string[];
-  /** Node types that represent structs */
+  /** 表示结构体的节点类型 */
   structTypes: string[];
-  /** Node types that represent enums */
+  /** 表示枚举的节点类型 */
   enumTypes: string[];
-  /** Node types that represent enum members/cases (e.g. Swift: 'enum_entry', Rust: 'enum_variant') */
+  /** 表示枚举成员/case 的节点类型（例如 Swift: 'enum_entry'，Rust: 'enum_variant'） */
   enumMemberTypes?: string[];
-  /** Node types that represent type aliases (e.g. `type X = ...`) */
+  /** 表示类型别名的节点类型（例如 `type X = ...`） */
   typeAliasTypes: string[];
-  /** Node types that represent imports */
+  /** 表示导入的节点类型 */
   importTypes: string[];
-  /** Node types that represent function calls */
+  /** 表示函数调用的节点类型 */
   callTypes: string[];
-  /** Node types that represent variable declarations (const, let, var, etc.) */
+  /** 表示变量声明的节点类型（const、let、var 等） */
   variableTypes: string[];
-  /** Node types that represent class fields (extracted as 'field' kind inside class bodies) */
+  /** 表示类字段的节点类型（在类体内提取为 'field' 类型） */
   fieldTypes?: string[];
-  /** Node types that represent class properties (extracted as 'property' kind inside class bodies) */
+  /** 表示类属性的节点类型（在类体内提取为 'property' 类型） */
   propertyTypes?: string[];
 
-  // --- Field name mappings ---
+  // --- 字段名映射 ---
 
-  /** Field name for identifier/name */
+  /** 标识符/名称的字段名 */
   nameField: string;
-  /** Field name for body */
+  /** 函数体的字段名 */
   bodyField: string;
-  /** Field name for parameters */
+  /** 参数的字段名 */
   paramsField: string;
-  /** Field name for return type */
+  /** 返回类型的字段名 */
   returnField?: string;
 
-  // --- Existing hooks ---
+  // --- 现有钩子 ---
 
-  /** Override symbol name extraction (e.g. ObjC multi-part selectors). */
+  /** 覆盖符号名称提取（例如 ObjC 多段选择器）。 */
   resolveName?: (node: SyntaxNode, source: string) => string | undefined;
 
-  /** Extract property name when the generic name walk fails (e.g. ObjC @property). */
+  /** 在通用名称遍历失败时提取属性名（例如 ObjC @property）。 */
   extractPropertyName?: (node: SyntaxNode, source: string) => string | null;
 
-  /** Extract signature from node */
+  /** 从节点中提取签名 */
   getSignature?: (node: SyntaxNode, source: string) => string | undefined;
-  /** Extract visibility from node */
+  /** 从节点中提取可见性 */
   getVisibility?: (node: SyntaxNode) => 'public' | 'private' | 'protected' | 'internal' | undefined;
-  /** Check if node is exported */
+  /** 检查节点是否已导出 */
   isExported?: (node: SyntaxNode, source: string) => boolean;
-  /** Check if node is async */
+  /** 检查节点是否为异步 */
   isAsync?: (node: SyntaxNode) => boolean;
-  /** Check if node is static */
+  /** 检查节点是否为静态 */
   isStatic?: (node: SyntaxNode) => boolean;
-  /** Check if variable declaration is a constant (const vs let/var) */
+  /** 检查变量声明是否为常量（const vs let/var） */
   isConst?: (node: SyntaxNode) => boolean;
   /**
-   * Extract extra symbol-level modifier keywords to persist on the node's
-   * `decorators` list (e.g. Kotlin `expect`/`actual` multiplatform markers).
-   * Called generically for every created node; return undefined/[] when none.
-   * Used by the resolver to link `expect` declarations to their `actual`
-   * implementations across source sets.
+   * 提取需要持久化到节点 `decorators` 列表中的额外符号级修饰符关键字
+   * （例如 Kotlin 的 `expect`/`actual` 多平台标记）。
+   * 对每个创建的节点都会泛化调用；无修饰符时返回 undefined/[]。
+   * 解析器使用此信息将 `expect` 声明跨源码集链接到对应的 `actual` 实现。
    */
   extractModifiers?: (node: SyntaxNode) => string[] | undefined;
 
-  // --- New config properties ---
+  // --- 新增配置属性 ---
 
-  /** Additional node types to treat as class declarations (e.g. Dart: 'mixin_declaration') */
+  /** 视为类声明的额外节点类型（例如 Dart: 'mixin_declaration'） */
   extraClassNodeTypes?: string[];
-  /** Whether methods can be top-level without enclosing class (Go: true) */
+  /** 方法是否可以不在类内而出现在顶层（Go: true） */
   methodsAreTopLevel?: boolean;
-  /** NodeKind to use for interface-like declarations (Rust: 'trait'). Default: 'interface' */
+  /** 接口类声明使用的 NodeKind（Rust: 'trait'）。默认：'interface' */
   interfaceKind?: NodeKind;
 
-  // --- New hooks ---
+  // --- 新增钩子 ---
 
   /**
-   * Custom node visitor. Return true if the node was fully handled (skip default dispatch).
-   * Used by languages with fundamentally different AST structures (e.g. Pascal).
+   * 自定义节点访问器。若节点已被完整处理则返回 true（跳过默认分发）。
+   * 用于 AST 结构根本不同的语言（例如 Pascal）。
    */
   visitNode?: (node: SyntaxNode, ctx: ExtractorContext) => boolean;
 
   /**
-   * Classify a class_declaration node when the grammar reuses one node type
-   * for multiple concepts (e.g. Swift uses class_declaration for classes, structs, and enums).
+   * 当 grammar 将一种节点类型复用于多种概念时，对 class_declaration 节点进行分类
+   * （例如 Swift 的 class_declaration 同时用于类、结构体和枚举）。
    */
   classifyClassNode?: (node: SyntaxNode) => 'class' | 'struct' | 'enum' | 'interface' | 'trait';
 
   /**
-   * Classify a methodTypes node when the grammar reuses one node type for
-   * both callable and data members (#808): TS/JS class FIELDS
-   * (`public_field_definition` / `field_definition`) are methods only when
-   * their value is callable (`onClick = () => {}`); a plain field
-   * (`public fonts: Fonts;`, `count = 0`) is a property. Default: 'method'.
+   * 当 grammar 将一种节点类型复用于可调用成员和数据成员时，对 methodTypes 节点分类
+   * (#808)：TS/JS 类字段（`public_field_definition` / `field_definition`）
+   * 仅在其值可调用时（`onClick = () => {}`）才是方法；
+   * 普通字段（`public fonts: Fonts;`、`count = 0`）是属性。默认：'method'。
    */
   classifyMethodNode?: (node: SyntaxNode) => 'method' | 'property';
 
   /**
-   * Resolve the body node for a function/method/class when it's not a child field.
-   * (e.g. Dart puts function_body as a sibling, not a child.)
+   * 当函数/方法/类的 body 节点不是子字段时，解析该 body 节点。
+   * （例如 Dart 将 function_body 作为兄弟节点而非子节点。）
    */
   resolveBody?: (node: SyntaxNode, bodyField: string) => SyntaxNode | null;
 
   /**
-   * Extract import information from an import node.
-   * Return null if the node isn't a recognized import form.
+   * 从导入节点中提取导入信息。
+   * 若节点不是已识别的导入形式则返回 null。
    */
   extractImport?: (node: SyntaxNode, source: string) => ImportInfo | null;
 
   /**
-   * Extract variable declarations from a variable declaration node.
-   * Returns info about each declared variable, allowing the core to create nodes.
+   * 从变量声明节点中提取变量声明信息。
+   * 返回每个声明变量的信息，供核心创建节点使用。
    */
   extractVariables?: (node: SyntaxNode, source: string) => VariableInfo[];
 
   /**
-   * Extract receiver/owner type name from a method declaration.
-   * Used by Go to get the struct receiver (e.g., "scrapeLoop" from "func (sl *scrapeLoop) run()").
-   * When present, the receiver type is included in the qualified name for better searchability.
+   * 从方法声明中提取接收者/所有者类型名。
+   * 供 Go 使用，获取结构体接收者（例如从 "func (sl *scrapeLoop) run()" 获取 "scrapeLoop"）。
+   * 存在时，接收者类型会包含在限定名中，提高可搜索性。
    */
   getReceiverType?: (node: SyntaxNode, source: string) => string | undefined;
 
   /**
-   * Extract a function/method's normalized return type name (bare class name,
-   * smart-pointer pointee unwrapped), stored on the node as `returnType`. Used
-   * by C/C++ so resolution can infer a chained receiver's type from what the
-   * inner call returns (`Foo::instance().bar()` → resolve `bar` on `Foo`,
-   * issue #645). Return undefined for primitives / void / constructors.
+   * 提取函数/方法的规范化返回类型名（裸类名，智能指针指向类型已解包），
+   * 存储在节点的 `returnType` 上。供 C/C++ 使用，让解析器能从内层调用的
+   * 返回值推断链式接收者的类型（`Foo::instance().bar()` → 在 `Foo` 上解析
+   * `bar`，issue #645）。原始类型 / void / 构造函数返回 undefined。
    */
   getReturnType?: (node: SyntaxNode, source: string) => string | undefined;
 
   /**
-   * Resolve the actual node kind for a type alias declaration.
-   * Used by Go where `type_spec` is the named declaration wrapper for structs/interfaces:
+   * 解析类型别名声明的实际节点类型。
+   * 供 Go 使用，其中 `type_spec` 是结构体/接口的命名声明包装器：
    *   `type Foo struct { ... }` → type_spec (name: "Foo") → struct_type
-   * Returns 'struct', 'interface', etc. to override the default 'type_alias' kind,
-   * or undefined to keep it as a type alias.
+   * 返回 'struct'、'interface' 等以覆盖默认的 'type_alias' 类型，
+   * 或返回 undefined 保持为类型别名。
    */
   resolveTypeAliasKind?: (node: SyntaxNode, source: string) => NodeKind | undefined;
 
   /**
-   * Check if a function/method name is a misparse artifact that should be skipped.
-   * Used by C/C++ where macros (e.g. NLOHMANN_JSON_NAMESPACE_BEGIN) cause tree-sitter
-   * to misparse namespace blocks as function_definitions. When this returns true,
-   * the function node is NOT created, but the body is still visited for calls and
-   * structural nodes (classes, structs, enums).
+   * 检查函数/方法名是否为应被跳过的误解析产物。
+   * 供 C/C++ 使用，其中宏（例如 NLOHMANN_JSON_NAMESPACE_BEGIN）会导致 tree-sitter
+   * 将命名空间块误解析为 function_definitions。返回 true 时不创建函数节点，
+   * 但仍会访问函数体以提取调用关系和结构节点（类、结构体、枚举）。
    */
   isMisparsedFunction?: (name: string, node: SyntaxNode) => boolean;
 
   /**
-   * Detect bare method calls that don't use call expression syntax.
-   * Used by Ruby where `reset` (no parens, no receiver) is a method call but
-   * tree-sitter parses it as a plain `identifier` node instead of `call`/`method_call`.
-   * Returns the callee name if this node is a bare call, or undefined if not.
+   * 检测不使用调用表达式语法的裸方法调用。
+   * 供 Ruby 使用，其中 `reset`（无括号、无接收者）是方法调用，但
+   * tree-sitter 将其解析为普通的 `identifier` 节点而非 `call`/`method_call`。
+   * 若此节点是裸调用则返回被调用者名称，否则返回 undefined。
    */
   extractBareCall?: (node: SyntaxNode, source: string) => string | undefined;
 
   /**
-   * Node types representing a file-level package/namespace declaration
-   * (e.g. Kotlin `package_header`, Java `package_declaration`). When set,
-   * the core wraps every top-level declaration in an implicit `namespace`
-   * node carrying the FQN, so cross-file import resolution can match by
-   * qualifiedName instead of filename (Kotlin filename ≠ class name).
+   * 表示文件级包/命名空间声明的节点类型
+   * （例如 Kotlin `package_header`，Java `package_declaration`）。设置后，
+   * 核心会将每个顶层声明包裹在一个携带 FQN 的隐式 `namespace` 节点中，
+   * 使跨文件导入解析能通过 qualifiedName 而非文件名进行匹配
+   * （Kotlin 文件名 ≠ 类名）。
    */
   packageTypes?: string[];
 
-  /** Extract the dotted package name from a package declaration node. */
+  /** 从包声明节点中提取点分隔的包名。 */
   extractPackage?: (node: SyntaxNode, source: string) => string | null;
 }

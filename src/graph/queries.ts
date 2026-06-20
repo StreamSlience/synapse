@@ -1,7 +1,7 @@
 /**
- * Graph Query Functions
+ * 图查询函数
  *
- * Higher-level query functions built on top of traversal algorithms.
+ * 构建在遍历算法之上的高层查询函数。
  */
 
 import { Node, Edge, Context, Subgraph, EdgeKind } from '../types';
@@ -9,7 +9,7 @@ import { QueryBuilder } from '../db/queries';
 import { GraphTraverser } from './traversal';
 
 /**
- * Graph query manager for complex queries
+ * 用于复杂查询的图查询管理器
  */
 export class GraphQueryManager {
   private queries: QueryBuilder;
@@ -21,13 +21,13 @@ export class GraphQueryManager {
   }
 
   /**
-   * Get full context for a node
+   * 获取节点的完整上下文
    *
-   * Returns the focal node along with its ancestors, children,
-   * and both incoming and outgoing references.
+   * 返回焦点节点及其祖先、子节点，
+   * 以及所有入边和出边引用。
    *
-   * @param nodeId - ID of the focal node
-   * @returns Context object with all related information
+   * @param nodeId - 焦点节点的 ID
+   * @returns 包含所有相关信息的 Context 对象
    */
   getContext(nodeId: string): Context {
     const focal = this.queries.getNodeById(nodeId);
@@ -36,17 +36,17 @@ export class GraphQueryManager {
       throw new Error(`Node not found: ${nodeId}`);
     }
 
-    // Get ancestors (containment hierarchy)
+    // 获取祖先（包含层次结构）
     const ancestors = this.traverser.getAncestors(nodeId);
 
-    // Get children
+    // 获取子节点
     const children = this.traverser.getChildren(nodeId);
 
-    // Get incoming references (things that reference this node)
+    // 获取入边引用（引用此节点的内容）
     const incomingEdges = this.queries.getIncomingEdges(nodeId);
     const incomingRefs: Array<{ node: Node; edge: Edge }> = [];
     for (const edge of incomingEdges) {
-      // Skip containment edges (already in ancestors)
+      // 跳过包含边（已在祖先中）
       if (edge.kind === 'contains') {
         continue;
       }
@@ -56,11 +56,11 @@ export class GraphQueryManager {
       }
     }
 
-    // Get outgoing references (things this node references)
+    // 获取出边引用（此节点引用的内容）
     const outgoingEdges = this.queries.getOutgoingEdges(nodeId);
     const outgoingRefs: Array<{ node: Node; edge: Edge }> = [];
     for (const edge of outgoingEdges) {
-      // Skip containment edges (already in children)
+      // 跳过包含边（已在子节点中）
       if (edge.kind === 'contains') {
         continue;
       }
@@ -70,7 +70,7 @@ export class GraphQueryManager {
       }
     }
 
-    // Get type information (type_of, returns edges)
+    // 获取类型信息（type_of、returns 边）
     const types: Node[] = [];
     const typeEdgeKinds: EdgeKind[] = ['type_of', 'returns'];
     for (const kind of typeEdgeKinds) {
@@ -83,7 +83,7 @@ export class GraphQueryManager {
       }
     }
 
-    // Get relevant imports
+    // 获取相关导入
     const imports: Node[] = [];
     const fileNode = ancestors.find((a) => a.kind === 'file');
     if (fileNode) {
@@ -108,45 +108,44 @@ export class GraphQueryManager {
   }
 
   /**
-   * Get dependencies of a file
+   * 获取文件的依赖项
    *
-   * Returns all files that this file imports from.
+   * 返回此文件导入的所有文件。
    *
-   * @param filePath - Path to the file
-   * @returns Array of file paths this file depends on
+   * @param filePath - 文件路径
+   * @returns 此文件依赖的文件路径数组
    */
   getFileDependencies(filePath: string): string[] {
-    // Follow the symbol-level cross-file edge graph, not just `imports`:
-    // an `imports` edge here points from a file to its own local import
-    // declarations (same-file), so the actual cross-file dependencies live in
-    // the resolved calls/references/instantiates/extends/... edges.
+    // 追踪符号级跨文件边图，而非仅追踪 `imports`：
+    // 此处的 `imports` 边从文件指向其本地 import 声明（同文件），
+    // 因此真正的跨文件依赖存在于已解析的
+    // calls/references/instantiates/extends/... 边中。
     return this.queries.getDependencyFilePaths(filePath);
   }
 
   /**
-   * Get dependents of a file
+   * 获取文件的依赖方
    *
-   * Returns all files that import from this file.
+   * 返回所有导入此文件的文件。
    *
-   * @param filePath - Path to the file
-   * @returns Array of file paths that depend on this file
+   * @param filePath - 文件路径
+   * @returns 依赖此文件的文件路径数组
    */
   getFileDependents(filePath: string): string[] {
-    // Previously this only followed `imports` edges into the file node or its
-    // exported symbols and returned 0 dependents for *every* file — because an
-    // `imports` edge here connects a file to its own local import declarations
-    // (always same-file), never to the providing file. The real cross-file
-    // dependency signal is the resolved symbol graph (calls/references/
-    // instantiates/extends/implements/...), which is what blast-radius /
-    // `affected` need. Delegate to the indexed projection of that graph.
+    // 此前仅追踪文件节点或其导出符号的 `imports` 边，
+    // 对*每个*文件都返回 0 个依赖方——因为此处的 `imports` 边
+    // 将文件连接到其本地 import 声明（始终是同文件），
+    // 而非提供方文件。真正的跨文件依赖信号是已解析的符号图
+    // （calls/references/instantiates/extends/implements/...），
+    // 这正是 blast-radius / `affected` 所需要的。委托给该图的索引投影。
     return this.queries.getDependentFilePaths(filePath);
   }
 
   /**
-   * Get all symbols exported by a file
+   * 获取文件导出的所有符号
    *
-   * @param filePath - Path to the file
-   * @returns Array of exported nodes
+   * @param filePath - 文件路径
+   * @returns 导出节点数组
    */
   getExportedSymbols(filePath: string): Node[] {
     const nodes = this.queries.getNodesByFile(filePath);
@@ -154,13 +153,13 @@ export class GraphQueryManager {
   }
 
   /**
-   * Find symbols by qualified name pattern
+   * 通过限定名模式查找符号
    *
-   * @param pattern - Pattern to match (supports * wildcard)
-   * @returns Array of matching nodes
+   * @param pattern - 匹配模式（支持 * 通配符）
+   * @returns 匹配的节点数组
    */
   findByQualifiedName(pattern: string): Node[] {
-    // Convert glob pattern to regex
+    // 将 glob 模式转换为正则表达式
     const regexPattern = pattern
       .replace(/[.+^${}()|[\]\\]/g, '\\$&')
       .replace(/\*/g, '.*')
@@ -168,8 +167,8 @@ export class GraphQueryManager {
 
     const regex = new RegExp(`^${regexPattern}$`);
 
-    // This is inefficient for large graphs - would need FTS index on qualified_name
-    // For now, use kind-based filtering if possible
+    // 对大型图效率较低——需要在 qualified_name 上建立 FTS 索引
+    // 目前如有可能先按类型过滤
     const allNodes: Node[] = [];
     const kinds: Node['kind'][] = [
       'class',
@@ -194,11 +193,11 @@ export class GraphQueryManager {
   }
 
   /**
-   * Get the module/package structure
+   * 获取模块/包结构
    *
-   * Returns a tree structure of files organized by directory.
+   * 返回按目录组织的文件树结构。
    *
-   * @returns Map of directory paths to contained files
+   * @returns 目录路径到所含文件的映射
    */
   getModuleStructure(): Map<string, string[]> {
     const files = this.queries.getAllFiles();
@@ -218,9 +217,9 @@ export class GraphQueryManager {
   }
 
   /**
-   * Find circular dependencies in the graph
+   * 查找图中的循环依赖
    *
-   * @returns Array of cycles, each cycle is an array of node IDs
+   * @returns 循环数组，每个循环是一个节点 ID 数组
    */
   findCircularDependencies(): string[][] {
     const files = this.queries.getAllFiles();
@@ -230,7 +229,7 @@ export class GraphQueryManager {
 
     const dfs = (filePath: string, path: string[]): void => {
       if (recursionStack.has(filePath)) {
-        // Found a cycle
+      // 发现循环
         const cycleStart = path.indexOf(filePath);
         if (cycleStart !== -1) {
           cycles.push(path.slice(cycleStart));
@@ -263,10 +262,10 @@ export class GraphQueryManager {
   }
 
   /**
-   * Get complexity metrics for a node
+   * 获取节点的复杂度指标
    *
-   * @param nodeId - ID of the node
-   * @returns Object containing various complexity metrics
+   * @param nodeId - 节点的 ID
+   * @returns 包含各种复杂度指标的对象
    */
   getNodeMetrics(nodeId: string): {
     incomingEdgeCount: number;
@@ -296,10 +295,10 @@ export class GraphQueryManager {
   }
 
   /**
-   * Find dead code (nodes with no incoming references)
+   * 查找死代码（没有入边引用的节点）
    *
-   * @param kinds - Node kinds to check (default: functions, methods, classes)
-   * @returns Array of unreferenced nodes
+   * @param kinds - 要检查的节点类型（默认：函数、方法、类）
+   * @returns 未被引用的节点数组
    */
   findDeadCode(kinds?: Node['kind'][]): Node[] {
     const targetKinds = kinds || ['function', 'method', 'class'];
@@ -308,14 +307,14 @@ export class GraphQueryManager {
     for (const kind of targetKinds) {
       const nodes = this.queries.getNodesByKind(kind);
       for (const node of nodes) {
-        // Skip exported symbols (they may be used externally)
+        // 跳过导出的符号（它们可能在外部被使用）
         if (node.isExported) {
           continue;
         }
 
         const incomingEdges = this.queries.getIncomingEdges(node.id);
 
-        // Filter out containment edges
+        // 过滤掉包含边
         const references = incomingEdges.filter((e) => e.kind !== 'contains');
 
         if (references.length === 0) {
@@ -328,11 +327,11 @@ export class GraphQueryManager {
   }
 
   /**
-   * Get subgraph containing nodes matching a filter
+   * 获取包含符合过滤条件节点的子图
    *
-   * @param filter - Filter function to select nodes
-   * @param includeEdges - Whether to include edges between matching nodes
-   * @returns Subgraph containing matching nodes
+   * @param filter - 用于筛选节点的过滤函数
+   * @param includeEdges - 是否包含匹配节点之间的边
+   * @returns 包含匹配节点的子图
    */
   getFilteredSubgraph(
     filter: (node: Node) => boolean,
@@ -341,7 +340,7 @@ export class GraphQueryManager {
     const nodes = new Map<string, Node>();
     const edges: Edge[] = [];
 
-    // Get all nodes of common kinds
+    // 获取所有常见类型的节点
     const kinds: Node['kind'][] = [
       'file',
       'module',
@@ -366,7 +365,7 @@ export class GraphQueryManager {
       }
     }
 
-    // Include edges between matching nodes
+    // 包含匹配节点之间的边
     if (includeEdges) {
       for (const nodeId of nodes.keys()) {
         const outgoing = this.queries.getOutgoingEdges(nodeId);
@@ -386,7 +385,7 @@ export class GraphQueryManager {
   }
 
   /**
-   * Access the underlying traverser for direct traversal operations
+   * 访问底层遍历器以执行直接遍历操作
    */
   getTraverser(): GraphTraverser {
     return this.traverser;

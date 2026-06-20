@@ -1,17 +1,16 @@
 ﻿/**
- * OpenAI Codex CLI target.
+ * OpenAI Codex CLI target。
  *
- *   - MCP server entry to `~/.codex/config.toml` as the dotted-key
- *     table `[mcp_servers.synapse]`. TOML — not JSON — handled by
- *     the narrow serializer in `./toml.ts`.
- *   - Instructions to `~/.codex/AGENTS.md`.
+ *   - MCP 服务器条目写入 `~/.codex/config.toml`，使用点分键表格
+ *     `[mcp_servers.synapse]`。格式为 TOML 而非 JSON，由
+ *     `./toml.ts` 中的轻量序列化器处理。
+ *   - Instructions 写入 `~/.codex/AGENTS.md`。
  *
- * Codex CLI as of 2026-05 has no project-local config concept —
- * everything lives under `~/.codex/`. `supportsLocation('local')`
- * returns false; the orchestrator skips Codex when the user picks
- * the local install location.
+ * 截至 2026-05 的 Codex CLI 没有项目本地配置概念——
+ * 所有内容都存放在 `~/.codex/` 下。`supportsLocation('local')`
+ * 返回 false；用户选择本地安装位置时，编排器会跳过 Codex。
  *
- * No permissions concept.
+ * 无权限概念。
  */
 
 import * as fs from 'fs';
@@ -67,7 +66,7 @@ class CodexTarget implements AgentTarget {
       try {
         const content = fs.readFileSync(tomlPath, 'utf-8');
         alreadyConfigured = content.includes(`[${TOML_HEADER}]`);
-      } catch { /* ignore */ }
+      } catch { /* 忽略 */ }
     }
     const installed = fs.existsSync(configDir());
     return { installed, alreadyConfigured, configPath: tomlPath };
@@ -84,9 +83,9 @@ class CodexTarget implements AgentTarget {
 
     files.push(writeMcpEntry());
 
-    // AGENTS.md gets the short marker-fenced Synapse block (#704):
-    // subagents and non-MCP harnesses read AGENTS.md but never the MCP
-    // initialize instructions. Upsert self-heals a stale pre-#529 block.
+    // AGENTS.md 写入简短的标记围栏式 Synapse 块（#704）：
+    // 子智能体和非 MCP 运行环境会读取 AGENTS.md，但不接收 MCP
+    // initialize 指令。Upsert 可自动修复过时的 #529 前块。
     files.push(upsertInstructionsEntry(instructionsPath()));
 
     return { files };
@@ -102,7 +101,7 @@ class CodexTarget implements AgentTarget {
       const { content: nextContent, action } = removeTomlTable(content, TOML_HEADER);
       if (action === 'removed') {
         if (nextContent.trim() === '') {
-          try { fs.unlinkSync(tomlPath); } catch { /* ignore */ }
+          try { fs.unlinkSync(tomlPath); } catch { /* 忽略 */ }
         } else {
           atomicWriteFileSync(tomlPath, nextContent.trimEnd() + '\n');
         }
@@ -147,9 +146,8 @@ function writeMcpEntry(): WriteResult['files'][number] {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
   const block = buildSynapseBlock();
-  // Single read — `existing === ''` derives both "is the file empty
-  // or absent" and "what was its content," avoiding a TOCTOU window
-  // between two `fs.existsSync` calls.
+  // 单次读取——`existing === ''` 同时推断出"文件为空或不存在"
+  // 和"文件的原有内容"，避免了两次 `fs.existsSync` 调用之间的 TOCTOU 窗口。
   const existing = fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : '';
   const created = existing.length === 0;
   const { content: nextContent, action } = upsertTomlTable(existing, TOML_HEADER, block);
@@ -162,9 +160,8 @@ function writeMcpEntry(): WriteResult['files'][number] {
 }
 
 /**
- * Strip the marker-delimited Synapse block from `~/.codex/AGENTS.md`
- * if a prior install wrote one. Used by both install (self-heal on
- * upgrade) and uninstall — see issue #529.
+ * 若之前的安装写入了标记分隔的 Synapse 块，则从 `~/.codex/AGENTS.md`
+ * 中将其清除。install（升级时自愈）和 uninstall 均会使用——见 issue #529。
  */
 function removeInstructionsEntry(): WriteResult['files'][number] {
   const file = instructionsPath();

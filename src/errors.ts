@@ -1,7 +1,7 @@
-﻿/**
- * Synapse Error Classes
+/**
+ * Synapse 错误类
  *
- * Custom error types for better error handling and debugging.
+ * 用于更好地进行错误处理和调试的自定义错误类型。
  *
  * @module errors
  *
@@ -9,7 +9,7 @@
  * ```typescript
  * import { FileError, ParseError, setLogger, silentLogger } from 'synapse';
  *
- * // Catch specific error types
+ * // 捕获特定错误类型
  * try {
  *   await cg.indexAll();
  * } catch (error) {
@@ -20,16 +20,15 @@
  *   }
  * }
  *
- * // Disable logging for tests
+ * // 在测试中禁用日志
  * setLogger(silentLogger);
  * ```
  */
 
 /**
- * Base error class for all Synapse errors.
+ * 所有 Synapse 错误的基类。
  *
- * All Synapse-specific errors extend this class, allowing you to catch
- * all Synapse errors with a single catch block.
+ * 所有 Synapse 特定错误均继承此类，允许通过单个 catch 块捕获所有 Synapse 错误。
  *
  * @example
  * ```typescript
@@ -43,9 +42,9 @@
  * ```
  */
 export class SynapseError extends Error {
-  /** Error code for categorization (e.g., 'FILE_ERROR', 'PARSE_ERROR') */
+  /** 用于分类的错误码（如 'FILE_ERROR'、'PARSE_ERROR'）*/
   readonly code: string;
-  /** Additional context about the error */
+  /** 关于错误的附加上下文信息 */
   readonly context?: Record<string, unknown>;
 
   constructor(message: string, code: string, context?: Record<string, unknown>) {
@@ -54,7 +53,7 @@ export class SynapseError extends Error {
     this.code = code;
     this.context = context;
 
-    // Maintain proper stack trace for V8
+    // 为 V8 保留正确的栈跟踪
     if (Error.captureStackTrace) {
       Error.captureStackTrace(this, this.constructor);
     }
@@ -62,7 +61,7 @@ export class SynapseError extends Error {
 }
 
 /**
- * Error reading or accessing files
+ * 读取或访问文件时的错误
  */
 export class FileError extends SynapseError {
   readonly filePath: string;
@@ -78,7 +77,7 @@ export class FileError extends SynapseError {
 }
 
 /**
- * Error parsing source code
+ * 解析源代码时的错误
  */
 export class ParseError extends SynapseError {
   readonly filePath: string;
@@ -107,7 +106,7 @@ export class ParseError extends SynapseError {
 }
 
 /**
- * Error with database operations
+ * 数据库操作时的错误
  */
 export class DatabaseError extends SynapseError {
   readonly operation: string;
@@ -123,7 +122,7 @@ export class DatabaseError extends SynapseError {
 }
 
 /**
- * Error with search operations
+ * 搜索操作时的错误
  */
 export class SearchError extends SynapseError {
   readonly query: string;
@@ -139,7 +138,7 @@ export class SearchError extends SynapseError {
 }
 
 /**
- * Error with vector/embedding operations
+ * 向量/嵌入操作时的错误
  */
 export class VectorError extends SynapseError {
   constructor(message: string, operation: string, cause?: Error) {
@@ -152,7 +151,7 @@ export class VectorError extends SynapseError {
 }
 
 /**
- * Error with configuration
+ * 配置相关错误
  */
 export class ConfigError extends SynapseError {
   constructor(message: string, details?: Record<string, unknown>) {
@@ -162,10 +161,10 @@ export class ConfigError extends SynapseError {
 }
 
 /**
- * Simple logger for Synapse operations
+ * Synapse 操作的简单日志接口
  *
- * By default, logs to console.warn for warnings and console.error for errors.
- * Can be configured to use custom logging.
+ * 默认将警告记录到 console.warn，将错误记录到 console.error。
+ * 可配置为使用自定义日志实现。
  */
 export interface Logger {
   debug(message: string, context?: Record<string, unknown>): void;
@@ -174,7 +173,7 @@ export interface Logger {
 }
 
 /**
- * Default console-based logger
+ * 默认的基于 console 的日志器
  */
 export const defaultLogger: Logger = {
   debug(message: string, context?: Record<string, unknown>): void {
@@ -191,7 +190,7 @@ export const defaultLogger: Logger = {
 };
 
 /**
- * Silent logger (no output) - useful for tests
+ * 静默日志器（无输出）——适用于测试
  */
 export const silentLogger: Logger = {
   debug(): void {},
@@ -200,40 +199,40 @@ export const silentLogger: Logger = {
 };
 
 /**
- * Current logger instance (can be replaced)
+ * 当前日志器实例（可替换）
  */
 let currentLogger: Logger = defaultLogger;
 
 /**
- * Set the global logger
+ * 设置全局日志器
  */
 export function setLogger(logger: Logger): void {
   currentLogger = logger;
 }
 
 /**
- * Get the current logger
+ * 获取当前日志器
  */
 export function getLogger(): Logger {
   return currentLogger;
 }
 
 /**
- * Log a debug message
+ * 记录调试消息
  */
 export function logDebug(message: string, context?: Record<string, unknown>): void {
   currentLogger.debug(message, context);
 }
 
 /**
- * Log a warning message
+ * 记录警告消息
  */
 export function logWarn(message: string, context?: Record<string, unknown>): void {
   currentLogger.warn(message, context);
 }
 
 /**
- * Log an error message
+ * 记录错误消息
  */
 export function logError(message: string, context?: Record<string, unknown>): void {
   currentLogger.error(message, context);

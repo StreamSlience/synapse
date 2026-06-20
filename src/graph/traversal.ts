@@ -1,14 +1,14 @@
 /**
- * Graph Traversal Algorithms
+ * 图遍历算法
  *
- * BFS and DFS traversal for the code knowledge graph.
+ * 代码知识图的 BFS 和 DFS 遍历。
  */
 
 import { Node, Edge, Subgraph, TraversalOptions, EdgeKind } from '../types';
 import { QueryBuilder } from '../db/queries';
 
 /**
- * Default traversal options
+ * 默认遍历选项
  */
 const DEFAULT_OPTIONS: Required<TraversalOptions> = {
   maxDepth: Infinity,
@@ -20,7 +20,7 @@ const DEFAULT_OPTIONS: Required<TraversalOptions> = {
 };
 
 /**
- * Result of a single traversal step
+ * 单次遍历步骤的结果
  */
 interface TraversalStep {
   node: Node;
@@ -29,7 +29,7 @@ interface TraversalStep {
 }
 
 /**
- * Graph traverser for BFS and DFS traversal
+ * 用于 BFS 和 DFS 遍历的图遍历器
  */
 export class GraphTraverser {
   private queries: QueryBuilder;
@@ -39,11 +39,11 @@ export class GraphTraverser {
   }
 
   /**
-   * Traverse the graph using breadth-first search
+   * 使用广度优先搜索遍历图
    *
-   * @param startId - Starting node ID
-   * @param options - Traversal options
-   * @returns Subgraph containing traversed nodes and edges
+   * @param startId - 起始节点 ID
+   * @param options - 遍历选项
+   * @returns 包含已遍历节点和边的子图
    */
   traverseBFS(startId: string, options: TraversalOptions = {}): Subgraph {
     const opts = { ...DEFAULT_OPTIONS, ...options };
@@ -71,26 +71,26 @@ export class GraphTraverser {
       }
       visited.add(node.id);
 
-      // Add edge to result
+      // 将边加入结果
       if (edge) {
         edges.push(edge);
       }
 
-      // Check depth limit
+      // 检查深度限制
       if (depth >= opts.maxDepth) {
         continue;
       }
 
-      // Get adjacent edges, prioritizing structural edges (contains, calls)
-      // over reference edges so BFS discovers internal structure before
-      // fanning out to external references (e.g., component usages in templates).
+      // 获取相邻边，优先处理结构性边（contains、calls），
+      // 再处理引用边，使 BFS 先发现内部结构，然后再扩散到外部引用
+      // （如模板中的组件用法）。
       const adjacentEdges = this.getAdjacentEdges(node.id, opts.direction, opts.edgeKinds);
       adjacentEdges.sort((a, b) => {
         const priority = (e: Edge) => e.kind === 'contains' ? 0 : e.kind === 'calls' ? 1 : 2;
         return priority(a) - priority(b);
       });
 
-      // Batch-fetch the unvisited neighbors in one query (was N+1 per BFS step).
+      // 批量获取未访问的邻居节点，一次查询完成（原来每个 BFS 步骤都是 N+1 次）。
       const wantIds = adjacentEdges
         .map((e) => (e.source === node.id ? e.target : e.source))
         .filter((id) => !visited.has(id));
@@ -120,11 +120,11 @@ export class GraphTraverser {
   }
 
   /**
-   * Traverse the graph using depth-first search
+   * 使用深度优先搜索遍历图
    *
-   * @param startId - Starting node ID
-   * @param options - Traversal options
-   * @returns Subgraph containing traversed nodes and edges
+   * @param startId - 起始节点 ID
+   * @param options - 遍历选项
+   * @returns 包含已遍历节点和边的子图
    */
   traverseDFS(startId: string, options: TraversalOptions = {}): Subgraph {
     const opts = { ...DEFAULT_OPTIONS, ...options };
@@ -152,7 +152,7 @@ export class GraphTraverser {
   }
 
   /**
-   * Recursive DFS helper
+   * DFS 递归辅助函数
    */
   private dfsRecursive(
     node: Node,
@@ -168,10 +168,10 @@ export class GraphTraverser {
 
     visited.add(node.id);
 
-    // Get adjacent edges
+    // 获取相邻边
     const adjacentEdges = this.getAdjacentEdges(node.id, opts.direction, opts.edgeKinds);
 
-    // Batch-fetch unvisited neighbors (was N+1 per DFS step).
+    // 批量获取未访问的邻居节点（原来每个 DFS 步骤都是 N+1 次）。
     const wantIds = adjacentEdges
       .map((e) => (e.source === node.id ? e.target : e.source))
       .filter((id) => !visited.has(id));
@@ -184,22 +184,22 @@ export class GraphTraverser {
       const nextNode = neighborNodes.get(nextNodeId);
       if (!nextNode) continue;
 
-      // Apply node kind filter
+      // 应用节点类型过滤器
       if (opts.nodeKinds && opts.nodeKinds.length > 0 && !opts.nodeKinds.includes(nextNode.kind)) {
         continue;
       }
 
-      // Add node and edge to result
+      // 将节点和边加入结果
       nodes.set(nextNode.id, nextNode);
       edges.push(edge);
 
-      // Recurse
+      // 递归
       this.dfsRecursive(nextNode, depth + 1, opts, nodes, edges, visited);
     }
   }
 
   /**
-   * Get adjacent edges based on direction
+   * 根据方向获取相邻边
    */
   private getAdjacentEdges(
     nodeId: string,
@@ -213,7 +213,7 @@ export class GraphTraverser {
     } else if (direction === 'incoming') {
       return this.queries.getIncomingEdges(nodeId, kinds);
     } else {
-      // Both directions
+      // 双向
       const outgoing = this.queries.getOutgoingEdges(nodeId, kinds);
       const incoming = this.queries.getIncomingEdges(nodeId, kinds);
       return [...outgoing, ...incoming];
@@ -221,11 +221,11 @@ export class GraphTraverser {
   }
 
   /**
-   * Find all callers of a function/method
+   * 查找函数/方法的所有调用者
    *
-   * @param nodeId - ID of the function/method node
-   * @param maxDepth - Maximum depth to traverse (default: 1)
-   * @returns Array of nodes that call this function
+   * @param nodeId - 函数/方法节点的 ID
+   * @param maxDepth - 最大遍历深度（默认：1）
+   * @returns 调用此函数的节点数组
    */
   getCallers(nodeId: string, maxDepth: number = 1): Array<{ node: Node; edge: Edge }> {
     const result: Array<{ node: Node; edge: Edge }> = [];
@@ -248,16 +248,15 @@ export class GraphTraverser {
     }
     visited.add(nodeId);
 
-    // `instantiates` counts as a caller: constructing a class (`Foo(...)` /
-    // `new Foo()`) is calling its constructor, so the instantiation site is a
-    // caller of the class. Without it, `callers <Class>` surfaced only the
-    // importing file (via `imports`) and missed every construction site —
-    // the opposite of "what breaks if I change this class?" (#774).
+    // `instantiates` 视为调用者：构造一个类（`Foo(...)` /
+    // `new Foo()`）就是调用其构造函数，因此实例化位置是该类的调用者。
+    // 没有它，`callers <Class>` 只会呈现导入该类的文件（通过 `imports`），
+    // 而遗漏每一个构造位置——与"我改这个类会影响什么？"的目的完全相反（#774）。
     const incomingEdges = this.queries.getIncomingEdges(nodeId, ['calls', 'references', 'imports', 'instantiates']);
     if (incomingEdges.length === 0) return;
 
-    // Batch-fetch all caller nodes in one round-trip instead of one
-    // getNodeById per edge (was N+1 — meaningful on functions with many callers).
+    // 一次批量获取所有调用者节点，而非每条边调用一次
+    // getNodeById（原来是 N+1——在有很多调用者的函数上影响显著）。
     const sourceIds = incomingEdges.map((e) => e.source);
     const callerNodes = this.queries.getNodesByIds(sourceIds);
 
@@ -271,11 +270,11 @@ export class GraphTraverser {
   }
 
   /**
-   * Find all functions/methods called by a function
+   * 查找函数调用的所有函数/方法
    *
-   * @param nodeId - ID of the function/method node
-   * @param maxDepth - Maximum depth to traverse (default: 1)
-   * @returns Array of nodes called by this function
+   * @param nodeId - 函数/方法节点的 ID
+   * @param maxDepth - 最大遍历深度（默认：1）
+   * @returns 此函数调用的节点数组
    */
   getCallees(nodeId: string, maxDepth: number = 1): Array<{ node: Node; edge: Edge }> {
     const result: Array<{ node: Node; edge: Edge }> = [];
@@ -298,14 +297,14 @@ export class GraphTraverser {
     }
     visited.add(nodeId);
 
-    // Symmetric with getCallers: a function that constructs a class
-    // (`Foo(...)` / `new Foo()`) has that class as a callee, so callers and
-    // callees stay inverses of each other and `trace` can cross the
-    // instantiation boundary (function → class → its methods) (#774).
+    // 与 getCallers 对称：构造了某个类的函数
+    // （`Foo(...)` / `new Foo()`）将该类视为被调用者，从而使
+    // 调用者与被调用者互为逆关系，`trace` 可以跨越实例化边界
+    // （函数 → 类 → 其方法）（#774）。
     const outgoingEdges = this.queries.getOutgoingEdges(nodeId, ['calls', 'references', 'imports', 'instantiates']);
     if (outgoingEdges.length === 0) return;
 
-    // Batch-fetch callee nodes (was N+1 — see getCallersRecursive note).
+    // 批量获取被调用者节点（原来是 N+1——参见 getCallersRecursive 注释）。
     const targetIds = outgoingEdges.map((e) => e.target);
     const calleeNodes = this.queries.getNodesByIds(targetIds);
 
@@ -319,11 +318,11 @@ export class GraphTraverser {
   }
 
   /**
-   * Get the call graph for a function (both callers and callees)
+   * 获取函数的调用图（调用者和被调用者）
    *
-   * @param nodeId - ID of the function/method node
-   * @param depth - Maximum depth in each direction (default: 2)
-   * @returns Subgraph containing the call graph
+   * @param nodeId - 函数/方法节点的 ID
+   * @param depth - 每个方向的最大深度（默认：2）
+   * @returns 包含调用图的子图
    */
   getCallGraph(nodeId: string, depth: number = 2): Subgraph {
     const focalNode = this.queries.getNodeById(nodeId);
@@ -334,17 +333,17 @@ export class GraphTraverser {
     const nodes = new Map<string, Node>();
     const edges: Edge[] = [];
 
-    // Add focal node
+    // 添加焦点节点
     nodes.set(focalNode.id, focalNode);
 
-    // Get callers
+    // 获取调用者
     const callers = this.getCallers(nodeId, depth);
     for (const { node, edge } of callers) {
       nodes.set(node.id, node);
       edges.push(edge);
     }
 
-    // Get callees
+    // 获取被调用者
     const callees = this.getCallees(nodeId, depth);
     for (const { node, edge } of callees) {
       nodes.set(node.id, node);
@@ -359,10 +358,10 @@ export class GraphTraverser {
   }
 
   /**
-   * Get the type hierarchy for a class/interface
+   * 获取类/接口的类型层次结构
    *
-   * @param nodeId - ID of the class/interface node
-   * @returns Subgraph containing the type hierarchy
+   * @param nodeId - 类/接口节点的 ID
+   * @returns 包含类型层次结构的子图
    */
   getTypeHierarchy(nodeId: string): Subgraph {
     const focalNode = this.queries.getNodeById(nodeId);
@@ -374,13 +373,13 @@ export class GraphTraverser {
     const edges: Edge[] = [];
     const visited = new Set<string>();
 
-    // Add focal node
+    // 添加焦点节点
     nodes.set(focalNode.id, focalNode);
 
-    // Get ancestors (what this extends/implements)
+    // 获取祖先（此节点继承/实现的内容）
     this.getTypeAncestors(nodeId, nodes, edges, visited);
 
-    // Get descendants (what extends/implements this)
+    // 获取后代（继承/实现此节点的内容）
     this.getTypeDescendants(nodeId, nodes, edges, visited);
 
     return {
@@ -441,19 +440,19 @@ export class GraphTraverser {
   }
 
   /**
-   * Find all usages of a symbol
+   * 查找符号的所有用法
    *
-   * @param nodeId - ID of the symbol node
-   * @returns Array of nodes and edges that reference this symbol
+   * @param nodeId - 符号节点的 ID
+   * @returns 引用此符号的节点和边数组
    */
   findUsages(nodeId: string): Array<{ node: Node; edge: Edge }> {
     const result: Array<{ node: Node; edge: Edge }> = [];
 
-    // Get all incoming edges (references, calls, type_of, etc.)
+    // 获取所有入边（references、calls、type_of 等）
     const incomingEdges = this.queries.getIncomingEdges(nodeId);
     if (incomingEdges.length === 0) return result;
 
-    // Batch-fetch source nodes (was N+1).
+    // 批量获取源节点（原来是 N+1）。
     const sources = this.queries.getNodesByIds(incomingEdges.map((e) => e.source));
     for (const edge of incomingEdges) {
       const sourceNode = sources.get(edge.source);
@@ -464,13 +463,13 @@ export class GraphTraverser {
   }
 
   /**
-   * Calculate the impact radius of a node
+   * 计算节点的影响半径
    *
-   * Returns all nodes that could be affected by changes to this node.
+   * 返回所有可能受此节点变更影响的节点。
    *
-   * @param nodeId - ID of the node
-   * @param maxDepth - Maximum depth to traverse (default: 3)
-   * @returns Subgraph containing potentially impacted nodes
+   * @param nodeId - 节点的 ID
+   * @param maxDepth - 最大遍历深度（默认：3）
+   * @returns 包含可能受影响节点的子图
    */
   getImpactRadius(nodeId: string, maxDepth: number = 3): Subgraph {
     const focalNode = this.queries.getNodeById(nodeId);
@@ -482,10 +481,10 @@ export class GraphTraverser {
     const edges: Edge[] = [];
     const visited = new Set<string>();
 
-    // Add focal node
+    // 添加焦点节点
     nodes.set(focalNode.id, focalNode);
 
-    // Traverse incoming edges to find all dependents
+    // 遍历入边以找到所有依赖项
     this.getImpactRecursive(nodeId, maxDepth, 0, nodes, edges, visited);
 
     return {
@@ -508,8 +507,8 @@ export class GraphTraverser {
     }
     visited.add(nodeId);
 
-    // For container nodes (classes, interfaces, structs, etc.), also traverse
-    // into their children so that callers of contained methods appear in impact
+    // 对于容器节点（类、接口、结构体等），同时遍历其子节点，
+    // 使包含方法的调用者也出现在影响半径中
     const focalNode = this.queries.getNodeById(nodeId);
     if (focalNode) {
       const containerKinds = new Set(['class', 'interface', 'struct', 'trait', 'protocol', 'module', 'enum']);
@@ -522,7 +521,7 @@ export class GraphTraverser {
             if (childNode && !visited.has(childNode.id)) {
               nodes.set(childNode.id, childNode);
               edges.push(edge);
-              // Recurse into children at the same depth (they're part of the same symbol)
+              // 以相同深度递归遍历子节点（它们属于同一符号）
               this.getImpactRecursive(childNode.id, maxDepth, currentDepth, nodes, edges, visited);
             }
           }
@@ -530,10 +529,10 @@ export class GraphTraverser {
       }
     }
 
-    // Get all incoming edges (things that depend on this node). Exclude
-    // `contains`: a container "contains" its members but does not *depend* on
-    // them, so following it upward would climb to the parent class and then
-    // re-expand every sibling member — exploding impact for a leaf symbol. (#536)
+    // 获取所有入边（依赖此节点的内容）。排除
+    // `contains`：容器"包含"其成员但并不*依赖*它们，
+    // 因此向上追踪会爬到父类，然后重新展开每个兄弟成员——
+    // 导致叶符号的影响半径爆炸。(#536)
     const incomingEdges = this.queries.getIncomingEdges(nodeId).filter((e) => e.kind !== 'contains');
     if (incomingEdges.length === 0) return;
     const sources = this.queries.getNodesByIds(incomingEdges.map((e) => e.source));
@@ -549,12 +548,12 @@ export class GraphTraverser {
   }
 
   /**
-   * Find the shortest path between two nodes
+   * 查找两个节点之间的最短路径
    *
-   * @param fromId - Starting node ID
-   * @param toId - Target node ID
-   * @param edgeKinds - Edge types to consider (all if empty)
-   * @returns Array of nodes and edges forming the path, or null if no path exists
+   * @param fromId - 起始节点 ID
+   * @param toId - 目标节点 ID
+   * @param edgeKinds - 考虑的边类型（空则考虑所有类型）
+   * @returns 构成路径的节点和边数组，若无路径则返回 null
    */
   findPath(
     fromId: string,
@@ -568,7 +567,7 @@ export class GraphTraverser {
       return null;
     }
 
-    // BFS to find shortest path
+    // BFS 查找最短路径
     const visited = new Set<string>();
     const queue: Array<{ nodeId: string; path: Array<{ node: Node; edge: Edge | null }> }> = [
       { nodeId: fromId, path: [{ node: fromNode, edge: null }] },
@@ -586,14 +585,14 @@ export class GraphTraverser {
       }
       visited.add(nodeId);
 
-      // Get outgoing edges
+      // 获取出边
       const outgoingEdges = this.queries.getOutgoingEdges(
         nodeId,
         edgeKinds.length > 0 ? edgeKinds : undefined
       );
       if (outgoingEdges.length === 0) continue;
 
-      // Batch-fetch only the unvisited targets (was N+1 per BFS frontier).
+      // 仅批量获取未访问的目标节点（原来每个 BFS 前沿都是 N+1）。
       const wantIds = outgoingEdges
         .map((e) => e.target)
         .filter((id) => !visited.has(id));
@@ -612,14 +611,14 @@ export class GraphTraverser {
       }
     }
 
-    return null; // No path found
+    return null; // 未找到路径
   }
 
   /**
-   * Get the containment hierarchy for a node (ancestors)
+   * 获取节点的包含层次结构（祖先）
    *
-   * @param nodeId - ID of the node
-   * @returns Array of ancestor nodes from immediate parent to root
+   * @param nodeId - 节点的 ID
+   * @returns 从直接父节点到根节点的祖先节点数组
    */
   getAncestors(nodeId: string): Node[] {
     const ancestors: Node[] = [];
@@ -632,7 +631,7 @@ export class GraphTraverser {
       }
       visited.add(currentId);
 
-      // Look for 'contains' edges pointing to this node
+      // 查找指向此节点的 'contains' 边
       const containingEdges = this.queries.getIncomingEdges(currentId, ['contains']);
 
       const firstEdge = containingEdges[0];
@@ -640,7 +639,7 @@ export class GraphTraverser {
         break;
       }
 
-      // Typically there should be at most one containing parent
+      // 通常最多只有一个包含父节点
       const parentNode = this.queries.getNodeById(firstEdge.source);
       if (parentNode) {
         ancestors.push(parentNode);
@@ -654,16 +653,16 @@ export class GraphTraverser {
   }
 
   /**
-   * Get immediate children of a node
+   * 获取节点的直接子节点
    *
-   * @param nodeId - ID of the node
-   * @returns Array of child nodes
+   * @param nodeId - 节点的 ID
+   * @returns 子节点数组
    */
   getChildren(nodeId: string): Node[] {
     const containsEdges = this.queries.getOutgoingEdges(nodeId, ['contains']);
     if (containsEdges.length === 0) return [];
 
-    // Batch-fetch (was N+1).
+    // 批量获取（原来是 N+1）。
     const childNodes = this.queries.getNodesByIds(containsEdges.map((e) => e.target));
     const children: Node[] = [];
     for (const edge of containsEdges) {

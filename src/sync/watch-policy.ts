@@ -1,17 +1,14 @@
 ﻿/**
- * Watch Policy
+ * 监视策略
  *
- * Decides whether the live file watcher should run for a given project.
+ * 决定是否应为指定项目运行实时文件监视器。
  *
- * Native recursive `fs.watch` is pathologically slow on WSL2 `/mnt/*`
- * drives (NTFS exposed over the 9p/drvfs bridge): setting up the recursive
- * watch walks the directory tree, and every readdir/stat crosses the
- * Windows boundary. Inside an MCP server this stalls the event loop during
- * startup long enough to blow past host handshake timeouts (opencode's 30s),
- * so the tools never appear. See issue #199.
+ * 原生递归 `fs.watch` 在 WSL2 的 `/mnt/*` 驱动器（通过 9p/drvfs 桥接暴露的 NTFS）
+ * 上极慢：设置递归监视时需要遍历目录树，每次 readdir/stat 都要跨越 Windows 边界。
+ * 在 MCP 服务器内，这会在启动时阻塞事件循环，时间足以超过宿主握手超时
+ * （opencode 的 30 秒限制），导致工具始终无法出现。参见 issue #199。
  *
- * This module centralizes the on/off decision so the watcher, the MCP
- * server (for diagnostics), and the installer all agree.
+ * 此模块集中管理开/关决策，使监视器、MCP 服务器（用于诊断）和安装器保持一致。
  */
 
 import * as fs from 'fs';
@@ -21,11 +18,11 @@ let wslChecked = false;
 let wslValue = false;
 
 /**
- * Detect whether the current process is running under WSL (Windows
- * Subsystem for Linux). Result is cached after the first call.
+ * 检测当前进程是否运行在 WSL（Windows Subsystem for Linux）下。
+ * 结果在首次调用后缓存。
  *
- * Checks the WSL-specific env vars first (no I/O), then falls back to
- * `/proc/version`, which contains "microsoft" on WSL kernels.
+ * 优先检查 WSL 特有的环境变量（无 I/O），若不存在则回退到读取
+ * `/proc/version`，WSL 内核的该文件包含 "microsoft" 字样。
  */
 export function detectWsl(): boolean {
   if (wslChecked) return wslValue;
@@ -49,35 +46,33 @@ export function detectWsl(): boolean {
 }
 
 /**
- * True for WSL Windows-drive mounts like `/mnt/c` or `/mnt/d/project`.
- * Deliberately matches only single-letter drive mounts, so genuinely fast
- * Linux mounts such as `/mnt/wsl/...` are not flagged.
+ * 对 `/mnt/c` 或 `/mnt/d/project` 等 WSL Windows 驱动器挂载点返回 true。
+ * 故意只匹配单字母驱动器挂载，以避免将真正快速的 Linux 挂载（如 `/mnt/wsl/...`）误标。
  */
 function isWindowsDriveMount(projectRoot: string): boolean {
   return /^\/mnt\/[a-z](\/|$)/i.test(normalizePath(projectRoot));
 }
 
 /**
- * Inputs that can be overridden in tests so the decision is deterministic
- * without touching real env vars or `/proc/version`.
+ * 可在测试中覆盖的输入项，使决策具有确定性，
+ * 无需修改真实的环境变量或 `/proc/version`。
  */
 export interface WatchProbe {
-  /** Defaults to `process.env`. */
+  /** 默认使用 `process.env`。 */
   env?: NodeJS.ProcessEnv;
-  /** Defaults to `detectWsl()`. */
+  /** 默认使用 `detectWsl()` 的结果。 */
   isWsl?: boolean;
 }
 
 /**
- * Decide whether the file watcher should be disabled for a project, and why.
+ * 决定是否应为某个项目禁用文件监视器，并说明原因。
  *
- * Returns a short human-readable reason when watching should be skipped, or
- * `null` when it should run normally.
+ * 当应跳过监视时返回简短的人类可读原因，应正常运行时返回 `null`。
  *
- * Precedence (first match wins):
- *  1. `SYNAPSE_NO_WATCH=1`    → off  (explicit opt-out always wins)
- *  2. `SYNAPSE_FORCE_WATCH=1` → on   (overrides auto-detection)
- *  3. WSL2 + `/mnt/*` drive     → off  (recursive fs.watch is too slow; #199)
+ * 优先级（首个匹配生效）：
+ *  1. `SYNAPSE_NO_WATCH=1`    → 关闭（显式退出始终优先）
+ *  2. `SYNAPSE_FORCE_WATCH=1` → 开启（覆盖自动检测）
+ *  3. WSL2 + `/mnt/*` 驱动器  → 关闭（递归 fs.watch 过慢；#199）
  */
 export function watchDisabledReason(projectRoot: string, probe: WatchProbe = {}): string | null {
   const env = probe.env ?? process.env;
@@ -97,7 +92,7 @@ export function watchDisabledReason(projectRoot: string, probe: WatchProbe = {})
   return null;
 }
 
-/** Test-only: reset the cached WSL detection. */
+/** 仅供测试：重置已缓存的 WSL 检测结果。 */
 export function __resetWslCacheForTests(): void {
   wslChecked = false;
   wslValue = false;

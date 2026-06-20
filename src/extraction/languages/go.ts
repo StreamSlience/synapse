@@ -3,23 +3,22 @@ import { getNodeText, getChildByField } from '../tree-sitter-helpers';
 import type { LanguageExtractor } from '../tree-sitter-types';
 
 /**
- * A Go function's declared return type, normalized to the bare type a chained
- * `New().Method()` could be called on (the #645/#608 mechanism). Reads the
- * `result` field: a pointer `*Foo` is unwrapped to `Foo`, a multi-return
- * `(*Foo, error)` takes the first result (the idiomatic value-or-error shape),
- * a qualified `pkg.Foo` reduces to its last segment, and generics to the base.
- * Built-ins / unnamed results simply fail the later existence check.
+ * Go 函数声明的返回类型，规范化为可用于链式调用 `New().Method()` 的裸类型
+ *（#645/#608 机制）。读取 `result` 字段：指针 `*Foo` 解包为 `Foo`，
+ * 多返回值 `(*Foo, error)` 取第一个结果（惯用的 value-or-error 形式），
+ * 限定名 `pkg.Foo` 缩减为最后一段，泛型缩减为基类型。
+ * 内置类型 / 无名返回值在后续存在性检查中自然失败。
  */
 function extractGoReturnType(node: SyntaxNode, source: string): string | undefined {
   let result = getChildByField(node, 'result');
   if (!result) return undefined;
-  // Multi-return `(T, error)` → the first result's type.
+  // 多返回值 `(T, error)` → 第一个 result 的类型。
   if (result.type === 'parameter_list') {
     const first = result.namedChildren.find((c: SyntaxNode) => c.type === 'parameter_declaration');
     if (!first) return undefined;
     result = getChildByField(first, 'type') ?? first;
   }
-  // Unwrap a pointer `*Foo` → `Foo`.
+  // 解包指针 `*Foo` → `Foo`。
   if (result?.type === 'pointer_type') {
     result =
       result.namedChildren.find(
@@ -40,12 +39,12 @@ function extractGoReturnType(node: SyntaxNode, source: string): string | undefin
 
 export const goExtractor: LanguageExtractor = {
   functionTypes: ['function_declaration'],
-  classTypes: [], // Go doesn't have classes
+  classTypes: [], // Go 没有类
   methodTypes: ['method_declaration'],
-  interfaceTypes: [],  // Handled via type_spec → resolveTypeAliasKind
-  structTypes: [],     // Handled via type_spec → resolveTypeAliasKind
+  interfaceTypes: [],  // 通过 type_spec → resolveTypeAliasKind 处理
+  structTypes: [],     // 通过 type_spec → resolveTypeAliasKind 处理
   enumTypes: [],
-  typeAliasTypes: ['type_spec'], // Go type declarations
+  typeAliasTypes: ['type_spec'], // Go 类型声明
   importTypes: ['import_declaration'],
   callTypes: ['call_expression'],
   variableTypes: ['var_declaration', 'short_var_declaration', 'const_declaration'],
@@ -66,8 +65,8 @@ export const goExtractor: LanguageExtractor = {
     return sig;
   },
   resolveTypeAliasKind: (node, _source) => {
-    // Go type_spec: `type Foo struct { ... }` or `type Bar interface { ... }`
-    // The inner type is in the 'type' field of the type_spec node
+    // Go type_spec：`type Foo struct { ... }` 或 `type Bar interface { ... }`
+    // 内部类型位于 type_spec 节点的 'type' 字段中
     const typeChild = getChildByField(node, 'type');
     if (!typeChild) return undefined;
     if (typeChild.type === 'struct_type') return 'struct';
@@ -75,9 +74,9 @@ export const goExtractor: LanguageExtractor = {
     return undefined;
   },
   isExported: (node, source) => {
-    // Go: a symbol is exported when its identifier starts with an uppercase letter.
-    // Look at the `name` field directly (works for function_declaration,
-    // method_declaration, type_spec, and var_spec / const_spec via extractor flow).
+    // Go：符号标识符以大写字母开头时即为导出。
+    // 直接查看 `name` 字段（适用于 function_declaration、
+    // method_declaration、type_spec 以及通过提取器流程处理的 var_spec / const_spec）。
     const nameNode = getChildByField(node, 'name');
     if (nameNode) {
       const text = getNodeText(nameNode, source);
@@ -87,18 +86,17 @@ export const goExtractor: LanguageExtractor = {
     return false;
   },
   getReceiverType: (node, source) => {
-    // Go method_declaration has a "receiver" field: func (sl *scrapeLoop) run(...)
-    // The receiver is a parameter_list containing a parameter_declaration
-    // with a type that may be a pointer_type (*scrapeLoop) or plain type (scrapeLoop)
+    // Go method_declaration 有 "receiver" 字段：func (sl *scrapeLoop) run(...)
+    // receiver 是一个 parameter_list，包含一个 parameter_declaration，
+    // 其类型可以是 pointer_type (*scrapeLoop) 或普通类型 (scrapeLoop)
     const receiver = getChildByField(node, 'receiver');
     if (!receiver) return undefined;
-    // Find the type identifier inside the receiver
+    // 从 receiver 中提取类型标识符
     const text = getNodeText(receiver, source);
-    // Extract type name from "(sl *Type)", "(sl Type)", "(*Type)", "(Type)" and
-    // generic receivers "(s *Stack[T])". Anchor on the opening "(" and skip an
-    // optional receiver var name; the old `name)`-anchored pattern never matched
-    // the `[T])` suffix, so generic-type methods were orphaned from their type
-    // (no struct→method `contains` edge). (#583)
+    // 从 "(sl *Type)"、"(sl Type)"、"(*Type)"、"(Type)" 以及
+    // 泛型 receiver "(s *Stack[T])" 中提取类型名称。锚定到开头的 "("，
+    // 跳过可选的 receiver 变量名；旧的 `name)` 锚定模式从未匹配
+    // `[T])` 后缀，导致泛型类型的方法与其类型孤立（无 struct→method 的 `contains` 边）。(#583)
     const match = text.match(/\(\s*(?:[A-Za-z_]\w*\s+)?\*?\s*([A-Za-z_]\w*)/);
     return match?.[1];
   },

@@ -1,7 +1,7 @@
 ﻿/**
- * Tree-sitter Parser Wrapper
+ * Tree-sitter 解析器封装
  *
- * Handles parsing source code and extracting structural information.
+ * 负责解析源代码并提取结构化信息。
  */
 
 import { Node as SyntaxNode, Tree } from 'web-tree-sitter';
@@ -33,34 +33,33 @@ import {
   getApplicableFrameworks,
 } from '../resolution/frameworks';
 
-// Re-export for backward compatibility
+// 向后兼容重导出
 export { generateNodeId } from './tree-sitter-helpers';
 
 /**
- * Extract the name from a node based on language
+ * 根据语言从节点中提取名称
  */
 function extractName(node: SyntaxNode, source: string, extractor: LanguageExtractor): string {
   const hookName = extractor.resolveName?.(node, source);
   if (hookName) return hookName;
 
-  // Try field name first
+  // 优先按字段名查找
   const nameNode = getChildByField(node, extractor.nameField);
   if (nameNode) {
-    // Unwrap pointer_declarator(s) for C/C++ pointer return types
+    // 展开 C/C++ 指针返回类型的 pointer_declarator
     let resolved = nameNode;
     while (resolved.type === 'pointer_declarator') {
       const inner = getChildByField(resolved, 'declarator') || resolved.namedChild(0);
       if (!inner) break;
       resolved = inner;
     }
-    // Handle complex declarators (C/C++)
+    // 处理 C/C++ 复杂声明符
     if (resolved.type === 'function_declarator' || resolved.type === 'declarator') {
       const innerName = getChildByField(resolved, 'declarator') || resolved.namedChild(0);
       return innerName ? getNodeText(innerName, source) : getNodeText(resolved, source);
     }
-    // Lua: `function t.f()` / `function t:m()` — the name node is a dot/method
-    // index expression; the simple name is the trailing field/method (the table
-    // receiver is captured separately via getReceiverType).
+    // Lua：`function t.f()` / `function t:m()` — 名称节点是点/方法索引表达式；
+    // 简单名称是末尾的字段/方法（表接收器通过 getReceiverType 单独捕获）。
     if (resolved.type === 'dot_index_expression') {
       const field = getChildByField(resolved, 'field');
       if (field) return getNodeText(field, source);
@@ -72,7 +71,7 @@ function extractName(node: SyntaxNode, source: string, extractor: LanguageExtrac
     return getNodeText(resolved, source);
   }
 
-  // For Dart method_signature, look inside inner signature types
+  // Dart 的 method_signature：向内部 signature 类型中查找
   if (node.type === 'method_signature') {
     for (let i = 0; i < node.namedChildCount; i++) {
       const child = node.namedChild(i);
@@ -83,7 +82,7 @@ function extractName(node: SyntaxNode, source: string, extractor: LanguageExtrac
         child.type === 'constructor_signature' ||
         child.type === 'factory_constructor_signature'
       )) {
-        // Find identifier inside the inner signature
+        // 在内部 signature 中查找 identifier
         for (let j = 0; j < child.namedChildCount; j++) {
           const inner = child.namedChild(j);
           if (inner?.type === 'identifier') {
@@ -94,15 +93,14 @@ function extractName(node: SyntaxNode, source: string, extractor: LanguageExtrac
     }
   }
 
-  // Arrow/function expressions get their name from the parent variable_declarator,
-  // not from identifiers in their body. Without this, single-expression arrow
-  // functions like `const fn = () => someIdentifier` get named "someIdentifier"
-  // instead of "fn", because the fallback below finds the body identifier.
+  // 箭头函数和函数表达式的名称来自父级 variable_declarator，而非其函数体中的标识符。
+  // 若不加此判断，`const fn = () => someIdentifier` 这样的单表达式箭头函数
+  // 会被命名为 "someIdentifier" 而非 "fn"，因为下面的回退会找到函数体中的标识符。
   if (node.type === 'arrow_function' || node.type === 'function_expression') {
     return '<anonymous>';
   }
 
-  // Fall back to first identifier child
+  // 回退：查找第一个 identifier 子节点
   for (let i = 0; i < node.namedChildCount; i++) {
     const child = node.namedChild(i);
     if (
@@ -120,11 +118,11 @@ function extractName(node: SyntaxNode, source: string, extractor: LanguageExtrac
 }
 
 /**
- * Resolve a Scala type node to its base type NAME for name-matching — unwrapping
- * `generic_type` (`Monoid[Int]` → `Monoid`), taking the last segment of a
- * qualified `stable_type_identifier` (`cats.Functor` → `Functor`), and falling
- * back to a descendant `type_identifier`. Returns null for non-type nodes.
- * Shared by Scala inheritance and type-reference extraction.
+ * 将 Scala 类型节点解析为用于名称匹配的基础类型名——
+ * 展开 `generic_type`（`Monoid[Int]` → `Monoid`），取限定
+ * `stable_type_identifier` 的最后一段（`cats.Functor` → `Functor`），
+ * 并回退到后代 `type_identifier`。非类型节点返回 null。
+ * 供 Scala 继承提取和类型引用提取共用。
  */
 function scalaBaseTypeName(node: SyntaxNode | null, source: string): string | null {
   if (!node) return null;
@@ -137,7 +135,7 @@ function scalaBaseTypeName(node: SyntaxNode | null, source: string): string | nu
       return scalaBaseTypeName(node.namedChild(0), source);
     case 'stable_type_identifier':
     case 'stable_identifier': {
-      // Qualified `a.b.C` — match on the simple (last) segment.
+      // 限定名 `a.b.C` ——按简单（尾部）段匹配。
       const ids = node.namedChildren.filter(
         (c: SyntaxNode) => c.type === 'type_identifier' || c.type === 'identifier'
       );
@@ -152,12 +150,11 @@ function scalaBaseTypeName(node: SyntaxNode | null, source: string): string | nu
 }
 
 /**
- * Resolve the declared identifier inside a C declarator. A `declaration`'s
- * `declarator` field nests the name through `init_declarator` (with value),
- * `pointer_declarator`/`array_declarator`/`parenthesized_declarator`
- * wrappers (each via their own `declarator` field) down to an `identifier`.
- * A `function_declarator` means the declaration is a function prototype (or a
- * function-pointer var) — return null so it isn't extracted as a variable.
+ * 解析 C 声明符中声明的标识符。`declaration` 的 `declarator` 字段
+ * 通过 `init_declarator`（含值）、`pointer_declarator`/`array_declarator`/
+ * `parenthesized_declarator` 包装层（各自通过 `declarator` 字段）逐层嵌套，
+ * 最终到达 `identifier`。`function_declarator` 表示该声明是函数原型
+ * （或函数指针变量）——返回 null，不将其提取为变量。
  */
 function cDeclaratorIdentifier(node: SyntaxNode | null): SyntaxNode | null {
   let cur: SyntaxNode | null = node;
@@ -181,11 +178,11 @@ function cDeclaratorIdentifier(node: SyntaxNode | null): SyntaxNode | null {
   return null;
 }
 
-/** First `simple_identifier` in `node`'s subtree (breadth-ish, first-found).
- * Swift's property name nests as `property_declaration → <name> pattern →
- * bound_identifier → simple_identifier`; this resolves it (and the bound name of
- * a Kotlin/Swift property declarator for the shadow prune). For a tuple pattern
- * (`let (a, b)`) it returns the first — acceptable, those are rare for consts. */
+/** 在 `node` 子树中（类广度优先，先找先返）查找第一个 `simple_identifier`。
+ * Swift 属性名嵌套路径为 `property_declaration → <name> pattern →
+ * bound_identifier → simple_identifier`，此函数可解析它（以及用于
+ * 影子剪枝的 Kotlin/Swift 属性声明符绑定名）。
+ * 对于元组模式（`let (a, b)`）返回第一个——可接受，常量中这类情况很少见。 */
 function firstSimpleIdentifier(node: SyntaxNode | null): SyntaxNode | null {
   const stack: SyntaxNode[] = node ? [node] : [];
   let guard = 0;
@@ -200,8 +197,8 @@ function firstSimpleIdentifier(node: SyntaxNode | null): SyntaxNode | null {
   return null;
 }
 
-/** Swift property facts: the bound name, whether it's a `let`, and whether it's
- * a *computed* property (a getter block, no stored value — never a constant). */
+/** Swift 属性信息：绑定名称、是否为 `let`，以及是否为*计算型*属性
+ *（getter 块，无存储值——永远不会是常量）。 */
 function swiftPropertyInfo(
   node: SyntaxNode,
   source: string,
@@ -218,8 +215,8 @@ function swiftPropertyInfo(
   return { nameNode: firstSimpleIdentifier(pattern), isLet, isComputed };
 }
 
-/** True when `node` is (transitively) inside a C function body — i.e. a local,
- * not a file/namespace-scope declaration. Walks the parent chain to the root. */
+/** 当 `node` 位于 C 函数体内部（可传递）时返回 true——即为局部声明，
+ * 而非文件/命名空间作用域声明。沿父链向上遍历至根节点。 */
 function hasFunctionAncestor(node: SyntaxNode): boolean {
   let p = node.parent;
   while (p) {
@@ -230,10 +227,10 @@ function hasFunctionAncestor(node: SyntaxNode): boolean {
 }
 
 /**
- * PHP type-position wrapper node kinds (a type-hint is `named_type`,
- * `?Foo` is `optional_type`, `A|B` is `union_type`, `A&B` is
- * `intersection_type`). Used to find the type subtree inside a parameter /
- * property / return position before walking it for class references.
+ * PHP 类型位置的包装节点类型（类型提示为 `named_type`，
+ * `?Foo` 为 `optional_type`，`A|B` 为 `union_type`，`A&B` 为
+ * `intersection_type`）。用于在遍历参数/属性/返回位置的类引用前，
+ * 定位其中的类型子树。
  */
 const PHP_TYPE_NODES: ReadonlySet<string> = new Set([
   'named_type', 'optional_type', 'nullable_type',
@@ -242,11 +239,11 @@ const PHP_TYPE_NODES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Member-access node kinds whose receiver, when it's a capitalized
- * type/enum/class name, is a real dependency — `Enum.value`, `Type.CONST`,
- * `Foo::BAR`. These VALUE reads (as opposed to `Type.method()` calls, already
- * handled) produced no edge, so a type used only via a static member or enum
- * value looked like nothing depended on it. See {@link extractStaticMemberRef}.
+ * 成员访问节点类型——当接收器为首字母大写的类型/枚举/类名时，
+ * 表示真实的依赖关系，如 `Enum.value`、`Type.CONST`、`Foo::BAR`。
+ * 这类值读取（区别于已处理的 `Type.method()` 调用）未产生任何边，
+ * 导致仅通过静态成员或枚举值使用的类型看起来没有任何依赖方。
+ * 参见 {@link extractStaticMemberRef}。
  */
 const MEMBER_ACCESS_TYPES: ReadonlySet<string> = new Set([
   'field_access',                       // java (`Foo.BAR`)
@@ -259,25 +256,23 @@ const MEMBER_ACCESS_TYPES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Languages whose types are Capitalized by convention, so a capitalized
- * member-access receiver is reliably a type (not a local/variable). The
- * static-member/value-read pass is gated to these — the ones where it was the
- * confirmed residual frontier (enum-value / static-field reads). TS/JS/Python
- * are deliberately excluded, and a measured A/B confirms the call: extending the
- * pass to them adds ZERO coverage — in import-based languages you must `import` a
- * type before any `Type.MEMBER` read, so the import edge already covers it (the
- * static read is pure duplication) — while adding real graph noise (+1813 edges /
- * +2448 `references` on excalidraw, the retrieval-perf benchmark, all pointing at
- * already-covered types). Don't re-add `member_expression`/`attribute` here.
+ * 按惯例类型名称首字母大写的语言——在这些语言中，首字母大写的成员访问接收器
+ * 可靠地表示一个类型（而非局部变量）。静态成员/值读取处理阶段仅限于这些语言——
+ * 它们是经确认的残余前沿（枚举值/静态字段读取）。TS/JS/Python 有意排除在外，
+ * 经过实测 A/B 确认：将该处理扩展到这些语言覆盖率为零——在基于导入的语言中，
+ * 任何 `Type.MEMBER` 读取之前必须先 `import` 类型，import 边已覆盖了这一情况
+ * （静态读取纯属重复）——同时还会引入真实的图噪声（excalidraw 上 +1813 条边 /
+ * +2448 条 `references`，均指向已覆盖的类型）。不要在此处重新添加
+ * `member_expression`/`attribute`。
  */
 const STATIC_MEMBER_LANGS: ReadonlySet<string> = new Set([
   'java', 'csharp', 'kotlin', 'swift', 'scala', 'dart', 'php', 'cpp',
 ]);
 
 /**
- * Tree-sitter node kinds that represent constructor invocations
- * (`new Foo()` and friends). Used by extractInstantiation to emit
- * an `instantiates` reference targeting the class name.
+ * 表示构造函数调用的 tree-sitter 节点类型
+ * （`new Foo()` 及类似形式）。供 extractInstantiation 使用，
+ * 以发出指向类名的 `instantiates` 引用。
  */
 const INSTANTIATION_KINDS: ReadonlySet<string> = new Set([
   'new_expression',                  // typescript / javascript / tsx / jsx
@@ -289,7 +284,7 @@ const INSTANTIATION_KINDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * TreeSitterExtractor - Main extraction class
+ * TreeSitterExtractor — 主提取类
  */
 export class TreeSitterExtractor {
   private filePath: string;
@@ -299,22 +294,21 @@ export class TreeSitterExtractor {
   private nodes: Node[] = [];
   private edges: Edge[] = [];
   private unresolvedReferences: UnresolvedReference[] = [];
-  // Value-reference edges (default ON; set SYNAPSE_VALUE_REFS=0 to disable; see flushValueRefs).
-  // Same-file reads of file-scope const/var symbols → `references` edges so impact analysis catches
-  // value consumers ("change this constant/table, affect its readers").
+  // 值引用边（默认开启；设置 SYNAPSE_VALUE_REFS=0 可禁用；参见 flushValueRefs）。
+  // 文件作用域 const/var 符号的同文件读取 → `references` 边，使影响分析能捕获
+  // 值消费者（"修改此常量/表，影响其读取方"）。
   private static readonly VALUE_REF_LANGS = new Set<string>(['typescript', 'javascript', 'tsx', 'go', 'python', 'rust', 'ruby', 'c', 'java', 'csharp', 'php', 'scala', 'kotlin', 'swift', 'dart', 'pascal']);
   private static readonly MAX_VALUE_REF_NODES = 20_000;
   private readonly valueRefsEnabled = process.env.SYNAPSE_VALUE_REFS !== '0';
   private fileScopeValues = new Map<string, string>();
-  private fileScopeValueCounts = new Map<string, number>(); // file-scope nodes per name (conditional-def detection)
+  private fileScopeValueCounts = new Map<string, number>(); // 每个名称的文件作用域节点数（用于条件定义检测）
   private valueRefScopes: Array<{ id: string; node: SyntaxNode; name: string }> = [];
   private errors: ExtractionError[] = [];
   private extractor: LanguageExtractor | null = null;
-  private nodeStack: string[] = []; // Stack of parent node IDs
-  private methodIndex: Map<string, string> | null = null; // lookup key → node ID for Pascal defProc lookup
-  // Function-as-value capture (#756): per-language spec + candidates collected
-  // during the walk, gated & flushed into unresolvedReferences at end-of-file
-  // (see flushFnRefCandidates).
+  private nodeStack: string[] = []; // 父节点 ID 栈
+  private methodIndex: Map<string, string> | null = null; // Pascal defProc 查找用的 lookup key → node ID
+  // 函数值捕获（#756）：每语言规格 + 遍历期间收集的候选项，
+  // 在文件末尾经门控后写入 unresolvedReferences（参见 flushFnRefCandidates）。
   private fnRefSpec: FnRefSpec | undefined;
   private fnRefCandidates: Array<FnRefCandidate & { fromNodeId: string }> = [];
 
@@ -327,7 +321,7 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Parse and extract from the source code
+   * 解析源代码并提取信息
    */
   extract(): ExtractionResult {
     const startTime = Date.now();
@@ -368,11 +362,10 @@ export class TreeSitterExtractor {
     }
 
     try {
-      // Optional pre-parse source transform (offset-preserving) to work around
-      // grammar gaps — e.g. C# blanks conditional-compilation directive lines
-      // the grammar mis-parses inside enum bodies (#237). We reassign
-      // this.source so downstream getNodeText reads the same bytes the parser
-      // saw (identical outside the blanked directive lines).
+      // 可选的解析前源码变换（保留偏移量），用于规避 grammar 缺陷——
+      // 例如 C# 会清空条件编译指令行，这些行在 grammar 解析枚举体时会出错（#237）。
+      // 重新赋值 this.source，以便下游 getNodeText 读取解析器所见的相同字节
+      // （与被清空的指令行之外的内容相同）。
       if (this.extractor?.preParse) {
         this.source = this.extractor.preParse(this.source);
       }
@@ -381,7 +374,7 @@ export class TreeSitterExtractor {
         throw new Error('Parser returned null tree');
       }
 
-      // Create file node representing the source file
+      // 创建表示源文件的文件节点
       const fileNode: Node = {
         id: `file:${this.filePath}`,
         kind: 'file',
@@ -398,20 +391,19 @@ export class TreeSitterExtractor {
       };
       this.nodes.push(fileNode);
 
-      // Push file node onto stack so top-level declarations get contains edges
+      // 将文件节点压栈，以便顶层声明获得 contains 边
       this.nodeStack.push(fileNode.id);
 
-      // File-level package declaration (Kotlin/Java). Creates an implicit
-      // `namespace` node wrapping every top-level declaration so their
-      // qualifiedName carries the FQN — required for cross-file import
-      // resolution on JVM languages where filename ≠ class name.
+      // 文件级 package 声明（Kotlin/Java）。创建一个隐式 `namespace` 节点
+      // 包裹所有顶层声明，使其 qualifiedName 携带全限定名——
+      // JVM 语言跨文件 import 解析时必需，因为文件名 ≠ 类名。
       const packageNodeId = this.extractFilePackage(this.tree.rootNode);
       if (packageNodeId) this.nodeStack.push(packageNodeId);
 
       this.visitNode(this.tree.rootNode);
 
-      // Gate + flush function-as-value candidates (#756) while the file's
-      // nodes and import refs are complete and the file node is still pushed.
+      // 在文件节点和 import ref 均已完整、文件节点仍在栈上时，
+      // 触发并刷新 function-as-value 候选（#756）。
       this.flushFnRefCandidates();
       this.flushValueRefs();
 
@@ -420,9 +412,8 @@ export class TreeSitterExtractor {
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
 
-      // WASM memory errors leave the module in a corrupted state — all subsequent
-      // parses would also fail. Re-throw so the worker can detect and crash,
-      // forcing a clean restart with a fresh heap.
+      // WASM 内存错误会导致模块进入损坏状态——后续所有解析都会失败。
+      // 重新抛出，让 worker 检测到并崩溃，以便用干净的堆重启。
       if (msg.includes('memory access out of bounds') || msg.includes('out of memory')) {
         throw error;
       }
@@ -434,13 +425,13 @@ export class TreeSitterExtractor {
         code: 'parse_error',
       });
     } finally {
-      // Free tree-sitter WASM memory immediately — trees hold native heap memory
-      // invisible to V8's GC that accumulates across thousands of files.
+      // 立即释放 tree-sitter WASM 内存——语法树持有 V8 GC 不可见的
+      // 原生堆内存，处理数千个文件后会不断累积。
       if (this.tree) {
         this.tree.delete();
         this.tree = null;
       }
-      // Release source string to reduce GC pressure
+      // 释放源码字符串以减轻 GC 压力
       this.source = '';
     }
 
@@ -454,10 +445,9 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Function-as-value capture (#756): if this node is one of the language's
-   * value-position containers (call arguments, assignment RHS, struct/object
-   * initializer, array/table literal), collect candidate function names from
-   * it. Candidates are gated & flushed at end-of-file (flushFnRefCandidates).
+   * Function-as-value 捕获（#756）：若当前节点是该语言的值位置容器
+   * （调用参数、赋值右值、结构体/对象初始化器、数组/表字面量），
+   * 则从中收集候选函数名。候选在文件末尾通过 flushFnRefCandidates 触发并刷新。
    */
   private maybeCaptureFnRefs(node: SyntaxNode, nodeType: string): void {
     const spec = this.fnRefSpec;
@@ -472,10 +462,9 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Candidates-only scan of a subtree the main walkers won't traverse
-   * (top-level variable initializers). No extraction side effects. Halts at
-   * nested function definitions: their bodies are walked — and their
-   * candidates attributed — by extractFunction's own body walk.
+   * 仅扫描候选的子树（主游走器不会遍历的顶层变量初始化器）。
+   * 无提取副作用。遇到嵌套函数定义时停止——其函数体由 extractFunction
+   * 自身的 body walk 游走，候选也归属于它。
    */
   private scanFnRefSubtree(node: SyntaxNode, depth: number): void {
     if (!this.fnRefSpec || depth > 12) return;
@@ -497,30 +486,26 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Gate captured function-as-value candidates and push survivors as
-   * `function_ref` unresolved references.
+   * 触发 function-as-value 候选并将通过门控的候选推送为
+   * `function_ref` 未解析引用。
    *
-   * The gate bounds volume and protects precision: a candidate survives only
-   * if its name matches a function/method DEFINED IN THIS FILE or a name this
-   * file imports/references. Everything else (locals, params, fields passed
-   * as arguments) is dropped before it ever reaches the database. Resolution
-   * then matches survivors against function/method nodes only
-   * (matchFunctionRef) and emits `references` edges — which callers/impact
-   * already traverse.
+   * 门控限制体积并保护精度：候选仅在其名称匹配本文件中定义的
+   * 函数/方法，或本文件 import/reference 的名称时才能通过。
+   * 其余所有内容（局部变量、参数、作为参数传入的字段）在进入数据库之前丢弃。
+   * 解析器随后将通过门控的候选与 function/method 节点匹配（matchFunctionRef），
+   * 并发出 `references` 边——callers/impact 已对其进行遍历。
    *
-   * Known v1 limit, deliberate: a C/C++ callback registered in a DIFFERENT
-   * translation unit than its definition (extern, no symbol imports to match)
-   * is not captured. Same-file registration — the dominant C pattern (static
-   * callback + same-file ops struct) — is.
+   * 已知的 v1 限制，故意为之：在与定义位于不同编译单元的 C/C++ callback
+   * （extern，无符号 import 可匹配）不会被捕获。同文件注册——主流 C 模式
+   * （静态 callback + 同文件 ops struct）——则会被捕获。
    */
   private flushFnRefCandidates(): void {
     if (this.fnRefCandidates.length === 0) return;
     const candidates = this.fnRefCandidates;
     this.fnRefCandidates = [];
 
-    // Generated/minified files (vendored jquery.min.js and friends): their
-    // function-as-value edges are noise — single-letter minified symbols
-    // resolve everywhere. Same policy as the callback synthesizer.
+    // 生成/压缩文件（内嵌的 jquery.min.js 等）：其 function-as-value 边是噪声——
+    // 单字母压缩符号会在任何地方解析匹配。与 callback 合成器策略相同。
     if (isGeneratedFile(this.filePath)) return;
 
     const definedHere = new Set<string>();
@@ -528,17 +513,15 @@ export class TreeSitterExtractor {
       if (n.kind === 'function' || n.kind === 'method') definedHere.add(n.name);
     }
 
-    // Import-binding names only (all binding emitters push kind 'imports').
-    // Deliberately NOT 'references': those carry type-annotation and
-    // interface-member names, which let local variables that share a type
-    // member's name slip through the gate (excalidraw A/B finding). A dotted
-    // import (JVM `import com.example.OtherClass`) also contributes its LAST
-    // segment — the simple name Java/Kotlin code uses in `OtherClass::method`
-    // references.
+    // 仅使用 import 绑定名称（所有绑定发射器推送 kind 'imports'）。
+    // 故意不使用 'references'：那些携带类型注解和接口成员名，
+    // 会让与类型成员同名的局部变量穿过门控（excalidraw A/B 发现）。
+    // 点分 import（JVM `import com.example.OtherClass`）也贡献其最后段——
+    // Java/Kotlin 代码在 `OtherClass::method` 引用中使用的简单名。
     const SIMPLE_NAME = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
-    // JVM imports are dotted (`com.example.OtherClass`); PHP `use` imports
-    // are backslashed (`App\Services\Mailer`). Both contribute their last
-    // segment — the simple name code uses to reference them.
+    // JVM import 是点分（`com.example.OtherClass`）；PHP `use` import
+    // 是反斜杠分（`App\Services\Mailer`）。两者均贡献其最后段——
+    // 代码用来引用它们的简单名。
     const QUALIFIED_IMPORT = /^[A-Za-z_$][A-Za-z0-9_$.\\]*[.\\]([A-Za-z_$][A-Za-z0-9_$]*)$/;
     const importedNames = new Set<string>();
     for (const r of this.unresolvedReferences) {
@@ -556,11 +539,10 @@ export class TreeSitterExtractor {
     const seen = new Set<string>();
     for (const c of candidates) {
       const atFileScope = c.fromNodeId.startsWith('file:');
-      // C++ (addressOfOnly): a BARE identifier qualifies only inside a
-      // file-scope initializer table. Everywhere else — args, assignments,
-      // local braced-init lists like `{begin, size}` — only explicit `&`
-      // forms count (fmt A/B finding: generic names `begin`/`out`/`size`
-      // collide with locals and members).
+      // C++（addressOfOnly）：裸标识符仅在文件作用域初始化表内有效。
+      // 其他地方——参数、赋值、局部花括号初始化如 `{begin, size}`——
+      // 只有显式 `&` 形式有效（fmt A/B 发现：通用名称 `begin`/`out`/`size`
+      // 与局部变量和成员冲突）。
       if (
         addressOfOnly &&
         !c.explicitRef &&
@@ -568,25 +550,22 @@ export class TreeSitterExtractor {
       ) {
         continue;
       }
-      // Gate policy by candidate shape:
-      //  - `this.<member>`: ALWAYS flush — the member may be inherited from a
-      //    class in another file (definedHere can't see it), volume is
-      //    naturally bounded by real `this.X` expressions, and resolution is
-      //    strictly class-scoped (own members or the validated supertype
-      //    pass), so nothing fuzzy can leak.
-      //  - `Scope::member` (C++ member-pointers, Java/Kotlin type-qualified
-      //    method refs, PHP `'Cls::m'`): ALWAYS flush — the explicit-ref
-      //    syntax is self-selecting, the referenced type often needs NO
-      //    import (Java/Kotlin same-package, Kotlin companions), and
-      //    resolution is scope-suffix-anchored + unique-or-drop, so a
-      //    same-named member on another class can't match.
-      //  - C-family file-scope initializers skip the gate entirely
-      //    (constant-expression context — see FnRefSpec.ungatedModes).
-      //  - everything else: name ∈ same-file functions/methods ∪ imports.
+      // 按候选形状的门控策略：
+      //  - `this.<member>`：始终刷新——成员可能继承自另一文件的类
+      //    （definedHere 不可见），体积自然受真实 `this.X` 表达式限制，
+      //    且解析严格限定在类作用域（自身成员或已验证的超类型通过），
+      //    不会有模糊泄漏。
+      //  - `Scope::member`（C++ 成员指针、Java/Kotlin 类型限定方法引用、
+      //    PHP `'Cls::m'`）：始终刷新——显式引用语法自我筛选，引用类型
+      //    往往无需 import（Java/Kotlin 同包、Kotlin companion），
+      //    且解析锚定在作用域后缀 + 唯一或丢弃，不同类的同名成员无法匹配。
+      //  - C 系文件作用域初始化器完全跳过门控
+      //    （常量表达式上下文——见 FnRefSpec.ungatedModes）。
+      //  - 其他所有情况：名称 ∈ 同文件 functions/methods ∪ imports。
       if (!c.name.startsWith('this.') && !c.name.includes('::')) {
         const skipGate =
           (ungated?.has(c.mode) === true && atFileScope) ||
-          c.skipGate === true; // PHP HOF-position string callables (see FnRefCandidate.skipGate)
+          c.skipGate === true; // PHP HOF 位置字符串可调用（见 FnRefCandidate.skipGate）
         if (!skipGate && !definedHere.has(c.name) && !importedNames.has(c.name)) {
           continue;
         }
@@ -610,21 +589,20 @@ export class TreeSitterExtractor {
    * scopes whose bodies flushValueRefs scans.
    */
   private captureValueRefScope(kind: NodeKind, name: string, id: string, node: SyntaxNode): void {
-    // Pascal targets `constant` only: its extractor emits function PARAMETERS
-    // (`Dest: TBufferWriter`) and class fields (`declField`) as `variable` at the
-    // enclosing scope, which would otherwise become noisy targets (a param name
-    // shared across many procs collapses to one file-wide target). Genuine
-    // Pascal shared values are `const` (`constant`), so restrict to that. (Unit
-    // `var` globals are the rare cost; the parameter/field noise dominates.)
+    // Pascal 仅以 `constant` 为目标：其提取器将函数参数（`Dest: TBufferWriter`）
+    // 和类字段（`declField`）在外围作用域中发出为 `variable`，否则会产生噪声目标
+    // （跨多个 proc 共享的参数名会折叠为一个文件范围的目标）。
+    // Pascal 真正的共享值是 `const`（`constant`），因此限制为此。
+    // （单元 `var` 全局变量是少见的代价；参数/字段噪声占主导。）
     const targetKindOk =
       this.language === 'pascal' ? kind === 'constant' : kind === 'constant' || kind === 'variable';
     if (targetKindOk && name.length >= 3 && /[A-Z_]/.test(name)) {
       const parentId = this.nodeStack[this.nodeStack.length - 1];
-      // file-scope OR class/module/struct/enum-scope constants are targets.
-      // Class/module scope matters for languages (Ruby) that keep nearly all
-      // constants inside a class or module; struct/enum scope matters for Swift,
-      // which namespaces shared constants in `struct`/`enum` (`enum Constants {
-      // static let X }`). Readers are same-file methods of that type.
+      // 文件作用域或类/module/struct/enum 作用域常量为目标。
+      // 类/module 作用域对于 Ruby 这类几乎将所有常量置于类或 module 内的语言至关重要；
+      // struct/enum 作用域对于 Swift 至关重要——Swift 在 `struct`/`enum`
+      // 中命名空间化共享常量（`enum Constants { static let X }`）。
+      // 读者是同文件中该类型的方法。
       if (
         parentId &&
         (parentId.startsWith('file:') || parentId.startsWith('class:') ||
@@ -632,9 +610,9 @@ export class TreeSitterExtractor {
           parentId.startsWith('enum:'))
       ) {
         this.fileScopeValues.set(name, id);
-        // How many target nodes carry this name. A conditional def
-        // (`try: X = a; except: X = b`) makes >1 — distinct from a local shadow,
-        // which adds a binding the prune must catch (see flushValueRefs).
+        // 携带该名称的目标节点数量。条件定义
+        // （`try: X = a; except: X = b`）会使其 >1——
+        // 与局部遮蔽不同，后者会添加 prune 必须捕获的绑定（见 flushValueRefs）。
         this.fileScopeValueCounts.set(name, (this.fileScopeValueCounts.get(name) ?? 0) + 1);
       }
     }
@@ -644,12 +622,12 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Emit same-file `references` edges from a symbol to the file-scope const/var it reads (TS/JS).
-   * The engine doesn't edge const→consumer, so impact analysis misses "change this table, affect
-   * its readers" (the ReScript-PR false positive). Same-file only (resolution is unambiguous),
-   * distinctive target names only (dodges the local-shadowing precision trap documented on
-   * function_ref), deduped per (reader, target). Default on (SYNAPSE_VALUE_REFS=0 disables) +
-   * additive. Shadowed targets are pruned — see below.
+   * 从符号向其读取的文件作用域 const/var 发出同文件 `references` 边（TS/JS）。
+   * 引擎不会生成 const→consumer 边，导致影响分析遗漏"更改此表会影响其读者"
+   * 的场景（ReScript-PR 假阴性）。仅限同文件（解析无歧义），
+   * 仅限有辨识度的目标名称（规避 function_ref 记录的局部遮蔽精度陷阱），
+   * 按（读者, 目标）去重。默认开启（`SYNAPSE_VALUE_REFS=0` 禁用）+ 累加式。
+   * 被遮蔽的目标会被剪除——见下文。
    */
   private flushValueRefs(): void {
     const scopes = this.valueRefScopes;
@@ -661,22 +639,19 @@ export class TreeSitterExtractor {
     if (!this.valueRefsEnabled || !TreeSitterExtractor.VALUE_REF_LANGS.has(this.language)) return;
     if (targets.size === 0 || scopes.length === 0 || isGeneratedFile(this.filePath)) return;
 
-    // Prune SHADOWED targets. A target re-bound in an INNER scope (a
-    // bundled/Emscripten `const Module` re-declared as a nested `var Module`; a
-    // Go package `const Timeout` shadowed by a local `Timeout := …`; a Python
-    // module `CONFIG` shadowed by a local `CONFIG = …`) resolves to the inner
-    // binding for nested readers, so a file-scope edge is a false positive.
-    // Inner re-bindings aren't graph nodes, so detect them at the syntax level:
-    // count every declarator of the name across the tree and compare against how
-    // many FILE-SCOPE nodes carry it. A real shadow makes (declarators >
-    // file-scope nodes) — the excess is the local binding. A conditional
-    // module-level def (`try: X = a; except: X = b`) makes them EQUAL (both
-    // declarators are file-scope nodes), so it's correctly kept. Complements the
-    // path-based isGeneratedFile() check, which can't catch content-minified
-    // bundles.
+    // 剪除被遮蔽的目标。在内层作用域中重新绑定的目标（内嵌的 Emscripten
+    // `const Module` 重声明为嵌套 `var Module`；Go 包级 `const Timeout` 被局部
+    // `Timeout := …` 遮蔽；Python 模块 `CONFIG` 被局部 `CONFIG = …` 遮蔽）
+    // 对嵌套读者而言解析为内层绑定，因此文件作用域边是假阳性。
+    // 内层重绑定不是图节点，需在语法层面检测：统计树中每个名称声明符的出现次数，
+    // 与携带该名称的文件作用域节点数量比较。真正的遮蔽使（声明符 >
+    // 文件作用域节点）——超出部分是局部绑定。条件式模块级定义
+    // （`try: X = a; except: X = b`）使两者相等（两个声明符都是文件作用域节点），
+    // 因此会被正确保留。与基于路径的 isGeneratedFile() 检查互补——
+    // 后者无法捕获内容压缩的 bundle。
     //
-    // Declarator node types are per-grammar; a file only contains its own
-    // language's nodes, so matching all of them in one switch is safe.
+    // 声明符节点类型按 grammar 划分；一个文件只包含自身语言的节点，
+    // 因此在一个 switch 中匹配所有类型是安全的。
     if (this.tree) {
       const declCounts = new Map<string, number>();
       const bump = (nameNode: SyntaxNode | null) => {
@@ -701,7 +676,7 @@ export class TreeSitterExtractor {
           case 'static_item':         // Rust  `static X: T = …`
             bump(getChildByField(n, 'name'));
             break;
-          case 'let_declaration':       // Rust  `let x = …` (locals — the shadow source)
+          case 'let_declaration':       // Rust  `let x = …`（局部变量——遮蔽来源）
           case 'short_var_declaration': // Go    `x, Y := …`
           case 'assignment': {          // Python `X = …` / `X: T = …` / `A, B = …`
             const left = getChildByField(n, 'left') ?? getChildByField(n, 'pattern') ?? n.namedChild(0);
@@ -709,30 +684,30 @@ export class TreeSitterExtractor {
             else if (left) for (const c of left.namedChildren) bump(c);
             break;
           }
-          case 'init_declarator':       // C  `T X = …` (file-scope const AND the local that shadows it)
+          case 'init_declarator':       // C  `T X = …`（文件作用域 const 及其遮蔽局部变量）
             bump(cDeclaratorIdentifier(n));
             break;
-          case 'val_definition':        // Scala  `val X = …` (object/top-level const AND a method-local that shadows it)
+          case 'val_definition':        // Scala  `val X = …`（object/顶层 const 及方法局部遮蔽）
           case 'var_definition': {      // Scala  `var X = …`
             const pat = getChildByField(n, 'pattern');
             if (pat?.type === 'identifier') bump(pat);
             break;
           }
-          case 'static_final_declaration':         // Dart  top-level/`static` `const`/`final` (the target itself)
-          case 'initialized_identifier':           // Dart  instance field / `var`
-          case 'initialized_variable_definition': { // Dart  a method-local `const`/`final`/`var` that shadows a const
+          case 'static_final_declaration':         // Dart  顶层/`static` `const`/`final`（目标本身）
+          case 'initialized_identifier':           // Dart  实例字段 / `var`
+          case 'initialized_variable_definition': { // Dart  方法局部 `const`/`final`/`var`（遮蔽 const）
             const id = n.namedChildren.find((c) => c.type === 'identifier');
             if (id) bump(id);
             break;
           }
-          case 'declConst':  // Pascal  unit/class `const` (the target itself) AND a function-local `const` that shadows it
-          case 'declVar': {  // Pascal  a function-local `var` that shadows a const
+          case 'declConst':  // Pascal  单元/类 `const`（目标本身）及函数局部 `const`（遮蔽目标）
+          case 'declVar': {  // Pascal  遮蔽 const 的函数局部 `var`
             bump(getChildByField(n, 'name'));
             break;
           }
-          case 'property_declaration': { // Kotlin / Swift  `val`/`let X = …` (object/static const AND a method-local that shadows it)
-            // Kotlin: variable_declaration → simple_identifier; Swift: a `pattern`
-            // (`<name>` field) → simple_identifier. Resolve either shape.
+          case 'property_declaration': { // Kotlin / Swift  `val`/`let X = …`（object/static const 及方法局部遮蔽）
+            // Kotlin：variable_declaration → simple_identifier；Swift：`pattern`
+            // （`<name>` 字段）→ simple_identifier。两种形状均解析。
             const vd = n.namedChildren.find((c) => c.type === 'variable_declaration');
             const id = vd
               ? vd.namedChildren.find((c) => c.type === 'simple_identifier')
@@ -757,38 +732,33 @@ export class TreeSitterExtractor {
     for (const scope of scopes) {
       const seen = new Set<string>();
       const stack: SyntaxNode[] = [scope.node];
-      // Dart and Pascal attach a function/method BODY as a *next sibling* of the
-      // signature node that is stored as the reader scope (Dart `method_signature`
-      // ← `function_body`; Pascal `declProc` ← `block`, both under a `defProc`),
-      // not as a child — so the scope subtree is just the signature and the reads
-      // live in the sibling. Pull it in. (A body as a next sibling of the scope
-      // node is unique to Dart/Pascal among the value-ref languages — every other
-      // grammar nests the body inside the function node — so this is inert
-      // elsewhere.)
+      // Dart 和 Pascal 将函数/方法 BODY 作为存储为读者作用域的签名节点的
+      // *下一个兄弟节点*（Dart `method_signature` ← `function_body`；
+      // Pascal `declProc` ← `block`，两者均在 `defProc` 下），而非子节点——
+      // 因此作用域子树仅是签名，读取操作位于兄弟节点中。将其纳入。
+      // （作用域节点的下一兄弟节点作为 body 在值引用语言中仅 Dart/Pascal 有此特点——
+      // 其他所有 grammar 均将 body 嵌套在函数节点内——因此在其他地方此操作无效。）
       const sib = scope.node.nextNamedSibling;
       if (sib && (sib.type === 'function_body' || sib.type === 'block')) stack.push(sib);
       let visited = 0;
       while (stack.length > 0 && visited < TreeSitterExtractor.MAX_VALUE_REF_NODES) {
         const n = stack.pop()!;
         visited++;
-        // `constant` covers Ruby, where both a constant's definition and its
-        // references are `constant`-typed nodes, not `identifier`. `name` covers
-        // PHP, where a constant reference — bare `MAX_ITEMS` or the const half of
-        // `self::MAX_ITEMS` / `Foo::MAX_ITEMS` — is a `name` node (a `$var` local
-        // is a `variable_name`, a different namespace, so it can never shadow a
-        // bare constant — no prune wiring needed). `simple_identifier` covers
-        // Kotlin, whose every name reference (a const read included) is that
-        // node type. Safe across languages: a file only holds its own grammar's
-        // nodes; `name` is PHP-only and `simple_identifier` is Kotlin-only here.
+        // `constant` 覆盖 Ruby——其常量的定义和引用均为 `constant` 类型节点，
+        // 而非 `identifier`。`name` 覆盖 PHP——常量引用（裸 `MAX_ITEMS` 或
+        // `self::MAX_ITEMS` / `Foo::MAX_ITEMS` 中的 const 部分）是 `name` 节点
+        // （`$var` 局部变量是 `variable_name`，不同命名空间，永远不会遮蔽裸常量——
+        // 无需 prune 连线）。`simple_identifier` 覆盖 Kotlin——其每个名称引用
+        // （包括 const 读取）均为该节点类型。跨语言安全：一个文件只包含
+        // 自身 grammar 的节点；`name` 仅属于 PHP，`simple_identifier` 仅属于 Kotlin。
         if (
           n.type === 'identifier' || n.type === 'constant' ||
           n.type === 'name' || n.type === 'simple_identifier'
         ) {
           const refName = getNodeText(n, this.source);
           const targetId = targets.get(refName);
-          // Skip self and same-name targets: a symbol referencing a file-scope
-          // sibling of its own name (the two halves of a conditional `try: X=…;
-          // except: X=…`) is never a meaningful value read.
+          // 跳过自身和同名目标：符号引用与自身同名的文件作用域兄弟节点
+          // （条件式 `try: X=…; except: X=…` 的两半）永远不是有意义的值读取。
           if (targetId && targetId !== scope.id && refName !== scope.name && !seen.has(targetId)) {
             seen.add(targetId);
             this.edges.push({
@@ -808,7 +778,7 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Visit a node and extract information
+   * 访问节点并提取信息
    */
   private visitNode(node: SyntaxNode): void {
     if (!this.extractor) return;
@@ -816,46 +786,45 @@ export class TreeSitterExtractor {
     const nodeType = node.type;
     let skipChildren = false;
 
-    // Language-specific custom visitor hook
+    // 语言专属自定义 visitor hook
     if (this.extractor.visitNode) {
       const ctx = this.makeExtractorContext();
       const handled = this.extractor.visitNode(node, ctx);
       if (handled) {
-        // The hook consumed this subtree, so the walkers below never descend
-        // into it — scan it for function-as-value candidates (#756). Scala's
-        // hook handles val/var definitions (`val table = Seq(targetCb)`), for
-        // example. The scan is capture-only and halts at nested functions.
+        // hook 已消费该子树，下方的游走器不会再递归进入——
+        // 扫描该子树以查找 function-as-value 候选（#756）。
+        // 例如 Scala 的 hook 处理 val/var 定义（`val table = Seq(targetCb)`）。
+        // 该扫描仅做捕获，并在遇到嵌套函数时停止。
         this.scanFnRefSubtree(node, 0);
         return;
       }
     }
 
-    // Pascal-specific AST handling
+    // Pascal 专属 AST 处理
     if (this.language === 'pascal') {
       skipChildren = this.visitPascalNode(node);
       if (skipChildren) return;
     }
 
-    // Function-as-value capture (#756) — independent of the dispatch ladder
-    // below (the captured container types have no other handler there), so it
-    // can never shadow or be shadowed by an extraction branch.
+    // Function-as-value 捕获（#756）——独立于下方的分发梯级
+    // （捕获的容器类型在其中没有其他处理器），因此永远不会遮蔽或被提取分支遮蔽。
     this.maybeCaptureFnRefs(node, nodeType);
 
-    // Check for function declarations
-    // For Python/Ruby, function_definition inside a class should be treated as method
+    // 检查函数声明
+    // 对于 Python/Ruby，类内的 function_definition 应视为方法
     if (this.extractor.functionTypes.includes(nodeType)) {
       if (this.isInsideClassLikeNode() && this.extractor.methodTypes.includes(nodeType)) {
-        // Inside a class - treat as method
+        // 类内部——视为方法
         this.extractMethod(node);
-        skipChildren = true; // extractMethod visits children via visitFunctionBody
+        skipChildren = true; // extractMethod 通过 visitFunctionBody 访问子节点
       } else {
         this.extractFunction(node);
-        skipChildren = true; // extractFunction visits children via visitFunctionBody
+        skipChildren = true; // extractFunction 通过 visitFunctionBody 访问子节点
       }
     }
-    // Check for class declarations
+    // 检查类声明
     else if (this.extractor.classTypes.includes(nodeType)) {
-      // Some languages reuse class_declaration for structs/enums (e.g. Swift)
+      // 部分语言复用 class_declaration 表示 struct/enum（如 Swift）
       const classification = this.extractor.classifyClassNode?.(node) ?? 'class';
       if (classification === 'struct') {
         this.extractStruct(node);
@@ -868,118 +837,114 @@ export class TreeSitterExtractor {
       } else {
         this.extractClass(node);
       }
-      skipChildren = true; // extractClass visits body children
+      skipChildren = true; // extractClass 访问 body 子节点
     }
-    // Extra class node types (e.g. Dart mixin_declaration, extension_declaration)
+    // 额外类节点类型（如 Dart mixin_declaration、extension_declaration）
     else if (this.extractor.extraClassNodeTypes?.includes(nodeType)) {
       this.extractClass(node);
       skipChildren = true;
     }
-    // Check for method declarations (only if not already handled by functionTypes)
+    // 检查方法声明（仅在未被 functionTypes 处理时）
     else if (this.extractor.methodTypes.includes(nodeType)) {
-      // TS/JS class fields parse as a methodTypes node; only function-valued
-      // fields are methods — a plain field (`public fonts: Fonts;`) is a
-      // property (#808). classifyMethodNode is absent for other languages.
+      // TS/JS 类字段解析为 methodTypes 节点；只有函数值字段是方法——
+      // 普通字段（`public fonts: Fonts;`）是属性（#808）。
+      // classifyMethodNode 在其他语言中不存在。
       if (this.extractor.classifyMethodNode?.(node) === 'property') {
         const propNode = this.extractProperty(node);
-        // Walk the initializer so its calls/instantiations attribute to the
-        // property (`history = createHistory()` → history calls
-        // createHistory). The old field-as-method path never walked these
-        // (resolveBody only resolves function bodies), so this is additive.
+        // 游走初始化器，使其调用/实例化归属于属性
+        // （`history = createHistory()` → history 调用 createHistory）。
+        // 旧的 field-as-method 路径从未游走这些（resolveBody 只解析函数体），
+        // 因此这是累加式的。
         const valueNode = getChildByField(node, 'value');
         if (propNode && valueNode) {
           this.nodeStack.push(propNode.id);
           this.visitFunctionBody(valueNode, '');
           this.nodeStack.pop();
         }
-        // A field initializer can also register callbacks
-        // (`static handlers = { click: onClick }`) — scan it for
-        // function-as-value candidates (capture-only, halts at functions).
+        // 字段初始化器也可以注册 callback
+        // （`static handlers = { click: onClick }`）——扫描其中的
+        // function-as-value 候选（仅捕获，遇函数定义停止）。
         this.scanFnRefSubtree(node, 0);
         skipChildren = true;
       } else {
         this.extractMethod(node);
-        skipChildren = true; // extractMethod visits children via visitFunctionBody
+        skipChildren = true; // extractMethod 通过 visitFunctionBody 访问子节点
       }
     }
-    // Check for interface/protocol/trait declarations
+    // 检查 interface/protocol/trait 声明
     else if (this.extractor.interfaceTypes.includes(nodeType)) {
       this.extractInterface(node);
-      skipChildren = true; // extractInterface visits body children
+      skipChildren = true; // extractInterface 访问 body 子节点
     }
-    // Check for struct declarations
+    // 检查 struct 声明
     else if (this.extractor.structTypes.includes(nodeType)) {
       this.extractStruct(node);
-      skipChildren = true; // extractStruct visits body children
+      skipChildren = true; // extractStruct 访问 body 子节点
     }
-    // Check for enum declarations
+    // 检查 enum 声明
     else if (this.extractor.enumTypes.includes(nodeType)) {
       this.extractEnum(node);
-      skipChildren = true; // extractEnum visits body children
+      skipChildren = true; // extractEnum 访问 body 子节点
     }
-    // Check for type alias declarations (e.g. `type X = ...` in TypeScript)
-    // For Go, type_spec wraps struct/interface definitions — resolveTypeAliasKind
-    // detects these and extractTypeAlias creates the correct node kind.
+    // 检查类型别名声明（如 TypeScript 中的 `type X = ...`）
+    // 对于 Go，type_spec 包裹 struct/interface 定义——resolveTypeAliasKind
+    // 检测这些情况，extractTypeAlias 创建正确的节点类型。
     else if (this.extractor.typeAliasTypes.includes(nodeType)) {
       skipChildren = this.extractTypeAlias(node);
     }
-    // Check for class properties (e.g. C# property_declaration)
+    // 检查类属性（如 C# property_declaration）
     else if (this.extractor.propertyTypes?.includes(nodeType) && this.isInsideClassLikeNode()) {
       this.extractProperty(node);
-      // Property initializers aren't walked — scan for function-as-value
-      // candidates (#756): Scala `val table = Seq(targetCb)` in an object,
-      // Kotlin `val cb = ::handler` class properties.
+      // 属性初始化器不被游走——扫描 function-as-value 候选（#756）：
+      // Scala `val table = Seq(targetCb)` 在 object 中，
+      // Kotlin `val cb = ::handler` 类属性。
       this.scanFnRefSubtree(node, 0);
       skipChildren = true;
     }
-    // Check for class fields (e.g. Java field_declaration, C# field_declaration)
+    // 检查类字段（如 Java field_declaration、C# field_declaration）
     else if (this.extractor.fieldTypes?.includes(nodeType) && this.isInsideClassLikeNode()) {
       this.extractField(node);
-      // Field initializers aren't walked — scan for function-as-value
-      // candidates (#756): Java `List<IntConsumer> table = List.of(Main::cb)`,
-      // C# `List<Action<int>> table = new() { TargetCb }`.
+      // 字段初始化器不被游走——扫描 function-as-value 候选（#756）：
+      // Java `List<IntConsumer> table = List.of(Main::cb)`，
+      // C# `List<Action<int>> table = new() { TargetCb }`。
       this.scanFnRefSubtree(node, 0);
       skipChildren = true;
     }
-    // Check for variable declarations (const, let, var, etc.)
-    // Only extract top-level variables (not inside functions/methods) — plus
-    // class/module-scope CONSTANTS, which Ruby (and other const-in-class
-    // languages) keep almost exclusively inside a class/module. A Ruby `CONST =
-    // …` has a `constant`-typed LHS; other languages don't put one here, so this
-    // is effectively Ruby-only and doesn't disturb their class-internal locals.
+    // 检查变量声明（const、let、var 等）
+    // 仅提取顶层变量（非函数/方法内部）——加上类/module 作用域常量，
+    // Ruby（及其他 const-in-class 语言）几乎将所有常量保存在类或 module 内。
+    // Ruby `CONST = …` 的 LHS 是 `constant` 类型；其他语言不在此处放置此类节点，
+    // 因此这实际上仅针对 Ruby，不干扰其他语言的类内局部变量。
     else if (
       this.extractor.variableTypes.includes(nodeType) &&
       (!this.isInsideClassLikeNode() || this.isClassScopeConstantAssignment(node))
     ) {
       this.extractVariable(node);
-      // extractVariable doesn't walk every initializer shape (object literals
-      // are deliberately skipped; Python/Ruby don't walk at all), so scan the
-      // declaration subtree for function-as-value candidates — `const routes =
-      // { home: renderHome }`, `handlers = {"recv": target_cb}`. The scan halts
-      // at nested function definitions (their bodies are walked — and
-      // attributed — separately) and flush-time dedup absorbs any overlap with
-      // initializers extractVariable DOES walk.
+      // extractVariable 不游走每种初始化器形状（对象字面量故意跳过；
+      // Python/Ruby 根本不游走），因此扫描声明子树查找 function-as-value 候选——
+      // `const routes = { home: renderHome }`、`handlers = {"recv": target_cb}`。
+      // 扫描在嵌套函数定义处停止（其函数体被单独游走并归属），
+      // 刷新时去重可吸收 extractVariable 确实游走的初始化器的任何重叠。
       this.scanFnRefSubtree(node, 0);
-      skipChildren = true; // extractVariable handles children
+      skipChildren = true; // extractVariable 处理子节点
     }
-    // Swift stored properties inside a type. Swift instance properties aren't
-    // extracted as their own nodes, but a property's PROPERTY WRAPPER
-    // (`@Argument`/`@Published`/`@State`/custom) and declared type ARE
-    // dependencies — attribute them to the enclosing type so the wrapper/type
-    // files get dependents. Don't skipChildren: an initializer's calls still
-    // matter. (Other languages extract properties via property/field types.)
+    // Swift 类型内的存储属性。Swift 实例属性不提取为自身节点，
+    // 但属性的 PROPERTY WRAPPER（`@Argument`/`@Published`/`@State`/自定义）
+    // 和声明类型是依赖项——将其归属于封闭类型，以便 wrapper/类型文件获得依赖方。
+    // 不 skipChildren：初始化器的调用仍有意义。
+    // （其他语言通过 property/field 类型提取属性。）
     else if (
       this.language === 'swift' &&
       nodeType === 'property_declaration' &&
       this.isInsideClassLikeNode()
     ) {
       const ownerId = this.nodeStack[this.nodeStack.length - 1];
-      // A `static let`/`static var` member is a SHARED constant of the type
-      // (Swift's `static`-namespacing idiom, esp. in `enum`/`struct`) — extract
-      // it as `constant`/`variable` so value-reference edges can target it. An
-      // instance stored property stays a `field` (per-instance; Swift instance
-      // properties otherwise aren't own nodes — that's unchanged). A *computed*
-      // property (getter, no stored value) is never a constant — skip the node.
+      // `static let`/`static var` 成员是该类型的共享常量
+      // （Swift 的 `static` 命名空间惯用法，尤其在 `enum`/`struct` 中）——
+      // 将其提取为 `constant`/`variable`，以便值引用边可以指向它。
+      // 实例存储属性保持为 `field`（per-instance；Swift 实例属性
+      // 本来就没有自身节点——这一点不变）。*计算型*属性（getter，无存储值）
+      // 永远不是常量——跳过该节点。
       const { nameNode, isLet, isComputed } = swiftPropertyInfo(node, this.source);
       if (nameNode && !isComputed) {
         const isStatic = this.extractor.isStatic?.(node) ?? false;
@@ -992,14 +957,13 @@ export class TreeSitterExtractor {
       if (ownerId) {
         this.extractDecoratorsFor(node, ownerId);
         this.extractVariableTypeAnnotation(node, ownerId);
-        // Fluent / SwiftUI property-wrapper attributes often reference a model or
-        // type by metatype in their ARGUMENTS — `@Siblings(through: Pivot.self,
-        // …)`, `@Group(…)`. extractDecoratorsFor captures the wrapper type
-        // (`Siblings`); this pulls the TYPE out of the argument expressions
-        // (`Pivot.self` → a dependency on Pivot), so a model reached ONLY through
-        // a relationship (a many-to-many pivot/join model) isn't left orphaned.
-        // extractStaticMemberRef self-filters to `Type.member` navigation, so the
-        // `\.$keypath` arguments and the wrapper `user_type` are skipped.
+        // Fluent / SwiftUI 属性包装器（property wrapper）的 attribute 常在其**参数**中
+        // 通过 metatype 引用 model 或类型——如 `@Siblings(through: Pivot.self, …)`、
+        // `@Group(…)`。extractDecoratorsFor 捕获包装器类型（`Siblings`）；
+        // 此处从参数表达式中提取类型（`Pivot.self` → 对 Pivot 的依赖），
+        // 避免仅通过关联关系（多对多 pivot/join model）访问的 model 变成孤儿。
+        // extractStaticMemberRef 自行过滤为 `Type.member` 导航，
+        // 因此 `\.$keypath` 参数和包装器 `user_type` 会被跳过。
         const modifiers = node.namedChildren.find((c: SyntaxNode) => c.type === 'modifiers');
         if (modifiers) {
           const walkAttrArgs = (n: SyntaxNode): void => {
@@ -1013,30 +977,26 @@ export class TreeSitterExtractor {
         }
       }
     }
-    // `export_statement` itself is not extracted — the walker descends
-    // into children, where the inner declaration (lexical_declaration,
-    // function_declaration, class_declaration, etc.) is dispatched to
-    // its own extractor. `isExported` walks the parent chain, so the
-    // exported flag is preserved automatically.
+    // `export_statement` 本身不被提取——游走器下降至子节点，
+    // 内层声明（lexical_declaration、function_declaration、class_declaration 等）
+    // 被分发到各自的提取器。`isExported` 游走父链，因此导出标志自动保留。
     //
-    // Calling extractExportedVariables here AND descending caused every
-    // `export const X = ...` to produce two nodes for the same symbol —
-    // one kind:'variable' from extractExportedVariables and one
-    // kind:'constant' from extractVariable. The dedicated dispatch is
-    // the correct one (it picks kind from isConst, captures the
-    // initializer signature, and walks type annotations); the
-    // export-statement helper was redundant.
-    // Check for imports
+    // 在此调用 extractExportedVariables 并同时下降，会导致每个
+    // `export const X = ...` 产生同一符号的两个节点——
+    // 一个来自 extractExportedVariables 的 kind:'variable'，
+    // 一个来自 extractVariable 的 kind:'constant'。
+    // 专用分发是正确的（它从 isConst 获取 kind，捕获初始化器签名，
+    // 并游走类型注解）；export-statement 辅助函数是冗余的。
+    // 检查 import
     else if (this.extractor.importTypes.includes(nodeType)) {
       this.extractImport(node);
     }
-    // Re-export from another module — `export { X } from './y'` (TS/JS). A
-    // re-export is a dependency on the source module just like an import, but
-    // the export_statement is otherwise only descended into (no declaration to
-    // extract), so a barrel that ONLY re-exports produced zero edges and showed
-    // 0 dependents. Link each re-exported name to its definition. Children are
-    // still visited (a non-re-export `export const X = …` has no `source` and
-    // falls through to its normal declaration extraction).
+    // 从另一模块重导出——`export { X } from './y'`（TS/JS）。
+    // 重导出是对源模块的依赖，就像 import 一样，但 export_statement
+    // 否则只会被下降（没有声明可提取），导致仅重导出的 barrel
+    // 产生零边且显示 0 依赖方。将每个重导出名称链接到其定义。
+    // 子节点仍会被访问（非重导出的 `export const X = …` 没有 `source`，
+    // 会回退到正常的声明提取）。
     else if (
       nodeType === 'export_statement' &&
       (this.language === 'typescript' || this.language === 'tsx' ||
@@ -1046,41 +1006,37 @@ export class TreeSitterExtractor {
       const parentId = this.nodeStack[this.nodeStack.length - 1];
       if (parentId) this.emitReExportRefs(node, parentId);
     }
-    // Check for function calls
+    // 检查函数调用
     else if (this.extractor.callTypes.includes(nodeType)) {
       this.extractCall(node);
     }
-    // `new Foo(...)` / `Foo::new(...)` / object_creation_expression —
-    // produce an `instantiates` reference. Children still walked so
-    // nested calls inside the constructor args (`new Foo(bar())`) get
-    // their own `calls` refs.
+    // `new Foo(...)` / `Foo::new(...)` / object_creation_expression——
+    // 产生 `instantiates` 引用。子节点仍然被游走，
+    // 以便构造函数参数内的嵌套调用（`new Foo(bar())`）获得各自的 `calls` 引用。
     else if (INSTANTIATION_KINDS.has(nodeType)) {
       this.extractInstantiation(node);
-      // Java/C# `new T(...) { ... }` — anonymous class with body. Without
-      // extracting it as a class node + its methods, the interface→impl
-      // synthesizer (Phase 5.5) can't bridge T's abstract methods to the
-      // anonymous overrides, and an agent investigating a call through T
-      // (`strategy.iterator(...)` where strategy is a Strategy lambda body)
-      // has to Read the file to find the actual implementation.
+      // Java/C# `new T(...) { ... }` — 带 body 的匿名类。若不将其提取为
+      // 类节点及其方法，interface→impl 合成器（Phase 5.5）无法将 T 的
+      // 抽象方法桥接到匿名覆盖，智能体调查通过 T 的调用
+      // （`strategy.iterator(...)` 其中 strategy 是 Strategy lambda body）
+      // 时不得不 Read 文件查找实际实现。
       const anonBody = this.findAnonymousClassBody(node);
       if (anonBody) {
         this.extractAnonymousClass(node, anonBody);
         skipChildren = true;
       }
     }
-    // (Decorator handling lives inside the symbol-creating extractors
-    // — extractClass / extractFunction / extractProperty — because the
-    // decorator node sits BEFORE the symbol in the AST and the walker
-    // would otherwise see the wrong nodeStack head.)
-    // Rust: `impl Trait for Type { ... }` — creates implements edge from Type to Trait
+    // （Decorator 处理位于符号创建提取器内——extractClass / extractFunction /
+    // extractProperty——因为 decorator 节点在 AST 中位于符号之前，
+    // 游走器否则会看到错误的 nodeStack 头部。）
+    // Rust：`impl Trait for Type { ... }` — 从 Type 到 Trait 创建 implements 边
     else if (nodeType === 'impl_item') {
       this.extractRustImplItem(node);
     }
-    // TypeScript interface members: property_signature (`foo: T`, `foo?: T`)
-    // and method_signature (`foo(arg: A): R`) both carry type annotations the
-    // interface walker would otherwise drop. Extract them as `references`
-    // edges from the interface so resolvers can wire callers/impact for
-    // types that only appear in interface members.
+    // TypeScript interface 成员：property_signature（`foo: T`、`foo?: T`）
+    // 和 method_signature（`foo(arg: A): R`）都携带类型注解，
+    // interface 游走器否则会丢弃。将它们提取为从 interface 出发的 `references` 边，
+    // 以便解析器可以为仅出现在 interface 成员中的类型连线 callers/impact。
     else if (
       (nodeType === 'property_signature' || nodeType === 'method_signature') &&
       this.isInsideClassLikeNode() &&
@@ -1090,10 +1046,10 @@ export class TreeSitterExtractor {
       if (parentId) {
         this.extractTypeAnnotations(node, parentId);
       }
-      // don't skipChildren — nested signatures still need traversal
+      // 不 skipChildren——嵌套签名仍需遍历
     }
 
-    // Visit children (unless the extract method already visited them)
+    // 访问子节点（除非提取方法已经访问过它们）
     if (!skipChildren) {
       for (let i = 0; i < node.namedChildCount; i++) {
         const child = node.namedChild(i);
@@ -1105,7 +1061,7 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Create a Node object
+   * 创建节点对象
    */
   private createNode(
     kind: NodeKind,
@@ -1113,20 +1069,19 @@ export class TreeSitterExtractor {
     node: SyntaxNode,
     extra?: Partial<Node>
   ): Node | null {
-    // Skip nodes with empty/missing names — they are not meaningful symbols
-    // and would cause FK violations when edges reference them (see issue #42)
+    // 跳过名称为空/缺失的节点——它们不是有意义的符号，
+    // 且当边引用它们时会导致 FK 违约（见 issue #42）
     if (!name) {
       return null;
     }
 
     const id = generateNodeId(this.filePath, kind, name, node.startPosition.row + 1);
 
-    // Some grammars (e.g. Dart) model a function/method body as a *sibling* of
-    // the signature node, so the declaration node's own range is just the
-    // signature line. Extend endLine to the resolved body when it sits beyond
-    // the node so the node spans its body — required for any body-level analysis
-    // (callees, the callback synthesizer's body scan, context slices). Guarded to
-    // only ever extend: for child-body grammars the body is within range (no-op).
+    // 部分 grammar（如 Dart）将函数/方法 body 建模为签名节点的*兄弟节点*，
+    // 因此声明节点自身的范围仅是签名行。当 body 位于节点范围之外时，
+    // 将 endLine 扩展到已解析的 body，使节点涵盖其 body——
+    // 任何 body 级分析（callees、callback 合成器的 body 扫描、上下文切片）均需此操作。
+    // 仅在需要时扩展：对于子 body grammar，body 在范围内（无操作）。
     let endLine = node.endPosition.row + 1;
     if (kind === 'function' || kind === 'method') {
       const body = this.extractor?.resolveBody?.(node, this.extractor.bodyField);
@@ -1150,10 +1105,9 @@ export class TreeSitterExtractor {
       ...extra,
     };
 
-    // Persist extra symbol-level modifiers (e.g. Kotlin `expect`/`actual`) onto
-    // the node's decorators list so the resolver can pair multiplatform
-    // declarations with their implementations. Merged, not overwritten, so a
-    // language that also captures real annotations keeps both.
+    // 将额外的符号级修饰符（如 Kotlin 的 `expect`/`actual`）持久化到节点的
+    // decorators 列表，以便解析器能将多平台声明与其实现配对。
+    // 执行合并而非覆盖，因此同时捕获真实注解的语言可以保留两者。
     const mods = this.extractor?.extractModifiers?.(node);
     if (mods && mods.length > 0) {
       newNode.decorators = [...(newNode.decorators ?? []), ...mods];
@@ -1161,7 +1115,7 @@ export class TreeSitterExtractor {
 
     this.nodes.push(newNode);
 
-    // Add containment edge from parent
+    // 从父节点添加包含边
     if (this.nodeStack.length > 0) {
       const parentId = this.nodeStack[this.nodeStack.length - 1];
       if (parentId) {
@@ -1179,8 +1133,8 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Find first named child whose type is in the given list.
-   * Used to locate inner type nodes (e.g. enum_specifier inside a typedef).
+   * 查找类型在给定列表中的第一个命名子节点。
+   * 用于定位内层类型节点（如 typedef 内的 enum_specifier）。
    */
   private findChildByTypes(node: SyntaxNode, types: string[]): SyntaxNode | null {
     for (let i = 0; i < node.namedChildCount; i++) {
@@ -1191,10 +1145,9 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Find a `packageTypes` child under the root, create a `namespace` node
-   * for it, and return its id so the caller can scope top-level
-   * declarations underneath. Returns null when no package header is
-   * present (script files, .kts without a package).
+   * 在根节点下查找 `packageTypes` 子节点，为其创建 `namespace` 节点，
+   * 并返回其 id，以便调用方将顶层声明置于其作用域下。
+   * 当不存在 package 头时（脚本文件、不带 package 的 .kts）返回 null。
    */
   private extractFilePackage(rootNode: SyntaxNode): string | null {
     const types = this.extractor?.packageTypes;
@@ -1218,11 +1171,11 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Build qualified name from node stack
+   * 从节点栈构建限定名称
    */
   private buildQualifiedName(name: string): string {
-    // Build a qualified name from the semantic hierarchy only (no file path).
-    // The file path is stored separately in filePath and pollutes FTS if included here.
+    // 仅从语义层次结构构建限定名称（不含文件路径）。
+    // 文件路径单独存储在 filePath 中，若包含在此会污染 FTS。
     const parts: string[] = [];
     for (const nodeId of this.nodeStack) {
       const node = this.nodes.find((n) => n.id === nodeId);
@@ -1235,7 +1188,7 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Build an ExtractorContext for passing to language-specific visitNode hooks.
+   * 构建 ExtractorContext，用于传递给语言特定的 visitNode hook。
    */
   private makeExtractorContext(): ExtractorContext {
     // eslint-disable-next-line @typescript-eslint/no-this-alias
@@ -1255,8 +1208,8 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Check if the current node stack indicates we are inside a class-like node
-   * (class, struct, interface, trait). File nodes do not count as class-like.
+   * 检查当前节点栈是否表明我们位于类似类的节点内
+   * （class、struct、interface、trait）。文件节点不算类似类的节点。
    */
   private isInsideClassLikeNode(): boolean {
     if (this.nodeStack.length === 0) return false;
@@ -1275,10 +1228,10 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Ruby `CONST = …` assignment whose LHS is a `constant` node — a class/module
-   * (or top-level) constant worth extracting as a symbol even inside a class.
-   * Other languages don't give an assignment a `constant`-typed LHS, so this
-   * gate is effectively Ruby-only.
+   * Ruby `CONST = …` 赋值语句，其 LHS 是 `constant` 节点——
+   * 即使在类内部也值得提取为符号的类/module（或顶层）常量。
+   * 其他语言不会为赋值语句的 LHS 赋予 `constant` 类型，
+   * 因此此门控实际上仅针对 Ruby。
    */
   private isClassScopeConstantAssignment(node: SyntaxNode): boolean {
     if (node.type !== 'assignment') return false;
@@ -1287,27 +1240,27 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Extract a function
+   * 提取函数
    */
   private extractFunction(node: SyntaxNode, nameOverride?: string): void {
     if (!this.extractor) return;
 
-    // If the language provides getReceiverType and this function has a receiver
-    // (e.g., Rust function_item inside an impl block), extract as method instead
+    // 若语言提供 getReceiverType 且此函数具有接收者
+    // （如 impl 块内的 Rust function_item），则改为提取为 method
     if (this.extractor.getReceiverType?.(node, this.source)) {
       this.extractMethod(node);
       return;
     }
 
-    // nameOverride is supplied only for explicitly-named anonymous functions the
-    // caller resolved itself (e.g. arrow values of exported-const object members
-    // — SvelteKit actions). Inline-object arrows reached by the general walker
-    // get no override, so they still fall through to the <anonymous> skip below.
+    // nameOverride 仅在调用方自行解析了显式命名匿名函数时提供
+    // （如导出 const 对象成员的箭头值——SvelteKit actions）。
+    // 由通用游走器到达的内联对象箭头不提供 override，
+    // 因此仍会进入下方的 <anonymous> 跳过逻辑。
     let name = nameOverride ?? extractName(node, this.source, this.extractor);
-    // For arrow functions and function expressions assigned to variables,
-    // resolve the name from the parent variable_declarator.
-    // e.g. `export const useAuth = () => { ... }` — the arrow_function node
-    // has no `name` field; the name lives on the variable_declarator.
+    // 对于赋值给变量的箭头函数和函数表达式，
+    // 从父节点 variable_declarator 解析名称。
+    // 例如 `export const useAuth = () => { ... }` — arrow_function 节点
+    // 没有 `name` 字段；名称位于 variable_declarator 上。
     if (
       !nameOverride &&
       name === '<anonymous>' &&
@@ -1322,11 +1275,10 @@ export class TreeSitterExtractor {
       }
     }
     if (name === '<anonymous>') {
-      // Don't emit a node for the anonymous wrapper itself, but still visit its
-      // body: AMD/RequireJS and CommonJS module wrappers (`define([], function(){…})`,
-      // `(function(){…})()`) hold named inner functions and calls that would
-      // otherwise be lost — the dispatcher set skipChildren, so nothing else
-      // descends into this subtree. (#528)
+      // 不为匿名包装器本身发出节点，但仍访问其 body：
+      // AMD/RequireJS 和 CommonJS 模块包装器（`define([], function(){…})`、
+      // `(function(){…})()`）持有命名内层函数和调用，否则会丢失——
+      // 分发器设置了 skipChildren，因此没有其他路径下降到此子树。（#528）
       const body = this.extractor.resolveBody?.(node, this.extractor.bodyField)
         ?? getChildByField(node, this.extractor.bodyField);
       if (body) {
@@ -1335,8 +1287,8 @@ export class TreeSitterExtractor {
       return;
     }
 
-    // Check for misparse artifacts (e.g. C++ macros causing "namespace detail" functions)
-    // Skip the node but still visit the body for calls and structural nodes
+    // 检查误解析产物（如 C++ 宏导致 "namespace detail" 函数）
+    // 跳过节点，但仍访问 body 以获取调用和结构节点
     if (this.extractor.isMisparsedFunction?.(name, node)) {
       const body = this.extractor.resolveBody?.(node, this.extractor.bodyField)
         ?? getChildByField(node, this.extractor.bodyField);
@@ -1365,15 +1317,14 @@ export class TreeSitterExtractor {
     });
     if (!funcNode) return;
 
-    // Extract type annotations (parameter types and return type)
+    // 提取类型注解（参数类型和返回类型）
     this.extractTypeAnnotations(node, funcNode.id);
 
-    // Extract decorators applied to the function (rare in JS/TS but
-    // present in Python `@decorator def f():` and Java/Kotlin
-    // annotations on free functions).
+    // 提取应用于函数的 decorator（在 JS/TS 中罕见，但
+    // Python `@decorator def f():` 和 Java/Kotlin 自由函数注解中存在）。
     this.extractDecoratorsFor(node, funcNode.id);
 
-    // Push to stack and visit body
+    // 压栈并访问 body
     this.nodeStack.push(funcNode.id);
     const body = this.extractor.resolveBody?.(node, this.extractor.bodyField)
       ?? getChildByField(node, this.extractor.bodyField);
@@ -1384,7 +1335,7 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Extract a class
+   * 提取类
    */
   private extractClass(node: SyntaxNode, kind: NodeKind = 'class'): void {
     if (!this.extractor) return;
@@ -1401,22 +1352,22 @@ export class TreeSitterExtractor {
     });
     if (!classNode) return;
 
-    // Extract extends/implements
+    // 提取 extends/implements
     this.extractInheritance(node, classNode.id);
 
-    // C# primary-constructor parameter dependencies (`class Svc(IRepo r, …)`).
+    // C# 主构造函数参数依赖（`class Svc(IRepo r, …)`）。
     this.extractCsharpPrimaryCtorParamRefs(node, classNode.id);
 
-    // Extract decorators applied to the class (`@Foo class X {}`).
+    // 提取应用于类的 decorator（`@Foo class X {}`）。
     this.extractDecoratorsFor(node, classNode.id);
 
-    // Push to stack and visit body
+    // 压栈并访问 body
     this.nodeStack.push(classNode.id);
     let body = this.extractor.resolveBody?.(node, this.extractor.bodyField)
       ?? getChildByField(node, this.extractor.bodyField);
     if (!body) body = node;
 
-    // Visit all children for methods and properties
+    // 访问所有子节点以获取方法和属性
     for (let i = 0; i < body.namedChildCount; i++) {
       const child = body.namedChild(i);
       if (child) {
@@ -1432,17 +1383,16 @@ export class TreeSitterExtractor {
   private extractMethod(node: SyntaxNode): void {
     if (!this.extractor) return;
 
-    // For languages with receiver types (Go, Rust), include receiver in qualified name
-    // so FTS can match "scrapeLoop.run" → qualified_name "...::scrapeLoop::run"
+    // 对于带有接收者类型的语言（Go、Rust），在限定名称中包含接收者，
+    // 以便 FTS 能匹配 "scrapeLoop.run" → qualified_name "...::scrapeLoop::run"
     const receiverType = this.extractor.getReceiverType?.(node, this.source);
 
-    // For most languages, only extract as method if inside a class-like node
-    // Languages with methodsAreTopLevel (e.g. Go) always treat them as methods
-    // Languages with getReceiverType (e.g. Rust) extract as method when receiver is found
+    // 对于大多数语言，仅在类似类的节点内才将其提取为方法
+    // methodsAreTopLevel 的语言（如 Go）始终视为方法
+    // 带有 getReceiverType 的语言（如 Rust）在找到接收者时提取为方法
     if (!this.isInsideClassLikeNode() && !this.extractor.methodsAreTopLevel && !receiverType) {
-      // Skip method_definition nodes inside object literals (getters/setters/methods
-      // in inline objects). These are ephemeral and create noise (e.g., Svelte context
-      // objects: `ctx.set({ get view() { ... } })`).
+      // 跳过对象字面量内的 method_definition 节点（getter/setter/内联对象方法）。
+      // 这些是临时的，会产生噪声（如 Svelte context 对象：`ctx.set({ get view() { ... } })`）。
       if (node.parent?.type === 'object' || node.parent?.type === 'object_expression') {
         const body = this.extractor.resolveBody?.(node, this.extractor.bodyField)
           ?? getChildByField(node, this.extractor.bodyField);
@@ -1451,14 +1401,14 @@ export class TreeSitterExtractor {
         }
         return;
       }
-      // Not inside a class-like node and no receiver type, treat as function
+      // 不在类似类的节点内且无接收者类型，视为函数
       this.extractFunction(node);
       return;
     }
 
     const name = extractName(node, this.source, this.extractor);
 
-    // Check for misparse artifacts (e.g. C++ "switch" inside macro-confused class body)
+    // 检查误解析产物（如 C++ 宏混淆类 body 内的 "switch"）
     if (this.extractor.isMisparsedFunction?.(name, node)) {
       const body = this.extractor.resolveBody?.(node, this.extractor.bodyField)
         ?? getChildByField(node, this.extractor.bodyField);
@@ -1489,8 +1439,8 @@ export class TreeSitterExtractor {
     const methodNode = this.createNode('method', name, node, extraProps);
     if (!methodNode) return;
 
-    // For methods with a receiver type but no class-like parent on the stack
-    // (e.g., Rust impl blocks), add a contains edge from the owning struct/trait
+    // 对于有接收者类型但栈上没有类似类父节点的方法（如 Rust impl 块），
+    // 从所属 struct/trait 添加 contains 边
     if (receiverType && !this.isInsideClassLikeNode()) {
       const ownerNode = this.nodes.find(
         (n) =>
@@ -1507,13 +1457,13 @@ export class TreeSitterExtractor {
       }
     }
 
-    // Extract type annotations (parameter types and return type)
+    // 提取类型注解（参数类型和返回类型）
     this.extractTypeAnnotations(node, methodNode.id);
 
-    // Extract decorators (`@Get('/list') list() {}`).
+    // 提取 decorator（`@Get('/list') list() {}`）。
     this.extractDecoratorsFor(node, methodNode.id);
 
-    // Push to stack and visit body
+    // 压栈并访问 body
     this.nodeStack.push(methodNode.id);
     const body = this.extractor.resolveBody?.(node, this.extractor.bodyField)
       ?? getChildByField(node, this.extractor.bodyField);
@@ -1524,7 +1474,7 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Extract an interface/protocol/trait
+   * 提取 interface/protocol/trait
    */
   private extractInterface(node: SyntaxNode): void {
     if (!this.extractor) return;
@@ -1541,10 +1491,10 @@ export class TreeSitterExtractor {
     });
     if (!interfaceNode) return;
 
-    // Extract extends (interface inheritance)
+    // 提取 extends（interface 继承）
     this.extractInheritance(node, interfaceNode.id);
 
-    // Visit body children for interface methods and nested types
+    // 访问 body 子节点以获取 interface 方法和嵌套类型
     this.nodeStack.push(interfaceNode.id);
     let body = this.extractor.resolveBody?.(node, this.extractor.bodyField)
       ?? getChildByField(node, this.extractor.bodyField);
@@ -1559,14 +1509,14 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Extract a struct
+   * 提取 struct
    */
   private extractStruct(node: SyntaxNode): void {
     if (!this.extractor) return;
 
-    // Skip forward declarations and type references (no body = not a definition)
-    // — EXCEPT C# positional records (`record struct M(decimal Amount);`),
-    // complete definitions with no body block. (#831)
+    // 跳过前向声明和类型引用（无 body = 非定义）
+    // ——但 C# 位置记录（`record struct M(decimal Amount);`）例外，
+    // 这是不带 body 块的完整定义。（#831）
     const body = getChildByField(node, this.extractor.bodyField);
     if (!body && node.type !== 'record_declaration') return;
 
@@ -1582,15 +1532,14 @@ export class TreeSitterExtractor {
     });
     if (!structNode) return;
 
-    // Extract inheritance (e.g. Swift: struct HTTPMethod: RawRepresentable)
+    // 提取继承（如 Swift：struct HTTPMethod: RawRepresentable）
     this.extractInheritance(node, structNode.id);
 
-    // C# primary-constructor parameter dependencies (`struct P(int x)`, and
-    // `record struct M(decimal Amount)` which the grammar nests here).
+    // C# 主构造函数参数依赖（`struct P(int x)` 以及
+    // grammar 嵌套于此的 `record struct M(decimal Amount)`）。
     this.extractCsharpPrimaryCtorParamRefs(node, structNode.id);
 
-    // Push to stack for field extraction (bodiless positional records have
-    // no members to visit)
+    // 压栈以提取字段（无 body 的位置记录无成员可访问）
     if (body) {
       this.nodeStack.push(structNode.id);
       for (let i = 0; i < body.namedChildCount; i++) {
@@ -1604,12 +1553,12 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Extract an enum
+   * 提取 enum
    */
   private extractEnum(node: SyntaxNode): void {
     if (!this.extractor) return;
 
-    // Skip forward declarations and type references (no body = not a definition)
+    // 跳过前向声明和类型引用（无 body = 非定义）
     const body = this.extractor.resolveBody?.(node, this.extractor.bodyField)
       ?? getChildByField(node, this.extractor.bodyField);
     if (!body) return;
@@ -1626,10 +1575,10 @@ export class TreeSitterExtractor {
     });
     if (!enumNode) return;
 
-    // Extract inheritance (e.g. Swift: enum AFError: Error)
+    // 提取继承（如 Swift：enum AFError: Error）
     this.extractInheritance(node, enumNode.id);
 
-    // Push to stack and visit body children (enum members, nested types, methods)
+    // 压栈并访问 body 子节点（enum 成员、嵌套类型、方法）
     this.nodeStack.push(enumNode.id);
 
     const memberTypes = this.extractor.enumMemberTypes;
@@ -1647,18 +1596,18 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Extract enum member names from an enum member node.
-   * Handles multi-case declarations (Swift: `case put, delete`) and single-case patterns.
+   * 从 enum 成员节点提取枚举成员名称。
+   * 处理多 case 声明（Swift：`case put, delete`）和单 case 模式。
    */
   private extractEnumMembers(node: SyntaxNode): void {
-    // Try field-based name first (e.g. Rust enum_variant has a 'name' field)
+    // 优先尝试字段名（如 Rust enum_variant 有 'name' 字段）
     const nameNode = getChildByField(node, 'name');
     if (nameNode) {
       this.createNode('enum_member', getNodeText(nameNode, this.source), node);
       return;
     }
 
-    // Check for identifier-like children (Swift: simple_identifier, TS: property_identifier)
+    // 检查类标识符子节点（Swift：simple_identifier，TS：property_identifier）
     let found = false;
     for (let i = 0; i < node.namedChildCount; i++) {
       const child = node.namedChild(i);
@@ -1668,15 +1617,15 @@ export class TreeSitterExtractor {
       }
     }
 
-    // If the node itself IS the identifier (e.g. TS property_identifier directly in enum body)
+    // 若节点本身就是标识符（如 TS property_identifier 直接在 enum body 中）
     if (!found && node.namedChildCount === 0) {
       this.createNode('enum_member', getNodeText(node, this.source), node);
     }
   }
 
   /**
-   * Extract a class property declaration (e.g. C# `public string Name { get; set; }`).
-   * Extracts as 'property' kind node inside the owning class.
+   * 提取类属性声明（如 C# `public string Name { get; set; }`）。
+   * 在所属类内提取为 'property' 类型节点。
    */
   private extractProperty(node: SyntaxNode): Node | null {
     if (!this.extractor) return null;
@@ -1686,8 +1635,8 @@ export class TreeSitterExtractor {
     const isStatic = this.extractor.isStatic?.(node) ?? false;
 
     const hookName = this.extractor.extractPropertyName?.(node, this.source);
-    // JS `field_definition` names its key the `property` field (TS uses
-    // `name`) — try both before the generic identifier scan (#808).
+    // JS `field_definition` 将其键命名为 `property` 字段（TS 使用 `name`）——
+    // 在通用标识符扫描之前先尝试两者（#808）。
     const nameNode = hookName
       ? null
       : getChildByField(node, 'name') ||
@@ -1696,11 +1645,10 @@ export class TreeSitterExtractor {
     const name = hookName ?? (nameNode ? getNodeText(nameNode, this.source) : null);
     if (!name) return null;
 
-    // Get property type. TS/JS field definitions carry an explicit `type`
-    // field (a `type_annotation`); their other named children are the name
-    // and the initializer VALUE, which the generic finder below would
-    // wrongly pick — so fields use the type field only (#808). Other
-    // languages (C# property_declaration) keep the generic scan.
+    // 获取属性类型。TS/JS field 定义携带显式 `type` 字段（type_annotation）；
+    // 其他命名子节点是名称和初始化器 VALUE，通用查找器会错误选取——
+    // 因此 field 仅使用 type 字段（#808）。其他语言（C# property_declaration）
+    // 保留通用扫描。
     const isTsJsField =
       node.type === 'public_field_definition' || node.type === 'field_definition';
     const typeNode = isTsJsField
@@ -1722,21 +1670,19 @@ export class TreeSitterExtractor {
       isStatic,
     });
 
-    // `@Inject() private svc: Foo` and similar — capture the
-    // decorator->target relationship for class properties too.
+    // `@Inject() private svc: Foo` 等——也为类属性捕获 decorator→目标关系。
     if (propNode) {
       this.extractDecoratorsFor(node, propNode.id);
-      // Emit `references` edges from the property to types named in its
-      // type annotation (#381). The generic walker handles TS-style
-      // `type_annotation` children; the C# branch walks the `type` field.
+      // 从属性向类型注解中命名的类型发出 `references` 边（#381）。
+      // 通用游走器处理 TS 风格的 `type_annotation` 子节点；C# 分支游走 `type` 字段。
       this.extractTypeAnnotations(node, propNode.id);
     }
     return propNode;
   }
 
   /**
-   * Extract a class field declaration (e.g. Java field_declaration, C# field_declaration).
-   * Extracts each declarator as a 'field' kind node inside the owning class.
+   * 提取类字段声明（如 Java field_declaration、C# field_declaration）。
+   * 将每个声明符提取为所属类内的 'field' 类型节点。
    */
   private extractField(node: SyntaxNode): void {
     if (!this.extractor) return;
@@ -1745,23 +1691,22 @@ export class TreeSitterExtractor {
     const visibility = this.extractor.getVisibility?.(node);
     const isStatic = this.extractor.isStatic?.(node) ?? false;
 
-    // A class field that is actually a CONSTANT (Java `static final`, C# `const`
-    // / `static readonly`) is extracted as `constant` kind, not `field`, so
-    // value-reference edges treat it as a target (the gate accepts
-    // constant/variable, not field). Scoped to languages whose `isConst`
-    // predicate is field-shaped — other languages' fields stay `field`.
+    // 实际上是常量（Java `static final`、C# `const`/`static readonly`）的类字段
+    // 提取为 `constant` 类型而非 `field`，以便值引用边将其视为目标
+    // （门控接受 constant/variable，不接受 field）。
+    // 仅限 `isConst` 谓词为字段形状的语言——其他语言的字段保持 `field`。
     const fieldKind: NodeKind =
       (this.language === 'java' || this.language === 'csharp') &&
       (this.extractor.isConst?.(node) ?? false)
         ? 'constant'
         : 'field';
 
-    // Java field_declaration: "private final String name = value;" → variable_declarator(s) are direct children
-    // C# field_declaration: wraps in variable_declaration → variable_declarator(s)
+    // Java field_declaration："private final String name = value;" → variable_declarator(s) 是直接子节点
+    // C# field_declaration：包装在 variable_declaration → variable_declarator(s) 中
     let declarators = node.namedChildren.filter(
       c => c.type === 'variable_declarator'
     );
-    // C#: look inside variable_declaration wrapper
+    // C#：在 variable_declaration 包装器内查找
     if (declarators.length === 0) {
       const varDecl = node.namedChildren.find(c => c.type === 'variable_declaration');
       if (varDecl) {
@@ -1769,11 +1714,11 @@ export class TreeSitterExtractor {
       }
     }
 
-    // PHP property_declaration: property_element → variable_name → name
+    // PHP property_declaration：property_element → variable_name → name
     if (declarators.length === 0) {
       const propElements = node.namedChildren.filter(c => c.type === 'property_element');
       if (propElements.length > 0) {
-        // Get type annotation if present (e.g. "string", "int", "?Foo")
+        // 获取类型注解（如 "string"、"int"、"?Foo"）
         const typeNode = node.namedChildren.find(
           c => c.type !== 'visibility_modifier' && c.type !== 'static_modifier'
             && c.type !== 'readonly_modifier' && c.type !== 'property_element'
@@ -1799,9 +1744,9 @@ export class TreeSitterExtractor {
     }
 
     if (declarators.length > 0) {
-      // Get field type from the type child
-      // Java: type is a direct child of field_declaration
-      // C#: type is inside variable_declaration wrapper
+      // 从 type 子节点获取字段类型
+      // Java：type 是 field_declaration 的直接子节点
+      // C#：type 在 variable_declaration 包装器内
       const varDecl = node.namedChildren.find(c => c.type === 'variable_declaration');
       const typeSearchNode = varDecl ?? node;
       const typeNode = typeSearchNode.namedChildren.find(
@@ -1822,20 +1767,19 @@ export class TreeSitterExtractor {
           visibility,
           isStatic,
         });
-        // Java/Kotlin annotations / TS field decorators sit on the
-        // outer field_declaration, not on the individual declarator.
+        // Java/Kotlin 注解 / TS field decorator 位于外层 field_declaration 上，
+        // 而非各个声明符上。
         if (fieldNode) {
           this.extractDecoratorsFor(node, fieldNode.id);
-          // Same as properties: emit `references` to the field's annotated
-          // type. The outer `field_declaration` is the right scope to
-          // search from — C# carries the `type` inside `variable_declaration`
-          // and the language-aware path in `extractTypeAnnotations` descends
-          // into that wrapper (#381).
+          // 与属性相同：向字段注解类型发出 `references` 边。
+          // 外层 `field_declaration` 是正确的搜索起点——
+          // C# 将 `type` 置于 `variable_declaration` 内，
+          // `extractTypeAnnotations` 的语言感知路径会下降到该包装器（#381）。
           this.extractTypeAnnotations(node, fieldNode.id);
         }
       }
     } else {
-      // Fallback: try to find an identifier child directly
+      // 回退：尝试直接查找标识符子节点
       const nameNode = getChildByField(node, 'name')
         || node.namedChildren.find(c => c.type === 'identifier');
       if (nameNode) {
@@ -1850,11 +1794,10 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Extract function-valued properties of an object literal as named function
-   * nodes (named by their property key). Shared by the two object-of-functions
-   * shapes in extractVariable: the object as a direct const value, and the
-   * object returned by a store-initializer call. Handles both `key: () => {}` /
-   * `key: function() {}` pairs and method shorthand `key() {}`.
+   * 将对象字面量中函数值属性提取为命名函数节点（以属性键命名）。
+   * 由 extractVariable 中两种对象-函数形状共用：对象作为直接 const 值，
+   * 以及 store 初始化器调用返回的对象。处理 `key: () => {}` /
+   * `key: function() {}` 对和方法简写 `key() {}`。
    */
   private extractObjectLiteralFunctions(obj: SyntaxNode): void {
     for (let i = 0; i < obj.namedChildCount; i++) {
@@ -1867,29 +1810,28 @@ export class TreeSitterExtractor {
           this.extractFunction(value, this.objectKeyName(key));
         }
       } else if (member.type === 'method_definition') {
-        // Method shorthand: `{ fetchUser() {...} }`. extractMethod deliberately
-        // skips object-literal methods, so route through extractFunction with an
-        // explicit name (method_definition exposes a `body` field, so resolveBody
-        // falls through to it and the node spans the full method).
+        // 方法简写：`{ fetchUser() {...} }`。extractMethod 故意跳过对象字面量方法，
+        // 因此通过 extractFunction 并附带显式名称路由（method_definition 暴露 `body` 字段，
+        // 所以 resolveBody 会透传到它，节点涵盖完整方法）。
         const key = getChildByField(member, 'name');
         if (key) this.extractFunction(member, this.objectKeyName(key));
       }
     }
   }
 
-  /** Property-key text with surrounding quotes stripped (`'foo'` → `foo`). */
+  /** 去除属性键两端引号的文本（`'foo'` → `foo`）。 */
   private objectKeyName(key: SyntaxNode): string {
     return getNodeText(key, this.source).replace(/^['"`]|['"`]$/g, '');
   }
 
   /**
-   * Given a `call_expression` initializer (`create((set, get) => ({...}))`),
-   * find the object literal RETURNED by a function argument — descending through
-   * nested call_expression arguments so middleware wrappers are unwrapped
-   * (`create(persist((set, get) => ({...}), {...}))`, devtools, immer,
-   * subscribeWithSelector). Returns null when no such object is found — the
-   * common case for ordinary call initializers — so this stays cheap and silent
-   * rather than guessing. Keyed purely on AST shape; no library names.
+   * 给定 `call_expression` 初始化器（`create((set, get) => ({...}))`），
+   * 查找函数参数返回的对象字面量——下降穿越嵌套 call_expression 参数，
+   * 以便解包中间件包装器
+   * （`create(persist((set, get) => ({...}), {...}))`、devtools、immer、
+   * subscribeWithSelector）。当未找到此类对象时返回 null——
+   * 普通调用初始化器的常见情况——以保持廉价且��默，而非猜测。
+   * 纯粹基于 AST 形状；不依赖库名称。
    */
   private findInitializerReturnedObject(callNode: SyntaxNode, depth = 0): SyntaxNode | null {
     if (depth > 4) return null;
@@ -1910,9 +1852,9 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * The object literal a function expression returns — either the `=> ({...})`
-   * arrow form (a parenthesized_expression wrapping an object) or a
-   * `=> { return {...} }` block. Returns null for any other body shape.
+   * 函数表达式返回的对象字面量——可以是 `=> ({...})` 箭头形式
+   * （包裹对象的 parenthesized_expression），或 `=> { return {...} }` 块。
+   * 对于任何其他 body 形状返回 null。
    */
   private functionReturnedObject(fnNode: SyntaxNode): SyntaxNode | null {
     const body = getChildByField(fnNode, 'body');
@@ -1928,10 +1870,10 @@ export class TreeSitterExtractor {
       }
       return null;
     };
-    // `(set, get) => ({...})` — body is the (parenthesized) object directly.
+    // `(set, get) => ({...})` — body 直接是（括号包裹的）对象。
     const direct = asObject(body);
     if (direct) return direct;
-    // `(set, get) => { return {...} }` — scan top-level return statements.
+    // `(set, get) => { return {...} }` — 扫描顶层 return 语句。
     if (body.type === 'statement_block') {
       for (let i = 0; i < body.namedChildCount; i++) {
         const stmt = body.namedChild(i);
@@ -1946,29 +1888,29 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Extract a variable declaration (const, let, var, etc.)
+   * 提取变量声明（const、let、var 等）
    *
-   * Extracts top-level and module-level variable declarations.
-   * Captures the variable name and first 100 chars of initializer in signature for searchability.
+   * 提取顶层和模块级变量声明。
+   * 在 signature 中捕获变量名和初始化器的前 100 个字符以提升可搜索性。
    */
   private extractVariable(node: SyntaxNode): void {
     if (!this.extractor) return;
 
-    // Different languages have different variable declaration structures
-    // TypeScript/JavaScript: lexical_declaration contains variable_declarator children
-    // Python: assignment has left (identifier) and right (value)
-    // Go: var_declaration, short_var_declaration, const_declaration
+    // 不同语言有不同的变量声明结构
+    // TypeScript/JavaScript：lexical_declaration 包含 variable_declarator 子节点
+    // Python：assignment 有 left（identifier）和 right（value）
+    // Go：var_declaration、short_var_declaration、const_declaration
 
     const isConst = this.extractor.isConst?.(node) ?? false;
     const kind: NodeKind = isConst ? 'constant' : 'variable';
     const docstring = getPrecedingDocstring(node, this.source);
     const isExported = this.extractor.isExported?.(node, this.source) ?? false;
 
-    // Extract variable declarators based on language
+    // 按语言提取变量声明符
     if (this.language === 'typescript' || this.language === 'javascript' ||
         this.language === 'tsx' || this.language === 'jsx') {
-      // Handle lexical_declaration and variable_declaration
-      // These contain one or more variable_declarator children
+      // 处理 lexical_declaration 和 variable_declaration
+      // 这些包含一个或多个 variable_declarator 子节点
       for (let i = 0; i < node.namedChildCount; i++) {
         const child = node.namedChild(i);
         if (child?.type === 'variable_declarator') {
@@ -1976,19 +1918,19 @@ export class TreeSitterExtractor {
           const valueNode = getChildByField(child, 'value');
 
           if (nameNode) {
-            // Skip destructured patterns (e.g., `let { x, y } = $props()` in Svelte)
-            // These produce ugly multi-line names like "{ class: className }"
+            // 跳过解构模式（如 Svelte 中的 `let { x, y } = $props()`）
+            // 这些会产生丑陋的多行名称，如 "{ class: className }"
             if (nameNode.type === 'object_pattern' || nameNode.type === 'array_pattern') {
               continue;
             }
             const name = getNodeText(nameNode, this.source);
-            // Arrow functions / function expressions: extract as function instead of variable
+            // 箭头函数/函数表达式：提取为 function 而非 variable
             if (valueNode && (valueNode.type === 'arrow_function' || valueNode.type === 'function_expression')) {
               this.extractFunction(valueNode);
               continue;
             }
 
-            // Capture first 100 chars of initializer for context (stored in signature for searchability)
+            // 捕获初始化器前 100 个字符作为上下文（存储在 signature 中以便搜索）
             const initValue = valueNode ? getNodeText(valueNode, this.source).slice(0, 100) : undefined;
             const initSignature = initValue ? `= ${initValue}${initValue.length >= 100 ? '...' : ''}` : undefined;
 
@@ -1998,27 +1940,23 @@ export class TreeSitterExtractor {
               isExported,
             });
 
-            // Extract type annotation references (e.g., const x: ITextModel = ...)
+            // 提取类型注解引用（如 const x: ITextModel = ...）
             if (varNode) {
               this.extractVariableTypeAnnotation(child, varNode.id);
             }
 
-            // Exported const object-of-functions — extract each function-valued
-            // property as a function named by its key + walk its body so its
-            // calls are captured. Two shapes, both keyed on AST shape (not on any
-            // library name):
-            //   `export const actions = { default: async () => {} }` — object is
-            //     the DIRECT value (SvelteKit form actions / handler maps / route
-            //     tables).
+            // 导出 const 对象-函数——将每个函数值属性提取为以键命名的函数
+            // 并游走其 body 以捕获其调用。两种形状，均基于 AST 形状（不依赖库名）：
+            //   `export const actions = { default: async () => {} }` — 对象是
+            //     直接值（SvelteKit form actions / handler 映射 / 路由表）。
             //   `export const useStore = create((set, get) => ({ fetchUser:
-            //     async () => {} }))` — object is RETURNED by an initializer call,
-            //     possibly through middleware wrappers (persist/devtools/immer).
-            //     Covers Zustand/Redux/Pinia/MobX stores generically. Without
-            //     this, store actions exist only as object-literal properties —
-            //     never nodes — so `node`/`callers` on `fetchUser` return "not
-            //     found" and the agent Reads the store to reconstruct the flow.
-            // Scoped to EXPORTED consts to exclude inline-object noise
-            // (`ctx.set({...})`) the object-method skip deliberately avoids.
+            //     async () => {} }))` — 对象由初始化器调用返回，
+            //     可能经过中间件包装器（persist/devtools/immer）。
+            //     通用覆盖 Zustand/Redux/Pinia/MobX store。若无此处理，
+            //     store action 仅作为对象字面量属性存在——永远不是节点——
+            //     因此 `node`/`callers` 对 `fetchUser` 返回"未找到"，
+            //     智能体会读取 store 来重建流程。
+            // 限定于导出 const 以排除 `ctx.set({...})` 类对象方法跳过故意规避的内联对象噪声。
             const objectOfFns =
               valueNode && (valueNode.type === 'object' || valueNode.type === 'object_expression')
                 ? valueNode
@@ -2027,11 +1965,10 @@ export class TreeSitterExtractor {
                   : null;
             const extractObjectMethods = isExported && !!objectOfFns;
 
-            // Visit the initializer body for calls — EXCEPT object literals (their
-            // function-valued properties are extracted below) and the store-factory
-            // call whose returned object we extract method-by-method below (walking
-            // the whole call would re-visit those method arrows and mis-attribute
-            // their inner calls to the file/module scope).
+            // 访问初始化器 body 以获取调用——除对象字面量外
+            // （其函数值属性在下方提取）以及 store 工厂调用
+            // （其返回对象在下方逐方法提取——游走整个调用会重新访问这些方法箭头，
+            // 并将其内层调用错误归属于文件/模块作用域）。
             if (valueNode &&
                 valueNode.type !== 'object' &&
                 valueNode.type !== 'object_expression' &&
@@ -2046,16 +1983,16 @@ export class TreeSitterExtractor {
         }
       }
     } else if (this.language === 'python' || this.language === 'ruby') {
-      // Python/Ruby assignment: left = right
+      // Python/Ruby 赋值：left = right
       const left = getChildByField(node, 'left') || node.namedChild(0);
       const right = getChildByField(node, 'right') || node.namedChild(1);
 
-      // Ruby constant assignments (`MAX = 3`) have a `constant`-typed LHS, not
-      // `identifier`; without this they were never extracted as symbols at all.
+      // Ruby 常量赋值（`MAX = 3`）的 LHS 是 `constant` 类型，而非 `identifier`；
+      // 若无此处理，它们永远不会被提取为符号。
       if (left && (left.type === 'identifier' || left.type === 'constant')) {
         const name = getNodeText(left, this.source);
-        // Skip if name starts with lowercase and looks like a function call result
-        // Python constants are usually UPPER_CASE
+        // 如果名称以小写开头且看起来像函数调用结果则跳过
+        // Python 常量通常是大写的
         const initValue = right ? getNodeText(right, this.source).slice(0, 100) : undefined;
         const initSignature = initValue ? `= ${initValue}${initValue.length >= 100 ? '...' : ''}` : undefined;
 
@@ -2065,8 +2002,8 @@ export class TreeSitterExtractor {
         });
       }
     } else if (this.language === 'go') {
-      // Go: var_declaration, short_var_declaration, const_declaration
-      // These can have multiple identifiers on the left
+      // Go：var_declaration、short_var_declaration、const_declaration
+      // 这些在左侧可以有多个标识符
       const specs = node.namedChildren.filter(c =>
         c.type === 'var_spec' || c.type === 'const_spec'
       );
@@ -2085,15 +2022,13 @@ export class TreeSitterExtractor {
             signature: initSignature,
           });
         }
-        // Walk the initializer so composite literals and calls in a
-        // package-level `var Query Binding = queryBinding{}` (a registry of
-        // implementations) or `var c = pkg.New()` are extracted as
-        // instantiates/calls dependencies — the body walker only covers
-        // initializers inside functions, not these top-level declarations.
-        // Scope the walk to the declared symbol so a call inside an anonymous
-        // func_literal initializer — a cobra `RunE: func(){…}` handler, a
-        // goroutine or callback closure — attributes to the var instead of
-        // leaking to the file node (which reads as "no caller"), issue #693.
+        // 游走初始化器，以便包级 `var Query Binding = queryBinding{}`
+        // （实现注册表）或 `var c = pkg.New()` 中的复合字面量和调用
+        // 被提取为 instantiates/calls 依赖——body 游走器仅覆盖函数内的初始化器，
+        // 不覆盖这些顶层声明。
+        // 将游走限定在已声明符号，以便匿名 func_literal 初始化器中的调用
+        //（cobra `RunE: func(){…}` handler、goroutine 或 callback 闭包）
+        // 归属于 var 而非泄漏到文件节点（读者看到的是"无调用者"），issue #693。
         const valueField = getChildByField(spec, 'value');
         if (valueField) {
           if (varNode) this.nodeStack.push(varNode.id);
@@ -2102,13 +2037,13 @@ export class TreeSitterExtractor {
         }
       }
 
-      // Handle short_var_declaration (:=)
+      // 处理 short_var_declaration（:=）
       if (node.type === 'short_var_declaration') {
         const left = getChildByField(node, 'left');
         const right = getChildByField(node, 'right');
 
         if (left) {
-          // Can be expression_list with multiple identifiers
+          // 可以是带多个标识符的 expression_list
           const identifiers = left.type === 'expression_list'
             ? left.namedChildren.filter(c => c.type === 'identifier')
             : [left];
@@ -2126,9 +2061,9 @@ export class TreeSitterExtractor {
         }
       }
     } else if (this.language === 'lua' || this.language === 'luau') {
-      // Lua/Luau: variable_declaration → assignment_statement → variable_list
-      //      (name: identifier...) = expression_list. `local x, y = 1, 2`
-      //      declares multiple names; only plain identifiers are locals.
+      // Lua/Luau：variable_declaration → assignment_statement → variable_list
+      //      （name: identifier...）= expression_list。`local x, y = 1, 2`
+      //      声明多个名称；只有普通标识符是局部变量。
       const assign = node.namedChildren.find((c) => c.type === 'assignment_statement') ?? node;
       const varList = assign.namedChildren.find((c) => c.type === 'variable_list');
       const exprList = assign.namedChildren.find((c) => c.type === 'expression_list');
@@ -2143,30 +2078,26 @@ export class TreeSitterExtractor {
         this.createNode(kind, name, nameNode, { docstring, signature: initSignature, isExported });
       });
     } else if (this.language === 'c') {
-      // C: a `declaration` node's name nests inside the `declarator` field —
-      // `init_declarator` (with value) or bare/pointer/array declarators (no
-      // value); a `function_declarator` is a prototype, not a variable. The
-      // generic fallback below only finds a *direct* identifier child, which C
-      // never has, so file-scope consts/globals went unextracted entirely (and
-      // so had no impact-radius edges). Only file-scope declarations are tracked
-      // — locals inside a function body are skipped (a `static const` table read
-      // by same-file functions is the value the impact graph wants, not every
-      // block-local). C allows several declarators per declaration
-      // (`int a = 1, b = 2;`), so iterate them.
+      // C：`declaration` 节点的名称嵌套在 `declarator` 字段内——
+      // `init_declarator`（有值）或裸/指针/数组声明符（无值）；
+      // `function_declarator` 是原型，而非变量。
+      // 下方的通用兜底只查找**直接** identifier 子节点，而 C 从不这样用，
+      // 导致文件作用域的 const/global 变量完全未被提取（因而无 impact-radius 边）。
+      // 仅追踪文件作用域声明——函数 body 内的局部变量跳过
+      // （同文件函数读取的 `static const` 表才是 impact graph 所需的值，
+      // 而非每个 block 局部）。C 允许每条声明包含多个 declarator
+      // （`int a = 1, b = 2;`），因此逐一迭代。
       if (!hasFunctionAncestor(node)) {
         for (let i = 0; i < node.namedChildCount; i++) {
           const child = node.namedChild(i);
           if (!child) continue;
-          // Accept only `init_declarator` (has a value) and pointer/array
-          // declarators. A *bare* `identifier` declarator is deliberately
-          // skipped: an unknown leading macro (`CURL_EXTERN`, `XXH_PUBLIC_API`)
-          // makes tree-sitter-c misparse a prototype `MACRO RetType fn(args);`
-          // as a declaration whose "variable" is the bare return-type
-          // identifier, splitting `fn(args)` off as a bogus expression — minting
-          // a spurious type-named global for every macro-prefixed prototype in a
-          // header. Those misparses are always bare identifiers; real
-          // consts/tables always carry an initializer. The only legit loss is
-          // uninitialized scalar globals (`static int g;`).
+          // 仅接受 `init_declarator`（有值）以及指针/数组声明符。
+          // 裸 `identifier` 声明符故意跳过：未知的前置宏（`CURL_EXTERN`、
+          // `XXH_PUBLIC_API`）会导致 tree-sitter-c 将原型 `MACRO RetType fn(args);`
+          // 误解析为一个"变量"是裸返回类型标识符的声明，将 `fn(args)` 拆分为
+          // 虚假表达式——为头文件中每个宏前缀原型铸造一个虚假的类型命名全局变量。
+          // 这类误解析始终是裸标识符；真正的常量/表始终带有初始化器。
+          // 唯一合理的损失是未初始化的标量全局变量（`static int g;`）。
           if (
             child.type !== 'init_declarator' &&
             child.type !== 'pointer_declarator' &&
@@ -2188,10 +2119,9 @@ export class TreeSitterExtractor {
         }
       }
     } else if (this.language === 'swift') {
-      // Swift top-level property (`let X = …` / `var Y = …`). The name nests in
-      // a `pattern`, which the generic fallback can't read, so top-level Swift
-      // constants/globals went unextracted. A top-level `let`→`constant`,
-      // `var`→`variable`; a computed property (getter, no value) is skipped.
+      // Swift 顶层属性（`let X = …` / `var Y = …`）。名称嵌套在 `pattern` 中，
+      // 通用回退无法读取，导致顶层 Swift 常量/全局变量从未被提取。
+      // 顶层 `let`→`constant`，`var`→`variable`；计算型属性（getter，无值）跳过。
       const { nameNode, isLet, isComputed } = swiftPropertyInfo(node, this.source);
       if (nameNode && !isComputed) {
         this.createNode(isLet ? 'constant' : 'variable', getNodeText(nameNode, this.source), node, {
@@ -2200,8 +2130,8 @@ export class TreeSitterExtractor {
         });
       }
     } else {
-      // Generic fallback for other languages
-      // Try to find identifier children
+      // 其他语言的通用回退
+      // 尝试查找标识符子节点
       for (let i = 0; i < node.namedChildCount; i++) {
         const child = node.namedChild(i);
         if (child?.type === 'identifier' || child?.type === 'variable_declarator') {
@@ -2221,10 +2151,10 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Extract a type alias (e.g. `export type X = ...` in TypeScript).
-   * For languages like Go, resolveTypeAliasKind detects when the type_spec
-   * wraps a struct or interface definition and creates the correct node kind.
-   * Returns true if children should be skipped (struct/interface handled body visiting).
+   * 提取类型别名（如 TypeScript 中的 `export type X = ...`）。
+   * 对于 Go 等语言，resolveTypeAliasKind 检测 type_spec 何时包裹
+   * struct 或 interface 定义并创建正确的节点类型。
+   * 当子节点应被跳过时返回 true（struct/interface 已处理 body 访问）。
    */
   private extractTypeAlias(node: SyntaxNode): boolean {
     if (!this.extractor) return false;
@@ -2234,20 +2164,20 @@ export class TreeSitterExtractor {
     const docstring = getPrecedingDocstring(node, this.source);
     const isExported = this.extractor.isExported?.(node, this.source);
 
-    // Check if this type alias is actually a struct or interface definition
-    // (e.g. Go: `type Foo struct { ... }` is a type_spec wrapping struct_type)
+    // 检查此类型别名是否实际上是 struct 或 interface 定义
+    // （如 Go：`type Foo struct { ... }` 是包裹 struct_type 的 type_spec）
     const resolvedKind = this.extractor.resolveTypeAliasKind?.(node, this.source);
 
     if (resolvedKind === 'struct') {
       const structNode = this.createNode('struct', name, node, { docstring, isExported });
       if (!structNode) return true;
-      // Visit body children for field extraction
+      // 访问 body 子节点以提取字段
       this.nodeStack.push(structNode.id);
-      // Try Go-style 'type' field first, then find inner struct child (C typedef struct)
+      // 优先尝试 Go 风格的 'type' 字段，然后查找内层 struct 子节点（C typedef struct）
       const typeChild = getChildByField(node, 'type')
         || this.findChildByTypes(node, this.extractor.structTypes);
       if (typeChild) {
-        // Extract struct embedding (e.g. Go: `type DB struct { *Head; Queryable }`)
+        // 提取 struct 嵌入（如 Go：`type DB struct { *Head; Queryable }`）
         this.extractInheritance(typeChild, structNode.id);
         const body = getChildByField(typeChild, this.extractor.bodyField) || typeChild;
         for (let i = 0; i < body.namedChildCount; i++) {
@@ -2263,7 +2193,7 @@ export class TreeSitterExtractor {
       const enumNode = this.createNode('enum', name, node, { docstring, isExported });
       if (!enumNode) return true;
       this.nodeStack.push(enumNode.id);
-      // Find the inner enum type child (e.g. C: typedef enum { ... } name)
+      // 查找内层 enum 类型子节点（如 C：typedef enum { ... } name）
       const innerEnum = this.findChildByTypes(node, this.extractor.enumTypes);
       if (innerEnum) {
         this.extractInheritance(innerEnum, enumNode.id);
@@ -2290,13 +2220,12 @@ export class TreeSitterExtractor {
       const kind: NodeKind = this.extractor.interfaceKind ?? 'interface';
       const interfaceNode = this.createNode(kind, name, node, { docstring, isExported });
       if (!interfaceNode) return true;
-      // Extract interface inheritance from the inner type node
+      // 从内层类型节点提取 interface 继承
       const typeChild = getChildByField(node, 'type');
       if (typeChild) this.extractInheritance(typeChild, interfaceNode.id);
-      // Go: extract the interface's method specs as `method` nodes so implicit
-      // interface satisfaction (a struct's method set ⊇ the interface's) and
-      // impl-navigation can see the contract. Go has no `implements` keyword, so
-      // without the interface's method set there's nothing to match against.
+      // Go：将 interface 的方法规格提取为 `method` 节点，以便隐式 interface 满足
+      // （struct 的方法集 ⊇ interface 的方法集）和 impl 导航可以看到契约。
+      // Go 没有 `implements` 关键字，因此若无 interface 的方法集则无法匹配。
       if (this.language === 'go' && typeChild) {
         this.extractGoInterfaceMethods(typeChild, interfaceNode.id);
       }
@@ -2308,21 +2237,20 @@ export class TreeSitterExtractor {
       isExported,
     });
 
-    // Extract type references from the alias value (e.g., `type X = ITextModel | null`)
+    // 提取别名值中的类型引用（如 `type X = ITextModel | null`）
     if (typeAliasNode && this.TYPE_ANNOTATION_LANGUAGES.has(this.language)) {
-      // The value is everything after the `=`, which is typically the last named child
-      // In tree-sitter TS: type_alias_declaration has name + value children
+      // 值是 `=` 之后的所有内容，通常是最后一个命名子节点
+      // 在 tree-sitter TS 中：type_alias_declaration 有 name + value 子节点
       const value = getChildByField(node, 'value');
       if (value) {
         this.extractTypeRefsFromSubtree(value, typeAliasNode.id);
-        // `type X = { foo: T; bar(): T }` — make the members first-class
-        // property/method nodes under the type alias so `recorder.stop()`
-        // can attach the call edge to `RecorderHandle.stop` instead of
-        // an unrelated class method picked by path-proximity (#359).
+        // `type X = { foo: T; bar(): T }` — 将成员提升为类型别名下的
+        // 一等 property/method 节点，以便 `recorder.stop()` 可以将调用边
+        // 附加到 `RecorderHandle.stop`，而非由路径邻近性选取的不相关类方法（#359）。
         if (this.language === 'typescript' || this.language === 'tsx') {
           this.extractTsTypeAliasMembers(value, typeAliasNode);
-          // `type List = [ Service<'name', Req, Resp>, … ]` — surface each
-          // entry's string-literal name as a searchable member (issue #634).
+          // `type List = [ Service<'name', Req, Resp>, … ]` — 将每个条目的
+          // 字符串字面量名称提升为可搜索的成员（issue #634）。
           this.extractTsTupleContractNames(value, typeAliasNode);
         }
       }
@@ -2331,11 +2259,11 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Extract the method specs of a Go `interface_type` body as `method` nodes
-   * contained by the interface (e.g. `Marshal`, `Unmarshal` of a `Core`
-   * interface). tree-sitter-go names these `method_elem` (newer) or
-   * `method_spec` (older). Embedded interfaces (`Reader` inside `ReadWriter`)
-   * are `type_identifier`s, not methods, and are left to inheritance extraction.
+   * 将 Go `interface_type` body 的方法规格提取为所属 interface 的 `method` 节点
+   * （如 `Core` interface 的 `Marshal`、`Unmarshal`）。
+   * tree-sitter-go 将这些命名为 `method_elem`（较新）或 `method_spec`（较旧）。
+   * 嵌入 interface（`ReadWriter` 内的 `Reader`）是 `type_identifier`，而非方法，
+   * 留给继承提取处理。
    */
   private extractGoInterfaceMethods(interfaceType: SyntaxNode, ifaceId: string): void {
     this.nodeStack.push(ifaceId);
@@ -2355,11 +2283,10 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Surface the members of a TypeScript `type X = { ... }` (or intersection
-   * thereof) as `property` / `method` nodes under the type-alias node. Only
-   * walks the immediate object_type / intersection operands so anonymous
-   * nested object types inside generic arguments (`Promise<{ ok: true }>`)
-   * don't produce phantom members.
+   * 将 TypeScript `type X = { ... }`（或其交叉类型）的成员提升为类型别名节点下的
+   * `property` / `method` 节点。仅游走直接 object_type / 交叉类型操作数，
+   * 以避免泛型参数中的匿名嵌套对象类型（`Promise<{ ok: true }>`）
+   * 产生虚假成员。
    */
   private extractTsTypeAliasMembers(value: SyntaxNode, typeAliasNode: Node): void {
     const objectTypes: SyntaxNode[] = [];
@@ -2385,9 +2312,9 @@ export class TreeSitterExtractor {
         const memberName = nameNode ? getNodeText(nameNode, this.source) : '';
         if (!memberName) continue;
 
-        // `foo: () => T` and `foo(): T` are functionally a method on the
-        // type contract. Treat the property_signature with a function-typed
-        // annotation as a method too so call sites can resolve to it.
+        // `foo: () => T` 和 `foo(): T` 在功能上是类型契约上的方法。
+        // 也将带有函数类型注解的 property_signature 视为方法，
+        // 以便调用点可以解析到它。
         const memberKind: NodeKind = child.type === 'method_signature'
           ? 'method'
           : this.isTsFunctionTypedProperty(child) ? 'method' : 'property';
@@ -2400,10 +2327,9 @@ export class TreeSitterExtractor {
           qualifiedName: `${typeAliasNode.name}::${memberName}`,
         });
 
-        // Emit `references` edges from the type alias to types named in the
-        // member's signature, matching the interface-member behavior added in
-        // #432. We attach refs to the type-alias parent (consistent with
-        // interface property_signature treatment).
+        // 从类型别名向成员签名中命名的类型发出 `references` 边，
+        // 与 #432 中添加的 interface 成员行为一致。
+        // 将引用附加到类型别名父节点（与 interface property_signature 处理一致）。
         this.extractTypeAnnotations(child, typeAliasNode.id);
       }
     }
@@ -2411,31 +2337,28 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Surface the string-literal "names" of a TypeScript service/contract
-   * registry written as a tuple of generic instantiations:
+   * 将以泛型实例化元组形式编写的 TypeScript 服务/契约注册表的
+   * 字符串字面量"名称"提升为可搜索成员：
    *
    *   type MyServiceList = [
    *     Service<'query_apply_record', Req, Resp>,
    *     Service<'apply_confirm', Req, Resp>,
    *   ];
    *
-   * Each `Service<'name', …>` tags an entry with a string-literal name that a
-   * dynamic factory (`createService<MyServiceList>()`) turns into a callable
-   * property (`api.query_apply_record(…)`). Static extraction otherwise never
-   * sees that name — it's a type argument, not a declaration — so
-   * `synapse query query_apply_record` returned nothing (issue #634). We emit
-   * each name as a `method` node under the type alias (qualifiedName
-   * `MyServiceList::query_apply_record`) so it's searchable and resolvable as a
-   * symbol. (A call through the proxy, `api.query_apply_record(…)`, still
-   * resolves to the imported `api` binding — the receiver's type isn't known —
-   * so this fixes discoverability, not the per-method call edge.)
+   * 每个 `Service<'name', …>` 用字符串字面量名称标记条目，动态工厂
+   * （`createService<MyServiceList>()`）将其转为可调用属性
+   * （`api.query_apply_record(…)`）。静态提取本来永远看不到该名称——
+   * 它是类型参数，不是声明——因此 `synapse query query_apply_record`
+   * 返回空（issue #634）。我们将每个名称作为类型别名下的 `method` 节点发出
+   * （qualifiedName `MyServiceList::query_apply_record`），使其可搜索且可作为符号解析。
+   * （通过代理的调用 `api.query_apply_record(…)` 仍解析到导入的 `api` 绑定——
+   * 接收者类型未知——因此这修复的是可发现性，而非每方法调用边。）
    *
-   * Scope is deliberately narrow to avoid noise: only a string literal that is
-   * a DIRECT type argument of a `generic_type` that is itself a DIRECT element
-   * of a `tuple_type`. This excludes utility types (`Pick`/`Omit`/`Record` are
-   * never written as tuples) and string args nested deeper
-   * (`Service<'a', Pick<U, 'id'>>` yields only `a`, never `id`). Names must be
-   * valid identifiers, which also rules out route paths / arbitrary strings.
+   * 范围故意收窄以避免噪声：仅限直接作为 `generic_type` 类型参数的字符串字面量，
+   * 且该 `generic_type` 本身是 `tuple_type` 的直接元素。
+   * 这排除实用类型（`Pick`/`Omit`/`Record` 从不写成元组）和嵌套更深的字符串参数
+   * （`Service<'a', Pick<U, 'id'>>` 只产出 `a`，不产出 `id`）。
+   * 名称必须是有效标识符，这也排除了路由路径/任意字符串。
    */
   private extractTsTupleContractNames(value: SyntaxNode, typeAliasNode: Node): void {
     const tuples: SyntaxNode[] = [];
@@ -2460,7 +2383,7 @@ export class TreeSitterExtractor {
         for (let j = 0; j < typeArgs.namedChildCount; j++) {
           const arg = typeArgs.namedChild(j);
           if (!arg || arg.type !== 'literal_type') continue;
-          // literal_type wraps the actual literal; only a string is a name.
+          // literal_type 包裹实际字面量；只有字符串才是名称。
           const strNode = arg.namedChild(0);
           if (!strNode || strNode.type !== 'string') continue;
           const name = getNodeText(strNode, this.source)
@@ -2480,9 +2403,8 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * `foo: () => T` → property_signature whose type_annotation contains a
-   * `function_type`. Treat that as a method-shaped contract member, since
-   * the call site `obj.foo()` has identical semantics to `bar(): T`.
+   * `foo: () => T` → 其 type_annotation 包含 `function_type` 的 property_signature。
+   * 将其视为方法形状的契约成员，因为调用点 `obj.foo()` 与 `bar(): T` 语义相同。
    */
   private isTsFunctionTypedProperty(propertySignature: SyntaxNode): boolean {
     const typeAnno = getChildByField(propertySignature, 'type');
@@ -2494,31 +2416,29 @@ export class TreeSitterExtractor {
     return false;
   }
 
-  // extractExportedVariables removed — the walker now descends into
-  // export_statement children and the inner declaration's dedicated
-  // extractor (extractVariable, extractFunction, extractClass, etc.)
-  // handles the symbol with isExported=true via parent-walk in the
-  // language extractor's isExported predicate.
+  // extractExportedVariables 已移除——游走器现在下降到 export_statement 子节点，
+  // 内层声明的专用提取器（extractVariable、extractFunction、extractClass 等）
+  // 通过语言提取器 isExported 谓词中的父节点游走处理带有 isExported=true 的符号。
 
   /**
-   * Extract an import
+   * 提取 import
    *
-   * Creates an import node with the full import statement stored in signature for searchability.
-   * Also creates unresolved references for resolution purposes.
+   * 创建 import 节点，将完整 import 语句存储在 signature 中以提升可搜索性。
+   * 同时为解析目的创建未解析引用。
    */
   private extractImport(node: SyntaxNode): void {
     if (!this.extractor) return;
 
     const importText = getNodeText(node, this.source).trim();
 
-    // Try language-specific hook first
+    // 首先尝试语言特定 hook
     if (this.extractor.extractImport) {
       const info = this.extractor.extractImport(node, this.source);
       if (info) {
         this.createNode('import', info.moduleName, node, {
           signature: info.signature,
         });
-        // Create unresolved reference unless the hook handled it
+        // 除非 hook 已处理，否则创建未解析引用
         if (!info.handledRefs && info.moduleName && this.nodeStack.length > 0) {
           const parentId = this.nodeStack[this.nodeStack.length - 1];
           if (parentId) {
@@ -2531,8 +2451,8 @@ export class TreeSitterExtractor {
             });
           }
         }
-        // Link each imported binding to its definition so imported-but-not-
-        // called/typed symbols still record a cross-file dependency (TS/JS only).
+        // 将每个导入绑定链接到其定义，以便导入但未调用/未使用类型的符号
+        // 仍然记录跨文件依赖（仅限 TS/JS）。
         if (
           this.language === 'typescript' || this.language === 'tsx' ||
           this.language === 'javascript' || this.language === 'jsx'
@@ -2540,54 +2460,52 @@ export class TreeSitterExtractor {
           const parentId = this.nodeStack[this.nodeStack.length - 1];
           if (parentId) this.emitImportBindingRefs(node, parentId);
         }
-        // Python `from module import X, Y` — link each imported name to its
-        // definition (covers `__init__.py` re-export barrels, which are just
-        // `from .sub import X`). Same recall gap as TS: a name imported and
-        // used in a non-call position created no dependency edge.
+        // Python `from module import X, Y` —— 将每个导入名称链接到其定义
+        // （覆盖 `__init__.py` 重导出桶，即仅包含 `from .sub import X` 的文件）。
+        // 与 TS 相同的召回缺口：以非调用位置导入并使用的名称不会产生依赖边。
         if (this.language === 'python' && node.type === 'import_from_statement') {
           const parentId = this.nodeStack[this.nodeStack.length - 1];
           if (parentId) this.emitPyFromImportRefs(node, parentId);
         }
-        // Rust `use crate::m::Item;` / `pub use self::sub::Item;` — link each
-        // imported leaf to its definition. Covers `pub use` re-export hubs
-        // (a `mod.rs` re-exporting submodule items, e.g. tokio's `fs/mod.rs`)
-        // and items imported but used in non-call/non-type positions.
+        // Rust `use crate::m::Item;` / `pub use self::sub::Item;` —— 将每个
+        // 导入叶节点链接到其定义。涵盖 `pub use` 重导出枢纽
+        // （重导出子模块项的 `mod.rs`，如 tokio 的 `fs/mod.rs`）
+        // 以及以非调用/非类型位置导入并使用的项。
         if (this.language === 'rust' && node.type === 'use_declaration') {
           const parentId = this.nodeStack[this.nodeStack.length - 1];
           if (parentId) this.emitRustUseBindingRefs(node, parentId);
         }
-        // PHP `use Foo\Bar\Baz;` — link to the namespace-qualified definition so
-        // an imported-but-DI-injected contract (Laravel's pattern) records a
-        // cross-file dependency. Grouped imports are handled in their own branch.
+        // PHP `use Foo\Bar\Baz;` — 链接到命名空间限定的定义，
+        // 以便导入但通过 DI 注入的契约（Laravel 模式）记录跨文件依赖。
+        // 分组 import 在自己的分支中处理。
         if (this.language === 'php' && node.type === 'namespace_use_declaration') {
           const parentId = this.nodeStack[this.nodeStack.length - 1];
           if (parentId) this.emitPhpUseRefs(node, parentId);
         }
-        // Ruby `require "lib/foo"` / `require_relative "../foo"` — resolve to the
-        // required FILE so a file pulled in only by `require` (config-loaded
-        // components, gems that don't autoload) records a cross-file dependency.
+        // Ruby `require "lib/foo"` / `require_relative "../foo"` — 解析到
+        // 被 require 的文件，以便仅通过 `require` 引入的文件（配置加载的组件、
+        // 不自动加载的 gem）记录跨文件依赖。
         if (this.language === 'ruby' && node.type === 'call') {
           const parentId = this.nodeStack[this.nodeStack.length - 1];
           if (parentId) this.emitRubyRequireRefs(node, parentId);
         }
         return;
       }
-      // Hook returned null — fall through to multi-import inline handlers only
-      // (hook returning null means "I didn't handle this" for multi-import cases,
-      // NOT "use generic fallback" — the hook already declined)
+      // hook 返回 null——仅回退到多 import 内联处理器
+      // （hook 返回 null 表示"我不处理此情况"，针对多 import 场景，
+      // 而非"使用通用回退"——hook 已经拒绝了）
     }
 
-    // Multi-import cases that create multiple nodes (can't be expressed with single-return hook)
+    // 创建多个节点的多 import 情况（不能用单返回 hook 表达）
 
-    // Python import_statement: import os, sys (creates one import per module)
+    // Python import_statement：import os, sys（每个模块创建一个 import）
     if (this.language === 'python' && node.type === 'import_statement') {
       const importParentId = this.nodeStack[this.nodeStack.length - 1];
-      // A bare `import a.b.c` of an internal module (the standard Django
-      // `AppConfig.ready(): import myapp.signals` registration pattern, and any
-      // `import pkg.mod` used for its side effects) had no edge to the module
-      // file — only `from x import y` was linked. Push an `imports` ref (like
-      // Go) so the resolver maps the dotted path to its file. Stdlib/external
-      // modules naturally don't resolve (no `os.py` file node in the repo).
+      // 内部模块的裸 `import a.b.c`（标准 Django
+      // `AppConfig.ready(): import myapp.signals` 注册模式，以及任何用于副作用的
+      // `import pkg.mod`）之前没有到模块文件的边——只有 `from x import y` 被链接。
+      // 推送 `imports` 引用（类似 Go），以便解析器将点分路径映射到其文件。
+      // stdlib/外部模块自然不会解析（仓库中没有 `os.py` 文件节点）。
       const pushModuleRef = (dotted: SyntaxNode): void => {
         if (!importParentId) return;
         this.unresolvedReferences.push({
@@ -2618,7 +2536,7 @@ export class TreeSitterExtractor {
       return;
     }
 
-    // Go imports: single or grouped (creates one import per spec)
+    // Go import：单个或分组（每个 spec 创建一个 import）
     if (this.language === 'go') {
       const parentId = this.nodeStack.length > 0 ? this.nodeStack[this.nodeStack.length - 1] : null;
       const extractFromSpec = (spec: SyntaxNode): void => {
@@ -2629,7 +2547,7 @@ export class TreeSitterExtractor {
             this.createNode('import', importPath, spec, {
               signature: getNodeText(spec, this.source).trim(),
             });
-            // Create unresolved reference so the resolver can create imports edges
+            // 创建未解析引用，以便解析器可以创建 imports 边
             if (parentId) {
               this.unresolvedReferences.push({
                 fromNodeId: parentId,
@@ -2657,7 +2575,7 @@ export class TreeSitterExtractor {
       return;
     }
 
-    // PHP grouped imports: use X\{A, B} (creates one import per item)
+    // PHP 分组 import：use X\{A, B}（每个条目创建一个 import）
     if (this.language === 'php') {
       const namespacePrefix = node.namedChildren.find(c => c.type === 'namespace_name');
       const useGroup = node.namedChildren.find(c => c.type === 'namespace_use_group');
@@ -2684,38 +2602,36 @@ export class TreeSitterExtractor {
       }
     }
 
-    // If a hook exists but returned null, it intentionally declined this node — don't create fallback
+    // 若 hook 存在但返回 null，则表示故意拒绝了该节点——不创建兜底
     if (this.extractor.extractImport) return;
 
-    // Generic fallback for languages without hooks
+    // 无 hook 语言的通用兜底
     this.createNode('import', importText, node, {
       signature: importText,
     });
   }
 
   /**
-   * Emit one `imports` reference per named/default import binding (TS/JS family),
-   * attributed to the file node — so the resolver links each imported symbol to
-   * the file that DEFINES it.
+   * 为每个命名/默认 import 绑定（TS/JS 家族）发出一个 `imports` 引用，
+   * 归属于文件节点——以便解析器将每个导入符号链接到定义它的文件。
    *
-   * Importing a symbol IS a dependency, but extraction only emits references for
-   * calls, instantiations, type annotations, and inheritance. A symbol that's
-   * imported and then only re-exported (`export { X } from './x'`), placed in a
-   * registry array (`[expressResolver, …]`), passed as an argument, or used in
-   * JSX produced NO cross-file edge at all — so the providing file showed a
-   * false "0 dependents" and was invisible to blast-radius / `affected`. The
-   * resolver maps the local name (alias-aware) to the provider's definition and
-   * creates a cross-file `imports` edge; `getFileDependents` picks it up, while
-   * `getImpactRadius` keeps it as a bounded leaf (the importing file node).
+   * 导入符号是一种依赖关系，但提取仅为调用、实例化、类型注解和继承
+   * 发出引用。导入后仅重导出（`export { X } from './x'`）、
+   * 放入注册表数组（`[expressResolver, …]`）、作为参数传递
+   * 或在 JSX 中使用的符号，完全不会产生跨文件边——
+   * 导致提供方文件显示假的"0 个依赖方"且对 blast-radius / `affected` 不可见。
+   * 解析器将本地名称（支持别名）映射到提供方的定义，并创建跨文件 `imports` 边；
+   * `getFileDependents` 会捡取它，而 `getImpactRadius` 将其保留为有界叶节点
+   * （导入方文件节点）。
    *
-   * Namespace imports (`import * as NS`) bind a whole module: `NS.member` calls
-   * resolve on their own, but a namespace used ONLY via a value-member read
-   * (`NS.SOME_CONST`) would leave no edge — so we also emit the namespace local
-   * name, which the resolver links to the module FILE as a dependency backstop.
+   * 命名空间 import（`import * as NS`）绑定整个模块：`NS.member` 调用
+   * 会自行解析，但仅通过值成员读取使用 NS（`NS.SOME_CONST`）的命名空间
+   * 不会留下任何边——因此我们也发出命名空间本地名称，
+   * 解析器将其链接到模块 FILE 作为依赖后备。
    */
   private emitImportBindingRefs(node: SyntaxNode, fromNodeId: string): void {
     const clause = node.namedChildren.find((c) => c.type === 'import_clause');
-    if (!clause) return; // side-effect import (`import './x'`) — no bindings
+    if (!clause) return; // 副作用 import（`import './x'`）——无绑定
 
     const pushRef = (nameNode: SyntaxNode | null | undefined): void => {
       if (!nameNode) return;
@@ -2732,35 +2648,35 @@ export class TreeSitterExtractor {
 
     for (const child of clause.namedChildren) {
       if (child.type === 'identifier') {
-        // default import: `import Foo from './x'`
+        // 默认 import：`import Foo from './x'`
         pushRef(child);
       } else if (child.type === 'named_imports') {
-        // `import { A, B as C } from './x'` — link the LOCAL name (alias if any)
+        // `import { A, B as C } from './x'` — 链接本地名称（别名优先）
         for (const spec of child.namedChildren) {
           if (spec.type !== 'import_specifier') continue;
           pushRef(getChildByField(spec, 'alias') ?? getChildByField(spec, 'name') ?? spec.namedChild(0));
         }
       } else if (child.type === 'namespace_import') {
-        // `import * as NS from './x'` — emit NS so the module-import backstop can
-        // record the file dependency even if NS is only used by value-member read.
+        // `import * as NS from './x'` — 发出 NS，以便模块 import 后备
+        // 即使 NS 仅通过值成员读取使用也能记录文件依赖。
         pushRef(child.namedChildren.find((c) => c.type === 'identifier') ?? child.namedChild(0));
       }
     }
   }
 
   /**
-   * Emit one `imports` reference per re-exported binding of a
-   * `export { A, B as C } from './y'` statement, attributed to the file node —
-   * so a barrel that re-exports from another module records a dependency on it.
+   * 为 `export { A, B as C } from './y'` 语句的每个重导出绑定
+   * 发出一个 `imports` 引用，归属于文件节点——
+   * 以便从另一模块重导出的 barrel 记录对它的依赖。
    *
-   * Links the SOURCE-side name (`A`, the `name` field — not the local alias
-   * `C`), since that is what the source module defines. `export * from './y'`
-   * has no named bindings to attribute and `export { default as X }` can't be
-   * name-matched, so both are skipped.
+   * 链接源端名称（`A`，`name` 字段——而非本地别名 `C`），
+   * 因为那是源模块定义的内容。`export * from './y'`
+   * 没有命名绑定可归属，`export { default as X }` 无法按名称匹配，
+   * 因此两者均跳过。
    */
   private emitReExportRefs(node: SyntaxNode, fromNodeId: string): void {
     const clause = node.namedChildren.find((c) => c.type === 'export_clause');
-    if (!clause) return; // `export * from './y'` — no named bindings
+    if (!clause) return; // `export * from './y'` — 无命名绑定
     for (const spec of clause.namedChildren) {
       if (spec.type !== 'export_specifier') continue;
       const nameNode = getChildByField(spec, 'name') ?? spec.namedChild(0);
@@ -2778,13 +2694,13 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Emit one `imports` reference per binding of a Rust `use` declaration —
-   * `use crate::m::Item`, `use crate::m::{A, B as C}`, `pub use self::sub::Item`.
-   * Emits the FULL path (e.g. `self::sub::Item`, not just `Item`) so the resolver
-   * can resolve the module prefix to a file and find the leaf symbol there —
-   * disambiguating common-name re-exports (`pub use self::read::read`, where the
-   * leaf `read` collides with many same-named symbols). Falls back to name-match
-   * on the leaf when the path can't be resolved. `use ...::*` has no leaf binding.
+   * 为 Rust `use` 声明的每个绑定发出一个 `imports` 引用——
+   * `use crate::m::Item`、`use crate::m::{A, B as C}`、`pub use self::sub::Item`。
+   * 发出完整路径（如 `self::sub::Item`，而非仅 `Item`），以便解析器
+   * 将模块前缀解析为文件并在那里找到叶符号——
+   * 消歧常见名称重导出（`pub use self::read::read`，其中叶 `read`
+   * 与许多同名符号冲突）。当路径无法解析时，回退到对叶节点的名称匹配。
+   * `use ...::*` 没有叶绑定。
    */
   private emitRustUseBindingRefs(node: SyntaxNode, fromNodeId: string): void {
     const paths: { text: string; node: SyntaxNode }[] = [];
@@ -2795,13 +2711,13 @@ export class TreeSitterExtractor {
           paths.push({ text: join(prefix, getNodeText(n, this.source)), node: n });
           break;
         case 'scoped_identifier': {
-          // Full scoped path (`a::b::C`); combine with any outer group prefix.
+          // 完整的作用域路径（`a::b::C`）；与任何外层组前缀合并。
           const full = getNodeText(n, this.source).trim();
           paths.push({ text: prefix ? `${prefix}::${full}` : full, node: n });
           break;
         }
         case 'scoped_use_list': {
-          // `path::{ ... }` — the group's path becomes the prefix for each item.
+          // `path::{ ... }` — 组的路径成为每个条目的前缀。
           const pathNode = getChildByField(n, 'path');
           const seg = pathNode ? getNodeText(pathNode, this.source).trim() : '';
           const newPrefix = seg ? join(prefix, seg) : prefix;
@@ -2816,7 +2732,7 @@ export class TreeSitterExtractor {
           }
           break;
         case 'use_as_clause': {
-          // `Path as Alias` → link the source path (the definition), not the alias.
+          // `Path as Alias` → 链接源路径（定义），而非别名。
           const p = getChildByField(n, 'path') ?? n.namedChild(0);
           if (p) collect(p, prefix);
           break;
@@ -2829,7 +2745,7 @@ export class TreeSitterExtractor {
       if (c) collect(c, '');
     }
     for (const p of paths) {
-      // The leaf must be a real name (skip a path that is only `self`/`super`/`crate`).
+      // 叶节点必须是真实名称（跳过仅包含 `self`/`super`/`crate` 的路径）。
       const leaf = p.text.split('::').pop();
       if (!leaf || leaf === 'self' || leaf === 'super' || leaf === 'crate' || leaf === '*') continue;
       this.unresolvedReferences.push({
@@ -2843,12 +2759,11 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Emit an `imports` reference for a single PHP `use Foo\Bar\Baz;` (grouped
-   * imports `use Foo\{A, B}` are handled where their per-item nodes are created).
-   * The reference targets the namespace-qualified `Foo\Bar::Baz` form classes are
-   * stored under (see the PHP `namespace` capture), so it resolves to the RIGHT
-   * definition — Laravel has many same-named contracts (`Factory`, `Dispatcher`,
-   * `Guard`) across namespaces that a bare-name match can't disambiguate.
+   * 为单个 PHP `use Foo\Bar\Baz;` 发出 `imports` 引用
+   * （分组 import `use Foo\{A, B}` 在创建各条目节点时处理）。
+   * 引用指向类存储的命名空间限定 `Foo\Bar::Baz` 形式（见 PHP `namespace` 捕获），
+   * 因此解析到正确的定义——Laravel 在各命名空间中有许多同名契约
+   * （`Factory`、`Dispatcher`、`Guard`），裸名称匹配无法消歧。
    */
   private emitPhpUseRefs(node: SyntaxNode, fromNodeId: string): void {
     const clause = node.namedChildren.find((c: SyntaxNode) => c.type === 'namespace_use_clause');
@@ -2859,13 +2774,13 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Ruby `require`/`require_relative` → an `imports` ref to the required FILE.
-   * `require "sidekiq/fetch"` is load-path-relative (matched by file-path suffix
-   * via {@link matchByFilePath}); `require_relative "../foo"` is resolved against
-   * this file's directory. Bare gem/stdlib requires (`require "json"`, no slash)
-   * are skipped — they're external. The path form (a `/` + `.rb`) makes the ref
-   * resolve to the file node, so a file pulled in only by `require` — not by a
-   * resolved constant/call — still records a cross-file dependency.
+   * Ruby `require`/`require_relative` → 向被 require 的 FILE 发出 `imports` 引用。
+   * `require "sidekiq/fetch"` 是加载路径相对的（通过 {@link matchByFilePath} 按文件路径后缀匹配）；
+   * `require_relative "../foo"` 相对于此文件的目录解析。
+   * 裸 gem/stdlib require（`require "json"`，无斜杠）跳过——它们是外部的。
+   * 路径形式（含 `/` + `.rb`）使引用解析到文件节点，
+   * 以便仅通过 `require` 引入的文件——而非通过解析的常量/调用——
+   * 仍然记录跨文件依赖。
    */
   private emitRubyRequireRefs(node: SyntaxNode, fromNodeId: string): void {
     const method = node.namedChildren.find((c: SyntaxNode) => c.type === 'identifier');
@@ -2886,7 +2801,7 @@ export class TreeSitterExtractor {
     } else {
       refPath = req; // load-path require — suffix-matched against the file path
     }
-    if (!refPath.includes('/')) return; // bare gem/stdlib require — external
+    if (!refPath.includes('/')) return; // 裸 gem/stdlib require——外部
     if (!refPath.endsWith('.rb')) refPath += '.rb';
     this.unresolvedReferences.push({
       fromNodeId,
@@ -2897,11 +2812,11 @@ export class TreeSitterExtractor {
     });
   }
 
-  /** Convert a PHP FQN `Foo\Bar\Baz` to the stored `Foo\Bar::Baz` and emit an `imports` ref. */
+  /** 将 PHP FQN `Foo\Bar\Baz` 转换为存储形式 `Foo\Bar::Baz` 并发出 `imports` 引用。 */
   private pushPhpUseRef(fqn: string, fromNodeId: string, node: SyntaxNode): void {
     const clean = fqn.replace(/^\\/, '');
     const lastSep = clean.lastIndexOf('\\');
-    if (lastSep < 0) return; // global-namespace class — already matches by simple name
+    if (lastSep < 0) return; // 全局命名空间类——已通过简单名称匹配
     this.unresolvedReferences.push({
       fromNodeId,
       referenceName: `${clean.slice(0, lastSep)}::${clean.slice(lastSep + 1)}`,
@@ -2912,22 +2827,21 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Emit one `imports` reference per name imported in a Python
-   * `from module import A, B as C` statement, attributed to the file node — so
-   * the resolver links each imported name to the module that DEFINES it.
+   * 为 Python `from module import A, B as C` 语句中每个导入的名称
+   * 发出一个 `imports` 引用，归属于文件节点——
+   * 以便解析器将每个导入名称链接到定义它的模块。
    *
-   * Same recall gap as TS: extraction only emitted references for calls,
-   * instantiations, and inheritance, so a name imported and then used in a
-   * non-call position (a list/dict literal, a default argument, a decorator
-   * target, or simply re-exported through an `__init__.py` barrel) produced no
-   * cross-file edge — the providing module showed a false "0 dependents". Links
-   * the LOCAL name (alias when present, since that's what the resolver's import
-   * mapping keys on); `from module import *` has no names to attribute.
+   * 与 TS 的召回缺口相同：提取仅为调用、实例化和继承发出引用，
+   * 因此导入后用于非调用位置的名称（列表/字典字面量、默认参数、
+   * decorator 目标，或仅通过 `__init__.py` barrel 重导出）
+   * 不会产生跨文件边——提供方模块显示假的"0 个依赖方"。
+   * 链接本地名称（有别名时优先别名，因为这是解析器的 import 映射键）；
+   * `from module import *` 没有名称可归属。
    */
   private emitPyFromImportRefs(node: SyntaxNode, fromNodeId: string): void {
     const moduleNameNode = getChildByField(node, 'module_name');
     for (const child of node.namedChildren) {
-      // Skip the `from <module>` part itself and `import *`.
+      // 跳过 `from <module>` 部分本身和 `import *`。
       if (moduleNameNode &&
           child.startIndex === moduleNameNode.startIndex &&
           child.endIndex === moduleNameNode.endIndex) continue;
@@ -2942,7 +2856,7 @@ export class TreeSitterExtractor {
       if (!nameNode) continue;
 
       const raw = getNodeText(nameNode, this.source);
-      // Imported names are simple identifiers; defensively take the last segment.
+      // 导入名称是简单标识符；防御性地取最后一段。
       const local = raw.includes('.') ? raw.split('.').pop()! : raw;
       if (!local) continue;
       this.unresolvedReferences.push({
@@ -2956,7 +2870,7 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Extract a function call
+   * 提取函数调用
    */
   private extractCall(node: SyntaxNode): void {
     if (this.nodeStack.length === 0) return;
@@ -2964,29 +2878,27 @@ export class TreeSitterExtractor {
     const callerId = this.nodeStack[this.nodeStack.length - 1];
     if (!callerId) return;
 
-    // Get the function/method being called
+    // 获取被调用的函数/方法
     let calleeName = '';
 
-    // Java/Kotlin method_invocation has 'object' + 'name' fields instead of 'function'
-    // PHP member_call_expression has 'object' + 'name', scoped_call_expression has 'scope' + 'name'
+    // Java/Kotlin method_invocation 有 'object' + 'name' 字段而非 'function'
+    // PHP member_call_expression 有 'object' + 'name'，scoped_call_expression 有 'scope' + 'name'
     const nameField = getChildByField(node, 'name');
     const objectField = getChildByField(node, 'object') || getChildByField(node, 'scope');
 
     if (nameField && objectField && (node.type === 'method_invocation' || node.type === 'member_call_expression' || node.type === 'scoped_call_expression')) {
-      // Method call with explicit receiver: receiver.method() / $receiver->method() / ClassName::method()
+      // 带显式接收者的方法调用：receiver.method() / $receiver->method() / ClassName::method()
       const methodName = getNodeText(nameField, this.source);
-      // Java `this.userbo.toLogin2()` parses as method_invocation(object=field_access(this, userbo)).
-      // Without unwrapping, receiverName is `this.userbo` and the name-matcher's
-      // single-dot receiver regex fails. Pull out the immediate field after `this.`
-      // so the receiver is the field name (`userbo`), which the resolver can then
-      // look up in the enclosing class's field declarations.
-      // PHP static-factory fluent chain: `Cls::for($x)->method()` — the receiver
-      // is itself a static call, so resolution must infer the method's class
-      // from what `Cls::for` RETURNS (its `: self` / `: static` / `: Type`),
-      // #608 (mirrors the C++ chain fix in #645). Encode `<Cls::factory>().<method>`;
-      // the `().` marker lets the PHP resolver split it. The receiver text
-      // (`Cls::for('x')`) carries the args, so without this it degrades to an
-      // unresolvable string and the call edge is dropped.
+      // Java `this.userbo.toLogin2()` 解析为 method_invocation(object=field_access(this, userbo))。
+      // 若不解包，receiverName 将是 `this.userbo`，名称匹配器的
+      // 单点接收者正则会失败。提取 `this.` 之后的直接字段，
+      // 使接收者为字段名（`userbo`），解析器随后可在封闭类的字段声明中查找它。
+      // PHP 静态工厂流式链：`Cls::for($x)->method()` — 接收者本身是静态调用，
+      // 因此解析必须从 `Cls::for` 的返回类型（`: self` / `: static` / `: Type`）
+      // 推断方法的类，#608（镜像 #645 的 C++ 链修复）。
+      // 编码为 `<Cls::factory>().<method>`；`().` 标记让 PHP 解析器拆分它。
+      // 接收者文本（`Cls::for('x')`）携带参数，若无此处理则降级为不可解析字符串，
+      // 调用边被丢弃。
       if (methodName && this.language === 'php' && objectField.type === 'scoped_call_expression') {
         const innerScope = getChildByField(objectField, 'scope');
         const innerName = getChildByField(objectField, 'name');
@@ -3007,13 +2919,13 @@ export class TreeSitterExtractor {
         return;
       }
 
-      // Java static-factory / fluent chain: `Foo.getInstance().bar()` — the
-      // receiver is itself a method call, so resolution must infer bar's class
-      // from what `Foo.getInstance` RETURNS (its declared return type), the
-      // #645/#608 mechanism. Encode `<inner-receiver>.<inner-method>().<method>`;
-      // the `().` marker lets the Java chain resolver split it, and normalizing to
-      // empty parens drops any factory args (`Foo.create(cfg).bar()`) that would
-      // otherwise leave a `(cfg)` in the receiver text and break the split.
+      // Java 静态工厂/流式链：`Foo.getInstance().bar()` — 接收者本身是方法调用，
+      // 因此解析必须从 `Foo.getInstance` 的返回类型（其声明返回类型）
+      // 推断 bar 的类，即 #645/#608 机制。
+      // 编码为 `<inner-receiver>.<inner-method>().<method>`；
+      // `().` 标记让 Java 链解析器拆分它，
+      // 规范化为空括号可丢弃工厂参数（`Foo.create(cfg).bar()`），
+      // 否则 `(cfg)` 会留在接收者文本中并破坏拆分。
       if (
         methodName &&
         this.language === 'java' &&
@@ -3046,11 +2958,11 @@ export class TreeSitterExtractor {
       } else {
         receiverName = getNodeText(objectField, this.source);
       }
-      // Strip PHP $ prefix from variable names
+      // 去除变量名中的 PHP $ 前缀
       receiverName = receiverName.replace(/^\$/, '');
 
       if (methodName) {
-        // Skip self/this/parent/static receivers — they don't aid resolution
+        // 跳过 self/this/parent/static 接收者——它们不助于解析
         const SKIP_RECEIVERS = new Set(['self', 'this', 'cls', 'super', 'parent', 'static']);
         if (SKIP_RECEIVERS.has(receiverName)) {
           calleeName = methodName;
@@ -3059,14 +2971,13 @@ export class TreeSitterExtractor {
         }
       }
     } else if (node.type === 'message_expression') {
-      // ObjC message expressions emit one `method` field child per selector
-      // keyword: `[obj a:1 b:2 c:3]` has three `method=identifier` siblings.
-      // Joining them with `:` reconstructs the full selector and matches the
-      // multi-part selector names produced by the ObjC method_definition
-      // extractor (`extractObjcMethodName` in languages/objc.ts). Without this
-      // join, multi-keyword call sites only emitted the first keyword and never
-      // resolved to their target methods (e.g. `GET:parameters:headers:...` had
-      // zero callers despite obviously being called).
+      // ObjC 消息表达式每个选择器关键字发出一个 `method` 字段子节点：
+      // `[obj a:1 b:2 c:3]` 有三个 `method=identifier` 兄弟节点。
+      // 用 `:` 连接它们重建完整选择器，并与 ObjC method_definition 提取器
+      // 产生的多部分选择器名称匹配（languages/objc.ts 中的 `extractObjcMethodName`）。
+      // 若无此连接，多关键字调用点只发出第一个关键字，
+      // 永远无法解析到其目标方法（如 `GET:parameters:headers:...`
+      // 尽管明显被调用，却有零个 caller）。
       const methodKeywords: string[] = [];
       for (let i = 0; i < node.namedChildCount; i++) {
         if (node.fieldNameForNamedChild(i) === 'method') {
@@ -3075,12 +2986,11 @@ export class TreeSitterExtractor {
         }
       }
       if (methodKeywords.length > 0) {
-        // A selector keyword takes a `:` when it has an argument. A SINGLE
-        // keyword can be unary (`[c reset]` → `reset`) OR take one argument
-        // (`[c storeImage:k]` → `storeImage:`) — distinguished by whether the
-        // message has a `:` token. Without this, every single-argument message
-        // (the most common form: `addObject:`, `storeImage:`, …) was named
-        // without the colon and never matched its `storeImage:` method.
+        // 选择器关键字在有参数时带 `:`。单个关键字可以是一元的
+        // （`[c reset]` → `reset`）或接受一个参数
+        // （`[c storeImage:k]` → `storeImage:`）——通过消息是否有 `:` token 区分。
+        // 若无此处理，每个单参数消息（最常见形式：`addObject:`、`storeImage:`……）
+        // 命名时不带冒号，永远无法匹配其 `storeImage:` 方法。
         let hasColon = false;
         for (let i = 0; i < node.childCount; i++) {
           if (node.child(i)?.type === ':') { hasColon = true; break; }
@@ -3094,13 +3004,11 @@ export class TreeSitterExtractor {
           const receiverName = getNodeText(receiverField, this.source);
           if (receiverName && !SKIP_RECEIVERS.has(receiverName)) {
             calleeName = `${receiverName}.${methodName}`;
-            // A CLASS-message receiver (`[SDImageCache alloc]`,
-            // `[SDImageCache sharedCache]`) is a capitalized class name. The
-            // call resolves the method (`alloc`/`sharedCache`), but the CLASS
-            // itself — whose @interface lives in the header — would otherwise
-            // never be referenced. Emit a `references` edge to it so a class
-            // used only via class messages (alloc/init, singletons, factories)
-            // and its header record a dependent.
+            // 类消息接收者（`[SDImageCache alloc]`、`[SDImageCache sharedCache]`）
+            // 是大写的类名。调用会解析方法（`alloc`/`sharedCache`），但类本身——
+            // 其 @interface 位于头文件中——否则永远不会被引用。
+            // 向其发出 `references` 边，使仅通过类消息使用的类
+            // （alloc/init、singleton、factory）及其头文件记录依赖方。
             if (/^[A-Z][A-Za-z0-9_]*$/.test(receiverName)) {
               this.unresolvedReferences.push({
                 fromNodeId: callerId,
@@ -3114,13 +3022,12 @@ export class TreeSitterExtractor {
             calleeName = methodName;
           }
         } else if (receiverField && receiverField.type === 'message_expression' && /^\w+$/.test(methodName)) {
-          // Chained message send `[[Foo create] doIt]` — the receiver is itself a
-          // class message. Recover the inner `Class.selector` and encode
-          // `Class.selector().doIt` so resolution infers doIt's class from what
-          // `Class.selector` RETURNS (#645/#608). Only a CLASS-factory chain
-          // (capitalized inner receiver); a unary outer selector is required
-          // because the chain resolver's method part is `\w+` (no `:`). An
-          // instance chain (`[[obj foo] bar]`, lowercase inner) stays bare.
+          // 链式消息发送 `[[Foo create] doIt]` —— 接收者本身是类消息。
+          // 恢复内层 `Class.selector` 并编码为 `Class.selector().doIt`，
+          // 以便解析器从 `Class.selector` 的返回值推断 doIt 的类（#645/#608）。
+          // 仅针对 CLASS 工厂链（大写内层接收者）；
+          // 需要单选择器的外层方法，因为链解析器的方法部分为 `\w+`（无 `:`）。
+          // 实例链（`[[obj foo] bar]`，小写内层）保持裸名。
           const innerRecv = getChildByField(receiverField, 'receiver');
           const innerRecvName = innerRecv ? getNodeText(innerRecv, this.source) : '';
           if (innerRecv?.type === 'identifier' && /^[A-Z]/.test(innerRecvName)) {
@@ -3149,14 +3056,14 @@ export class TreeSitterExtractor {
 
       if (func) {
         if (func.type === 'member_expression' || func.type === 'attribute' || func.type === 'selector_expression' || func.type === 'navigation_expression' || func.type === 'field_expression') {
-          // Method call: obj.method() or obj.field.method()
-          // Go uses selector_expression with 'field', JS/TS uses member_expression with 'property'
-          // Kotlin uses navigation_expression with navigation_suffix > simple_identifier
-          // C/C++ use field_expression for both `obj.method()` and `ptr->method()`
+          // 方法调用：obj.method() 或 obj.field.method()
+          // Go 使用带 'field' 的 selector_expression，JS/TS 使用带 'property' 的 member_expression
+          // Kotlin 使用带 navigation_suffix > simple_identifier 的 navigation_expression
+          // C/C++ 使用 field_expression 同时表示 `obj.method()` 和 `ptr->method()`
           let property = getChildByField(func, 'property') || getChildByField(func, 'field');
           if (!property) {
             const child1 = func.namedChild(1);
-            // Kotlin: navigation_suffix wraps the method name — extract simple_identifier from it
+            // Kotlin：navigation_suffix 包裹方法名——从中提取 simple_identifier
             if (child1?.type === 'navigation_suffix') {
               property = child1.namedChildren.find((c: SyntaxNode) => c.type === 'simple_identifier') ?? child1;
             } else {
@@ -3165,10 +3072,10 @@ export class TreeSitterExtractor {
           }
           if (property) {
             const methodName = getNodeText(property, this.source);
-            // Include receiver name for qualified resolution (e.g., console.print → "console.print")
-            // This helps the resolver distinguish method calls from bare function calls
-            // (e.g., Python's console.print() vs builtin print())
-            // Skip self/this/cls as they don't aid resolution
+            // 在限定解析中包含接收者名称（如 console.print → "console.print"）
+            // 帮助解析器区分方法调用和裸函数调用
+            // （如 Python 的 console.print() vs 内置 print()）
+            // 跳过 self/this/cls——它们不助于解析
             const receiver =
               getChildByField(func, 'object') ||
               getChildByField(func, 'operand') ||
@@ -3193,48 +3100,44 @@ export class TreeSitterExtractor {
               receiver &&
               receiver.type === 'call_expression'
             ) {
-              // Receiver that is itself a call — `Foo::instance().bar()`,
-              // `openSession()->run()`, `mgr.view().render()` (C/C++),
-              // `Foo.getInstance().bar()` (Kotlin) / `Foo.make().draw()` (Swift),
-              // `Foo::new().bar()` (Rust), or `New().Method()` (Go). Keep the inner
-              // call so resolution can infer bar()'s class from what the inner call
-              // RETURNS (#645/#608). Encode as `<innerCallee>().<method>`; the `().`
-              // marker never appears in an ordinary ref, so the resolver can detect
-              // and split it. Other languages keep the bare-name behavior below.
+              // 接收者本身是调用——`Foo::instance().bar()`、
+              // `openSession()->run()`、`mgr.view().render()`（C/C++）、
+              // `Foo.getInstance().bar()`（Kotlin）/ `Foo.make().draw()`（Swift）、
+              // `Foo::new().bar()`（Rust）或 `New().Method()`（Go）。
+              // 保留内层调用以便解析从内层调用的返回类型推断 bar() 的类
+              // （#645/#608）。编码为 `<innerCallee>().<method>`；`().`
+              // 标记在普通引用中从不出现，因此解析器可以检测并拆分它。
+              // 其他语言保持裸名称行为。
               let innerCallee: string;
               let reencode: boolean;
               if (this.language === 'kotlin' || this.language === 'swift') {
-                // tree-sitter-kotlin/swift expose the inner callee as the
-                // call_expression's first named child (a navigation_expression
-                // `Foo.getInstance`, or a bare identifier for a free/constructor call).
+                // tree-sitter-kotlin/swift 将内层被调用者暴露为
+                // call_expression 的第一个命名子节点（navigation_expression
+                // `Foo.getInstance`，或自由/构造函数调用的裸标识符）。
                 const innerNav = receiver.namedChild(0);
                 innerCallee = innerNav ? getNodeText(innerNav, this.source).replace(/\s+/g, '') : '';
-                // Only re-encode a CLASS / companion-factory / constructor chain,
-                // whose receiver chain starts with a capitalized type
-                // (`Foo.getInstance().bar()`, `Foo().bar()`). An instance chain
-                // (`list.filter{}.map{}`) has a lowercase receiver whose type we
-                // can't recover here — re-encoding it would only drop the edge (no
-                // chain resolution, no bare-name fallback), regressing recall in
-                // fluent codebases. Leave those to the bare-name path.
+                // 仅对 CLASS / companion-factory / constructor 链重新编码，
+                // 其接收者链以大写类型开头（`Foo.getInstance().bar()`、`Foo().bar()`）。
+                // 实例链（`list.filter{}.map{}`）的接收者类型是小写，我们无法在此处恢复——
+                // 重新编码只会丢弃边（无链解析，无裸名称回退），在流式代码库中造成召回回退。
+                // 将这些留给裸名称路径。
                 reencode = /^[A-Z]/.test(innerCallee);
               } else {
                 const innerFn = getChildByField(receiver, 'function');
                 innerCallee = innerFn
                   ? getNodeText(innerFn, this.source).replace(/->/g, '.').replace(/\s+/g, '')
                   : '';
-                // Rust: only re-encode an associated-function chain
-                // (`Foo::new().bar()`), whose inner callee is a path/`scoped_identifier`.
-                // Go: only a bare package-level factory chain (`New().Method()`),
-                // whose inner callee is an `identifier`. An instance chain
-                // (`x.foo().bar()` Rust, `obj.Method().Other()` Go) keeps bare-name —
-                // the resolver can't recover a variable's type, so re-encoding would
-                // only drop the edge. C/C++ re-encode any inner.
+                // Rust：仅对关联函数链（`Foo::new().bar()`）重新编码，
+                // 其内层被调用者是路径/`scoped_identifier`。
+                // Go：仅对裸包级工厂链（`New().Method()`）重新编码，
+                // 其内层被调用者是 `identifier`。实例链
+                // （Rust `x.foo().bar()`、Go `obj.Method().Other()`）保持裸名称——
+                // 解析器无法恢复变量的类型，重新编码只会丢弃边。C/C++ 重新编码任何内层。
                 if (this.language === 'rust') reencode = innerFn?.type === 'scoped_identifier';
                 else if (this.language === 'go') reencode = innerFn?.type === 'identifier';
-                // Scala: only a companion-factory / case-class-apply chain whose
-                // receiver chain starts with a capitalized type (`Foo.create().bar()`,
-                // `Foo(args).bar()`). An instance chain (`list.map().filter()`) has a
-                // lowercase receiver whose type we can't recover — leave it bare.
+                // Scala：仅对 companion-factory / case-class-apply 链重新编码，
+                // 其接收者链以大写类型开头（`Foo.create().bar()`、`Foo(args).bar()`）。
+                // 实例链（`list.map().filter()`）有小写接收者，类型无法恢复——留给裸名称。
                 else if (this.language === 'scala') reencode = /^[A-Z]/.test(innerCallee);
                 else reencode = !!innerCallee;
               }
@@ -3244,14 +3147,13 @@ export class TreeSitterExtractor {
             }
           }
         } else if (func.type === 'scoped_identifier' || func.type === 'scoped_call_expression') {
-          // Scoped call: Module::function()
+          // 作用域调用：Module::function()
           calleeName = getNodeText(func, this.source);
         } else if (this.language === 'csharp' && func.type === 'member_access_expression') {
-          // C# member call `recv.Method(...)`. When the receiver is itself a call
-          // — a chained factory `Foo.Create(args).Bar()` — encode `inner().Bar`
-          // with normalized empty parens so resolution can infer Bar's class from
-          // what `Foo.Create` RETURNS (#645/#608). A non-call receiver keeps the
-          // full member-access text (the existing `recv.Method` behavior).
+          // C# 成员调用 `recv.Method(...)`。当接收者本身是一个调用——即链式工厂
+          // `Foo.Create(args).Bar()`——时，将其编码为 `inner().Bar`（带规范化空括号），
+          // 以便解析器可以从 `Foo.Create` 的返回值推断 Bar 所属的类（#645/#608）。
+          // 非调用接收者保留完整的成员访问文本（即原有的 `recv.Method` 行为）。
           const recv = getChildByField(func, 'expression');
           const nameNode = getChildByField(func, 'name');
           const methodName = nameNode ? getNodeText(nameNode, this.source) : '';
@@ -3268,11 +3170,11 @@ export class TreeSitterExtractor {
       }
     }
 
-    // Parenthesized type conversions — Go `(*T)(x)` / `(T)(x)` (and a
-    // parenthesized callee generally) parse as a call whose "function" is a
-    // parenthesized type/expression, so the callee text is the un-resolvable
-    // literal `(*T)`. Normalize to the inner name so it resolves to `T` (a real
-    // dependency on the converted-to type) instead of dropping on the floor.
+    // 括号类型转换——Go 中的 `(*T)(x)` / `(T)(x)`（以及一般括号化被调用者）
+    // 被解析为调用，其 "function" 是括号括起的类型/表达式，
+    // 被调用者文本为无法解析的字面量 `(*T)`。
+    // 将其规范化为内层名称，使其解析为 `T`（对转换目标类型的真实依赖），
+    // 而非被直接丢弃。
     if (calleeName) {
       const conv = calleeName.match(/^\(\s*\*?\s*([A-Za-z_][\w.]*)\s*\)$/);
       if (conv && conv[1]) calleeName = conv[1];
@@ -3290,21 +3192,19 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * `new Foo(...)` / `Foo::new(...)` / object_creation_expression —
-   * emit an `instantiates` reference to the class name. The resolver
-   * then links it to the class node, producing the `instantiates`
-   * edge that powers "what creates instances of X" queries.
+   * `new Foo(...)` / `Foo::new(...)` / object_creation_expression——
+   * 向类名发出 `instantiates` 引用。解析器随后将其关联到类节点，
+   * 生成 `instantiates` 边，为"谁创建了 X 的实例"类查询提供支撑。
    *
-   * Children are still walked so nested calls inside the constructor
-   * arguments (`new Foo(bar())`) get their own `calls` references.
+   * 子节点仍会被游走，以便构造函数参数中的嵌套调用
+   * （如 `new Foo(bar())`）能生成各自的 `calls` 引用。
    */
   private extractInstantiation(node: SyntaxNode): void {
     if (this.nodeStack.length === 0) return;
     const fromId = this.nodeStack[this.nodeStack.length - 1];
     if (!fromId) return;
 
-    // The class name is in the `constructor`/`type`/first-named-child
-    // depending on grammar.
+    // 类名位于 `constructor`/`type`/first-named-child 字段，具体取决于 grammar。
     const ctor =
       getChildByField(node, 'constructor') ||
       getChildByField(node, 'type') ||
@@ -3312,17 +3212,16 @@ export class TreeSitterExtractor {
       node.namedChild(0);
     if (!ctor) return;
 
-    // Go composite literals: `Widget{...}` (same package) and `pkga.Widget{...}`
-    // (cross-package). Only a directly-named struct type is a meaningful
-    // instantiation target — skip slice/map/array literals (`[]T{}`,
-    // `map[K]V{}`) whose `type` field is a composite type, not a named type.
-    // Unlike `new ns.Foo()`, KEEP the package qualifier (`pkga.Widget`) so the
-    // Go cross-package resolver can disambiguate it to the right package's type.
+    // Go 复合字面量：同包的 `Widget{...}` 和跨包的 `pkga.Widget{...}`。
+    // 只有直接命名的 struct 类型才是有意义的实例化目标——跳过 slice/map/array
+    // 字面量（`[]T{}`、`map[K]V{}`），因为它们的 `type` 字段是复合类型而非命名类型。
+    // 与 `new ns.Foo()` 不同，此处保留包限定符（`pkga.Widget`），
+    // 以便 Go 跨包解析器能将其消歧到正确包中的类型。
     if (node.type === 'composite_literal') {
       if (ctor.type !== 'type_identifier' && ctor.type !== 'qualified_type') return;
       let goType = getNodeText(ctor, this.source).trim();
       const brIdx = goType.indexOf('['); // strip Go generic args: `Box[T]{}` -> `Box`
-      if (brIdx > 0) goType = goType.slice(0, brIdx).trim();
+      if (brIdx > 0) goType = goType.slice(0, brIdx).trim(); // 去掉 Go 泛型参数：`Box[T]{}` → `Box`
       if (goType) {
         this.unresolvedReferences.push({
           fromNodeId: fromId,
@@ -3335,9 +3234,9 @@ export class TreeSitterExtractor {
       return;
     }
 
-    // Scala: `new Monoid[Int] { ... }` — the constructor is a `generic_type`
-    // (or qualified `stable_type_identifier`) using `[...]` type args, which the
-    // generic `<...>` strip below misses. Unwrap to the base type name.
+    // Scala：`new Monoid[Int] { ... }` ——构造函数是使用 `[...]` 类型参数的
+    // `generic_type`（或限定的 `stable_type_identifier`），下方的 `<...>` 去除
+    // 逻辑无法处理。将其解包为基础类型名称。
     if (node.type === 'instance_expression') {
       const name = scalaBaseTypeName(ctor, this.source);
       if (name) {
@@ -3353,15 +3252,13 @@ export class TreeSitterExtractor {
     }
 
     let className = getNodeText(ctor, this.source);
-    // Strip type-argument suffix first: `new Map<K, V>()` would
-    // otherwise produce className 'Map<K, V>' (the constructor
-    // field is a `generic_type` node) and resolution would fail
-    // because no class is named with the angle-bracket suffix.
+    // 先去掉类型参数后缀：`new Map<K, V>()` 若不处理，
+    // className 会是 'Map<K, V>'（constructor 字段为 `generic_type` 节点），
+    // 导致解析失败——因为没有类以尖括号后缀命名。
     const ltIdx = className.indexOf('<');
     if (ltIdx > 0) className = className.slice(0, ltIdx);
-    // For namespaced/qualified constructors (`new ns.Foo()`,
-    // `new ns::Foo()`) keep the trailing identifier — that's what
-    // matches a class node in the index.
+    // 对于命名空间/限定构造器（`new ns.Foo()`、`new ns::Foo()`），
+    // 保留尾部标识符——这才是与索引中类节点匹配的部分。
     const lastDot = Math.max(
       className.lastIndexOf('.'),
       className.lastIndexOf('::')
@@ -3381,14 +3278,13 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Static-member / value-read pass. A type/enum/class used only via a member
-   * VALUE — `Enum.value`, `Type.CONST`, `Colors.red`, `Foo::BAR` — recorded no
-   * edge, because the body walker only handled CALLS (`Type.method()`). So a
-   * type referenced only by an enum value or a static field looked like nothing
-   * depended on it (the residual frontier across Dart/Java/C#/Swift/Kotlin/PHP).
-   * Emit a `references` edge to the capitalized receiver. Gated to languages
-   * where types are Capitalized by convention, and skipped when the access is a
-   * call's callee (the call extractor already links the method).
+   * 静态成员/值读取阶段。仅通过成员**值**使用的类型/枚举/类——
+   * `Enum.value`、`Type.CONST`、`Colors.red`、`Foo::BAR`——不会记录边，
+   * 因为 body 游走器只处理调用（`Type.method()`）。这样一来，
+   * 只通过枚举值或静态字段引用的类型看起来没有任何依赖
+   * （Dart/Java/C#/Swift/Kotlin/PHP 上均存在此残差问题）。
+   * 向大写接收者发出 `references` 边。仅在类型按惯例首字母大写的语言中启用，
+   * 且当访问是调用的被调用者时跳过（调用提取器已处理该方法链接）。
    */
   private extractStaticMemberRef(node: SyntaxNode): void {
     if (!STATIC_MEMBER_LANGS.has(this.language)) return;
@@ -3396,9 +3292,8 @@ export class TreeSitterExtractor {
     const ownerId = this.nodeStack[this.nodeStack.length - 1];
     if (!ownerId) return;
 
-    // Dart structures member access as an `identifier` + a sibling `selector`,
-    // not a single node. A value-read selector (no `argument_part`) whose
-    // previous sibling is a capitalized identifier is `Enum.value`.
+    // Dart 将成员访问结构化为 `identifier` + 兄弟 `selector`，而非单一节点。
+    // 无 `argument_part` 的值读取 selector，且前一兄弟为大写标识符，即 `Enum.value`。
     if (this.language === 'dart') {
       if (node.type !== 'selector') return;
       if (node.namedChildren.some((c: SyntaxNode) => c.type === 'argument_part')) return;
@@ -3411,7 +3306,7 @@ export class TreeSitterExtractor {
 
     if (!MEMBER_ACCESS_TYPES.has(node.type)) return;
 
-    // Skip `Type.method()` — the access is the callee of a call, already linked.
+    // 跳过 `Type.method()` ——此访问是某调用的被调用者，已被链接。
     const parent = node.parent;
     if (parent && this.extractor!.callTypes.includes(parent.type)) {
       const callee =
@@ -3421,9 +3316,9 @@ export class TreeSitterExtractor {
       if (callee && callee.startIndex === node.startIndex) return;
     }
 
-    // The receiver must be a SIMPLE capitalized identifier — `Type.X`, not the
-    // nested `a.B.c` (whose own head member-access is visited separately) nor a
-    // lowercase `obj.field` / `pkg.func`.
+    // 接收者必须是**简单**的大写标识符——`Type.X`，
+    // 而非嵌套的 `a.B.c`（其自身的头部成员访问会单独被访问），
+    // 也非小写的 `obj.field` / `pkg.func`。
     const recv =
       getChildByField(node, 'object') ??
       getChildByField(node, 'expression') ??
@@ -3451,14 +3346,14 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Find a `class_body` child of an `object_creation_expression` — the
-   * marker for an anonymous class (`new T() { ... }`). Returns the body
-   * node so the caller can walk it as the anon class's members.
+   * 在 `object_creation_expression` 中查找 `class_body` 子节点——
+   * 这是匿名类（`new T() { ... }`）的标志。返回 body 节点，
+   * 以便调用方将其作为匿名类的成员进行游走。
    */
   private findAnonymousClassBody(node: SyntaxNode): SyntaxNode | null {
     for (let i = 0; i < node.namedChildCount; i++) {
       const child = node.namedChild(i);
-      // Java: `class_body`. C# uses the same node kind.
+      // Java：`class_body`。C# 使用相同的节点类型。
       if (child && (child.type === 'class_body' || child.type === 'declaration_list')) {
         return child;
       }
@@ -3467,22 +3362,20 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Extract a Java/C# anonymous class — `new T() { ...members }`. Emits a
-   * `class` node named `<T$anon@line>`, an `extends` reference to T (so
-   * Phase 5.5 interface-impl can bridge), and walks the body so its
-   * `method_declaration` members become method nodes under the anon class.
+   * 提取 Java/C# 匿名类——`new T() { ...members }`。发出一个名为 `<T$anon@line>`
+   * 的 `class` 节点，以及一条指向 T 的 `extends` 引用（以便阶段 5.5 的
+   * interface-impl 桥接），并游走 body，使其 `method_declaration` 成员
+   * 成为匿名类下的 method 节点。
    *
-   * Why this matters: without anon-class extraction, the overrides inside
-   * a lambda-returned `new T() { @Override int foo(){...} }` are not nodes,
-   * so a call through T.foo (the abstract parent method) has no static
-   * target — the agent has to Read the file to find the implementation.
+   * 为何重要：若没有匿名类提取，lambda 返回的 `new T() { @Override int foo(){...} }`
+   * 中的覆盖方法不会成为节点，因此对 T.foo（抽象父类方法）的调用没有静态目标，
+   * 智能体不得不读取文件才能找到实现。
    */
   private extractAnonymousClass(node: SyntaxNode, body: SyntaxNode): void {
     if (!this.extractor) return;
 
-    // The instantiated type sits in the same field/position that
-    // extractInstantiation reads from. Use the same lookup so the anon
-    // class's `extends` target matches the `instantiates` edge.
+    // 被实例化的类型位于 extractInstantiation 读取的相同字段/位置。
+    // 使用相同的查找方式，使匿名类的 `extends` 目标与 `instantiates` 边保持一致。
     const typeNode =
       getChildByField(node, 'constructor') ||
       getChildByField(node, 'type') ||
@@ -3499,11 +3392,10 @@ export class TreeSitterExtractor {
     const classNode = this.createNode('class', anonName, node, {});
     if (!classNode) return;
 
-    // The anonymous class implicitly extends/implements the named type.
-    // We can't tell at extraction time whether T is a class or an interface,
-    // so emit `extends`. Resolution will still bind T to whatever it is, and
-    // Phase 5.5 (which already handles both `extends` and `implements`) will
-    // bridge T's methods to the override names found in the anon body.
+    // 匿名类隐式 extends/implements 命名类型。
+    // 提取阶段无法判断 T 是 class 还是 interface，因此发出 `extends`。
+    // 解析器仍会将 T 绑定到实际类型，阶段 5.5（已处理 `extends` 和 `implements`）
+    // 会将 T 的方法桥接到匿名 body 中找到的覆盖名称。
     this.unresolvedReferences.push({
       fromNodeId: classNode.id,
       referenceName: typeName,
@@ -3512,8 +3404,8 @@ export class TreeSitterExtractor {
       column: typeNode?.startPosition.column ?? node.startPosition.column,
     });
 
-    // Walk the body's children so method_declaration nodes inside become
-    // method nodes scoped to the anon class.
+    // 游走 body 的子节点，使内部的 method_declaration 节点
+    // 成为归属于匿名类的 method 节点。
     this.nodeStack.push(classNode.id);
     for (let i = 0; i < body.namedChildCount; i++) {
       const child = body.namedChild(i);
@@ -3523,27 +3415,27 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Scan `declNode` and its preceding siblings (within the parent's
-   * named children) for decorator nodes, emitting a `decorates`
-   * reference from `decoratedId` to each decorator's function name.
+   * 扫描 `declNode` 及其前置兄弟节点（在父节点的具名子节点范围内）
+   * 中的 decorator 节点，从 `decoratedId` 向每个 decorator 的函数名
+   * 发出 `decorates` 引用。
    *
-   * Why preceding siblings: in TypeScript, `@Foo class Bar {}` parses
-   * as an `export_statement` (or top-level wrapper) with the
-   * `decorator` as a child *before* the `class_declaration` — so the
-   * decorator isn't a child of the class itself. For methods/
-   * properties, the decorator IS a direct child of the declaration,
-   * so we also scan declNode.namedChildren.
+   * 为何扫描前置兄弟：在 TypeScript 中，`@Foo class Bar {}` 被解析为
+   * `export_statement`（或顶层包裹层），decorator 是 class_declaration
+   * **之前**的子节点——因此 decorator 并非类自身的子节点。
+   * 对于方法/属性，decorator 确实是声明的直接子节点，
+   * 因此也会扫描 `declNode.namedChildren`。
    *
-   * Idempotent across grammars: if neither location yields decorators
-   * (most non-decorator-using languages), the function is a no-op.
+   * 跨 grammar 幂等：若两处均未发现 decorator（大多数不使用 decorator 的语言），
+   * 该函数为空操作。
    */
   private extractDecoratorsFor(declNode: SyntaxNode, decoratedId: string): void {
     const consider = (n: SyntaxNode | null): void => {
       if (!n) return;
-      // `marker_annotation` is Java's grammar for arg-less annotations
-      // (`@Override`, `@Deprecated`); `attribute` is Swift's grammar for
-      // attributes and PROPERTY WRAPPERS (`@objc`, `@Argument`, `@Published`,
-      // `@State`). Without these, those usages would be silently skipped.
+      // `marker_annotation` 是 Java grammar 中无参注解的节点类型
+      // （`@Override`、`@Deprecated`）；`attribute` 是 Swift grammar 中
+      // attribute 和属性包装器（property wrapper）的节点类型
+      // （`@objc`、`@Argument`、`@Published`、`@State`）。
+      // 若不处理这些，上述用法会被静默跳过。
       if (
         n.type !== 'decorator' &&
         n.type !== 'annotation' &&
@@ -3552,8 +3444,8 @@ export class TreeSitterExtractor {
       ) {
         return;
       }
-      // Find the leading identifier: skip the `@` punct, unwrap
-      // a call_expression if the decorator is invoked with args.
+      // 找到前导标识符：跳过 `@` 标点；若 decorator 带参数调用，
+      // 则解包 call_expression。
       let target: SyntaxNode | null = null;
       for (let i = 0; i < n.namedChildCount; i++) {
         const child = n.namedChild(i);
@@ -3568,7 +3460,7 @@ export class TreeSitterExtractor {
           child.type === 'member_expression' ||
           child.type === 'scoped_identifier' ||
           child.type === 'navigation_expression' ||
-          child.type === 'user_type' ||      // swift attribute → user_type (`@Argument`)
+          child.type === 'user_type' ||      // Swift attribute → user_type（`@Argument`）
           child.type === 'type_identifier'
         ) {
           target = child;
@@ -3577,7 +3469,7 @@ export class TreeSitterExtractor {
       }
       if (!target) return;
       let name = getNodeText(target, this.source);
-      const lt = name.indexOf('<'); // strip generic args: `@Argument<T>` → `Argument`
+      const lt = name.indexOf('<'); // 去掉泛型参数：`@Argument<T>` → `Argument`
       if (lt > 0) name = name.slice(0, lt);
       const lastDot = Math.max(name.lastIndexOf('.'), name.lastIndexOf('::'));
       if (lastDot >= 0) name = name.slice(lastDot + 1).replace(/^[:.]/, '');
@@ -3597,10 +3489,9 @@ export class TreeSitterExtractor {
     for (let i = 0; i < declNode.namedChildCount; i++) {
       const child = declNode.namedChild(i);
       consider(child);
-      // Java/Kotlin/C# put annotations INSIDE a `modifiers` node
-      // (`@MyAnno public class X` → class_declaration → modifiers → annotation),
-      // so descend into it — otherwise every annotation usage is silently
-      // dropped and annotation types show zero dependents.
+      // Java/Kotlin/C# 将注解放在 `modifiers` 节点**内部**
+      // （`@MyAnno public class X` → class_declaration → modifiers → annotation），
+      // 因此需递归进入——否则每个注解用法会被静默丢弃，注解类型显示零依赖方。
       if (child && child.type === 'modifiers') {
         for (let j = 0; j < child.namedChildCount; j++) {
           consider(child.namedChild(j));
@@ -3608,18 +3499,15 @@ export class TreeSitterExtractor {
       }
     }
 
-    // 2. Decorators that are PRECEDING siblings of the declaration
-    //    inside the parent's children (TypeScript class style).
-    //    Walk BACKWARDS from the declaration and stop at the first
-    //    non-decorator sibling — without that stop, decorators
-    //    belonging to an EARLIER unrelated declaration leak in
-    //    (e.g. `@A class Foo {} @B class Bar {}` would otherwise
-    //    attribute @A to Bar).
+    // 2. 在父节点具名子节点中，声明的**前置兄弟** decorator（TypeScript class 风格）。
+    //    从声明节点**向前**遍历，遇到第一个非 decorator 兄弟时停止——
+    //    若不停止，属于更早无关声明的 decorator 会泄漏进来
+    //    （例如 `@A class Foo {} @B class Bar {}` 在不停止时，
+    //    会将 @A 归属到 Bar）。
     //
-    //    Note on identity: tree-sitter web bindings return fresh JS
-    //    wrapper objects from `parent`/`namedChild` navigation, so
-    //    `sibling === declNode` is unreliable — `startIndex` does
-    //    the matching instead.
+    //    关于对象同一性：tree-sitter web binding 在通过 `parent`/`namedChild`
+    //    导航时会返回新的 JS 包装对象，因此 `sibling === declNode` 不可靠——
+    //    改用 `startIndex` 进行匹配。
     const parent = declNode.parent;
     if (parent) {
       const declStart = declNode.startIndex;
@@ -3636,7 +3524,7 @@ export class TreeSitterExtractor {
           const sibling = parent.namedChild(j);
           if (!sibling) continue;
           if (sibling.type !== 'decorator' && sibling.type !== 'annotation' && sibling.type !== 'marker_annotation') {
-            break; // non-decorator separator → stop consuming
+            break; // 非 decorator 分隔符 → 停止消费
           }
           consider(sibling);
         }
@@ -3645,26 +3533,25 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Visit function body and extract calls (and structural nodes).
+   * 游走函数 body 并提取调用（以及结构性节点）。
    *
-   * In addition to call expressions, this also detects class/struct/enum
-   * definitions inside function bodies. This handles two cases:
-   *   1. Local class/struct/enum definitions (valid in C++, Java, etc.)
-   *   2. C++ macro misparsing — macros like NLOHMANN_JSON_NAMESPACE_BEGIN cause
-   *      tree-sitter to interpret the namespace block as a function_definition,
-   *      hiding real class/struct/enum nodes inside the "function body".
+   * 除调用表达式外，还会检测函数 body 内的 class/struct/enum 定义。
+   * 处理以下两种情况：
+   *   1. 局部 class/struct/enum 定义（C++、Java 等语言中合法）
+   *   2. C++ 宏误解析——`NLOHMANN_JSON_NAMESPACE_BEGIN` 等宏会导致 tree-sitter
+   *      将 namespace 块解析为 function_definition，将真正的 class/struct/enum
+   *      节点隐藏在"函数 body"中。
    */
   /**
-   * Rocket route-registration macros — `routes![a::b::handler, c::d::other]`
-   * and `catchers![not_found]`. Tree-sitter leaves a macro body as a flat
-   * `token_tree` of raw tokens (`identifier`, `::`, `,`), so the handler paths
-   * are never seen as references and each handler fn looks like it has no caller
-   * — it's mounted by Rocket at runtime, not called by in-repo code, so its file
-   * shows 0 dependents. Walk the token tree, reconstruct each comma-separated
-   * path, and emit a `references` edge; the Rust path resolver
-   * (`resolveRustPathReference`) then links it to the handler fn. The handler
-   * names are explicit in source, so this is precise static extraction, not a
-   * heuristic — no false edges (resolution still validates each path).
+   * Rocket 路由注册宏——`routes![a::b::handler, c::d::other]`
+   * 和 `catchers![not_found]`。tree-sitter 将宏 body 留为原始 token 的平铺
+   * `token_tree`（`identifier`、`::`、`,`），因此 handler 路径从未被视为引用，
+   * 每个 handler 函数看起来没有调用者——它在运行时由 Rocket 挂载，而非被
+   * 仓库内代码调用，导致其文件显示 0 个依赖者。遍历 token tree，重建每条
+   * 逗号分隔的路径，并发出 `references` 边；Rust 路径解析器
+   * （`resolveRustPathReference`）随后将其关联到 handler 函数。
+   * handler 名称在源码中是显式的，因此这是精确的静态提取，而非启发式——
+   * 不会产生虚假边（解析器仍会验证每条路径）。
    */
   private extractRustRouteMacro(node: SyntaxNode): void {
     if (this.language !== 'rust') return;
@@ -3677,9 +3564,9 @@ export class TreeSitterExtractor {
     const fromId = this.nodeStack[this.nodeStack.length - 1];
     if (!fromId) return;
 
-    // The token tree is a flat stream: `[ id :: id :: id , id … ]`. Group runs
-    // of `identifier` tokens (the `::` joiners are anonymous) into one path; a
-    // `,` (or the closing `]`) ends a path.
+    // token tree 是平铺流：`[ id :: id :: id , id … ]`。
+    // 将连续的 `identifier` token（`::` 连接符为匿名节点）分组为一条路径；
+    // `,`（或结尾的 `]`）结束一条路径。
     let parts: string[] = [];
     let line = 0;
     let column = 0;
@@ -3717,25 +3604,24 @@ export class TreeSitterExtractor {
     const visitForCallsAndStructure = (node: SyntaxNode): void => {
       const nodeType = node.type;
 
-      // Function-as-value capture (#756) — function bodies are walked here,
-      // not in visitNode, so the capture hook must fire in both walkers.
+      // Function-as-value 捕获（#756）——函数 body 在此游走，而非在 visitNode 中，
+      // 因此捕获钩子必须在两个游走器中均触发。
       this.maybeCaptureFnRefs(node, nodeType);
 
-      // Rocket route-registration macros (`routes![…]` / `catchers![…]`): the
-      // handler paths live in a raw token tree the call walker can't see.
+      // Rocket 路由注册宏（`routes![…]` / `catchers![…]`）：
+      // handler 路径位于调用游走器不可见的原始 token tree 中。
       if (nodeType === 'macro_invocation') this.extractRustRouteMacro(node);
 
       if (this.extractor!.callTypes.includes(nodeType)) {
         this.extractCall(node);
       } else if (INSTANTIATION_KINDS.has(nodeType)) {
-        // `new Foo()` inside a function body — emit an `instantiates`
-        // reference. Without this branch the body walker only knew
-        // about `call_expression`, so constructor invocations
-        // produced no graph edges at all.
+        // 函数 body 内的 `new Foo()`——发出 `instantiates` 引用。
+        // 若无此分支，body 游走器只处理 `call_expression`，
+        // 构造函数调用不会产生任何图边。
         this.extractInstantiation(node);
-        // Anonymous class with body: `new T() { ... }` (Java/C#). Extract as
-        // a class so interface-impl synthesis (Phase 5.5) can bridge T's
-        // methods to the overrides — same rationale as in visitNode.
+        // 带 body 的匿名类：`new T() { ... }`（Java/C#）。将其提取为 class，
+        // 以便 interface-impl 合成（阶段 5.5）可将 T 的方法桥接到覆盖——
+        // 与 visitNode 中的理由相同。
         const anonBody = this.findAnonymousClassBody(node);
         if (anonBody) {
           this.extractAnonymousClass(node, anonBody);
@@ -3757,19 +3643,17 @@ export class TreeSitterExtractor {
         }
       }
 
-      // Static-member / value-read: `Enum.value`, `Type.CONST`, `Foo::BAR`.
+      // 静态成员/值读取：`Enum.value`、`Type.CONST`、`Foo::BAR`。
       this.extractStaticMemberRef(node);
 
-      // Local variable type annotations inside a body — `const items: Foo[] = []`,
-      // `const x: SomeType = svc.load()`. We deliberately do NOT create nodes for
-      // locals (that would explode the graph — the data-flow frontier we leave
-      // uncovered), but the TYPE a local is annotated with is a real dependency of
-      // the enclosing function, so attribute a `references` edge to it. Without
-      // this, a function that uses a type ONLY in its body (very common — e.g. a
-      // resolver building `const nodes: Node[] = []`) produced no edge to that
-      // type, so impact / `affected` missed the dependency entirely. We fall
-      // through to the default recursion below so the initializer's calls (and any
-      // nested declarators) are still walked.
+      // body 内的局部变量类型注解——`const items: Foo[] = []`、
+      // `const x: SomeType = svc.load()`。我们故意**不**为局部变量创建节点
+      // （否则会导致图爆炸——这是我们刻意不覆盖的数据流前沿），
+      // 但局部变量所注解的**类型**是外围函数的真实依赖，
+      // 因此为其归属一条 `references` 边。若无此处理，
+      // 仅在 body 中使用某类型的函数（极为常见——如构建 `const nodes: Node[] = []`
+      // 的 resolver）不会产生指向该类型的边，导致 impact / `affected` 完全遗漏该依赖。
+      // 后续进入默认递归，以确保初始化器的调用（及嵌套 declarator）仍被游走。
       if (
         nodeType === 'variable_declarator' &&
         this.TYPE_ANNOTATION_LANGUAGES.has(this.language)
@@ -3778,13 +3662,12 @@ export class TreeSitterExtractor {
         if (ownerId) this.extractVariableTypeAnnotation(node, ownerId);
       }
 
-      // Nested NAMED functions inside a body — function declarations and named
-      // function expressions like `.on('mount', function onmount(){})` — become
-      // their own nodes so the graph can link to them (callback handlers, local
-      // helpers). Anonymous arrows/expressions fall through to the default
-      // recursion below, keeping their inner calls attributed to the enclosing
-      // function: this bounds the new nodes to NAMED functions only (no explosion,
-      // no lost edges). extractFunction walks the nested body itself, so we return.
+      // body 内的**命名**嵌套函数——函数声明及命名函数表达式
+      // （如 `.on('mount', function onmount(){})`）——成为各自的节点，
+      // 以便图中可以链接到它们（callback handler、局部辅助函数）。
+      // 匿名箭头/函数表达式则走默认递归，使其内部调用归属于外围函数：
+      // 这将新节点限制为**仅命名函数**（无爆炸，无丢失边）。
+      // extractFunction 自行游走嵌套 body，因此在此处返回。
       if (this.extractor!.functionTypes.includes(nodeType)) {
         const nestedName = extractName(node, this.source, this.extractor!);
         if (nestedName && nestedName !== '<anonymous>') {
@@ -3793,8 +3676,8 @@ export class TreeSitterExtractor {
         }
       }
 
-      // Extract structural nodes found inside function bodies.
-      // Each extract method visits its own children, so we return after extracting.
+      // 提取函数 body 内的结构性节点。
+      // 每个提取方法会自行访问其子节点，因此提取后在此处返回。
       if (this.extractor!.classTypes.includes(nodeType)) {
         const classification = this.extractor!.classifyClassNode?.(node) ?? 'class';
         if (classification === 'struct') this.extractStruct(node);
@@ -3829,7 +3712,7 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Extract inheritance relationships
+   * 提取继承关系
    */
   private extractInheritance(node: SyntaxNode, classId: string): void {
     // Objective-C @interface MyClass : NSObject <ProtoA, ProtoB>
@@ -3868,7 +3751,7 @@ export class TreeSitterExtractor {
       return;
     }
 
-    // Look for extends/implements clauses
+    // 查找 extends/implements 子句
     for (let i = 0; i < node.namedChildCount; i++) {
       const child = node.namedChild(i);
       if (!child) continue;
@@ -3879,13 +3762,13 @@ export class TreeSitterExtractor {
         child.type === 'base_clause' || // PHP class extends
         child.type === 'extends_interfaces' // Java interface extends
       ) {
-        // Scala: `extends A[X] with B with C` packs EVERY supertype into the
-        // one extends_clause (separated by `with`), each a `generic_type` /
-        // `type_identifier` / `stable_type_identifier`. The generic path below
-        // takes only namedChild(0) and keeps the full text (`A[X]`), so a
-        // parameterized supertype — every typeclass in cats/algebra — never
-        // matched and `with`-mixed traits past the first were dropped. Iterate
-        // all supertypes and unwrap each to its base type name.
+        // Scala：`extends A[X] with B with C` 将**所有**父类型打包进
+        // 同一个 extends_clause（以 `with` 分隔），每个都是 `generic_type` /
+        // `type_identifier` / `stable_type_identifier`。下方的通用路径只取
+        // namedChild(0) 并保留完整文本（`A[X]`），导致参数化父类型——
+        // cats/algebra 中的每个 typeclass——从不匹配，
+        // 且第一个之后通过 `with` 混入的 trait 会被丢弃。
+        // 遍历所有父类型并将每个解包为基础类型名称。
         if (this.language === 'scala') {
           for (const target of child.namedChildren) {
             const name = scalaBaseTypeName(target, this.source);
@@ -3901,13 +3784,12 @@ export class TreeSitterExtractor {
           }
           continue;
         }
-        // Dart: `class C extends Base with M1, M2` — the `superclass` node holds
-        // the extends type as a direct `type_identifier` AND a `mixins` child
-        // listing the `with` mixins (and `class C with M` has ONLY mixins, no
-        // extends type). The generic `namedChild(0)` path would read the
-        // `mixins` node itself as the superclass and drop every mixin — yet
-        // mixins are Dart's core composition mechanism (Flutter is built on
-        // them). Emit `extends` for the base and `implements` for each mixin.
+        // Dart：`class C extends Base with M1, M2` —— `superclass` 节点将
+        // extends 类型存为直接 `type_identifier`，同时带有列出 `with` mixin 的
+        // `mixins` 子节点（`class C with M` 则只有 mixin，无 extends 类型）。
+        // 通用的 `namedChild(0)` 路径会将 `mixins` 节点本身读作父类并丢弃所有 mixin——
+        // 而 mixin 正是 Dart 的核心组合机制（Flutter 构建于此之上）。
+        // 为基础类发出 `extends`，为每个 mixin 发出 `implements`。
         if (this.language === 'dart' && child.type === 'superclass') {
           for (const t of child.namedChildren) {
             if (t.type === 'mixins') {
@@ -3934,8 +3816,8 @@ export class TreeSitterExtractor {
           }
           continue;
         }
-        // Extract parent class/interface names
-        // Java uses type_list wrapper: superclass -> type_identifier, extends_interfaces -> type_list -> type_identifier
+        // 提取父类/接口名称
+        // Java 使用 type_list 包裹层：superclass → type_identifier，extends_interfaces → type_list → type_identifier
         const typeList = child.namedChildren.find((c: SyntaxNode) => c.type === 'type_list');
         const targets = typeList ? typeList.namedChildren : [child.namedChild(0)];
         for (const target of targets) {
@@ -3952,9 +3834,9 @@ export class TreeSitterExtractor {
         }
       }
 
-      // C++ base classes: `class Derived : public Base, private Other` →
-      // base_class_clause holds access specifiers + base type(s). Emit an extends
-      // ref per base type (skip the public/private/protected keywords).
+      // C++ 基类：`class Derived : public Base, private Other` →
+      // base_class_clause 包含访问限定符 + 基类类型。
+      // 为每个基类类型发出 extends 引用（跳过 public/private/protected 关键字）。
       if (child.type === 'base_class_clause') {
         for (const t of child.namedChildren) {
           if (
@@ -3979,8 +3861,8 @@ export class TreeSitterExtractor {
         child.type === 'super_interfaces' || // Java class implements
         child.type === 'interfaces' // Dart
       ) {
-        // Extract implemented interfaces
-        // Java uses type_list wrapper: super_interfaces -> type_list -> type_identifier
+        // 提取已实现的接口
+        // Java 使用 type_list 包裹层：super_interfaces → type_list → type_identifier
         const typeList = child.namedChildren.find((c: SyntaxNode) => c.type === 'type_list');
         const targets = typeList ? typeList.namedChildren : child.namedChildren;
         for (const iface of targets) {
@@ -3997,8 +3879,8 @@ export class TreeSitterExtractor {
         }
       }
 
-      // Python superclass list: `class Flask(Scaffold, Mixin):`
-      // argument_list contains identifier children for each parent class
+      // Python 父类列表：`class Flask(Scaffold, Mixin):`
+      // argument_list 中每个父类对应一个 identifier 子节点
       if (child.type === 'argument_list' && node.type === 'class_definition') {
         for (const arg of child.namedChildren) {
           if (arg.type === 'identifier' || arg.type === 'attribute') {
@@ -4014,8 +3896,8 @@ export class TreeSitterExtractor {
         }
       }
 
-      // Go interface embedding: `type Querier interface { LabelQuerier; ... }`
-      // constraint_elem wraps the embedded interface type identifier
+      // Go interface 嵌入：`type Querier interface { LabelQuerier; ... }`
+      // constraint_elem 包裹嵌入接口的类型标识符
       if (child.type === 'constraint_elem') {
         const typeId = child.namedChildren.find((c: SyntaxNode) => c.type === 'type_identifier');
         if (typeId) {
@@ -4030,8 +3912,8 @@ export class TreeSitterExtractor {
         }
       }
 
-      // Go struct embedding: field_declaration without field_identifier
-      // e.g. `type DB struct { *Head; Queryable }` — no field name means embedded type
+      // Go struct 嵌入：无 field_identifier 的 field_declaration
+      // 例如 `type DB struct { *Head; Queryable }` —— 无字段名表示嵌入类型
       if (child.type === 'field_declaration') {
         const hasFieldIdentifier = child.namedChildren.some((c: SyntaxNode) => c.type === 'field_identifier');
         if (!hasFieldIdentifier) {
@@ -4049,8 +3931,8 @@ export class TreeSitterExtractor {
         }
       }
 
-      // Rust trait supertraits: `trait SubTrait: SuperTrait + Display { ... }`
-      // trait_bounds contains type_identifier, generic_type, or higher_ranked_trait_bound children
+      // Rust trait 超 trait：`trait SubTrait: SuperTrait + Display { ... }`
+      // trait_bounds 包含 type_identifier、generic_type 或 higher_ranked_trait_bound 子节点
       if (child.type === 'trait_bounds') {
         for (const bound of child.namedChildren) {
           let typeName: string | undefined;
@@ -4060,11 +3942,11 @@ export class TreeSitterExtractor {
             typeName = getNodeText(bound, this.source);
             posNode = bound;
           } else if (bound.type === 'generic_type') {
-            // e.g. `Deserialize<'de>`
+            // 例如 `Deserialize<'de>`
             const inner = bound.namedChildren.find((c: SyntaxNode) => c.type === 'type_identifier');
             if (inner) { typeName = getNodeText(inner, this.source); posNode = inner; }
           } else if (bound.type === 'higher_ranked_trait_bound') {
-            // e.g. `for<'de> Deserialize<'de>`
+            // 例如 `for<'de> Deserialize<'de>`
             const generic = bound.namedChildren.find((c: SyntaxNode) => c.type === 'generic_type');
             const typeId = generic?.namedChildren.find((c: SyntaxNode) => c.type === 'type_identifier')
               ?? bound.namedChildren.find((c: SyntaxNode) => c.type === 'type_identifier');
@@ -4083,13 +3965,13 @@ export class TreeSitterExtractor {
         }
       }
 
-      // C#: `class Movie : BaseItem, IPlugin` → base_list with identifier children
-      // base_list combines both base class and interfaces in a single colon-separated list.
-      // We emit all as 'extends' since the syntax doesn't distinguish them.
+      // C#：`class Movie : BaseItem, IPlugin` → base_list 包含 identifier 子节点
+      // base_list 将基类和接口合并在冒号分隔的单一列表中。
+      // 由于语法上无法区分，全部发出为 'extends'。
       if (child.type === 'base_list') {
         for (const baseType of child.namedChildren) {
           if (baseType) {
-            // For generic base types like `ClientBase<T>`, extract just the type name
+            // 对于泛型基类（如 `ClientBase<T>`），只提取类型名称
             const name = baseType.type === 'generic_name'
               ? getNodeText(baseType.namedChildren.find((c: SyntaxNode) => c.type === 'identifier') ?? baseType, this.source)
               : getNodeText(baseType, this.source);
@@ -4104,8 +3986,8 @@ export class TreeSitterExtractor {
         }
       }
 
-      // Kotlin: `class Foo : Bar, Baz` → delegation_specifier > user_type > type_identifier
-      // Also handles `class Foo : Bar()` → delegation_specifier > constructor_invocation > user_type
+      // Kotlin：`class Foo : Bar, Baz` → delegation_specifier > user_type > type_identifier
+      // 同时处理 `class Foo : Bar()` → delegation_specifier > constructor_invocation > user_type
       if (child.type === 'delegation_specifier') {
         const userType = child.namedChildren.find((c: SyntaxNode) => c.type === 'user_type');
         const constructorInvocation = child.namedChildren.find((c: SyntaxNode) => c.type === 'constructor_invocation');
@@ -4126,8 +4008,8 @@ export class TreeSitterExtractor {
         }
       }
 
-      // Swift: inheritance_specifier > user_type > type_identifier
-      // Used for class inheritance, protocol conformance, and protocol inheritance
+      // Swift：inheritance_specifier > user_type > type_identifier
+      // 用于 class 继承、protocol 一致性和 protocol 继承
       if (child.type === 'inheritance_specifier') {
         const userType = child.namedChildren.find((c: SyntaxNode) => c.type === 'user_type');
         const typeId = userType?.namedChildren.find((c: SyntaxNode) => c.type === 'type_identifier');
@@ -4143,8 +4025,8 @@ export class TreeSitterExtractor {
         }
       }
 
-      // JavaScript class_heritage has bare identifier without extends_clause wrapper
-      // e.g. `class Foo extends Bar {}` → class_heritage → identifier("Bar")
+      // JavaScript class_heritage 包含裸标识符，不带 extends_clause 包裹层
+      // 例如 `class Foo extends Bar {}` → class_heritage → identifier("Bar")
       if (
         (child.type === 'identifier' || child.type === 'type_identifier') &&
         node.type === 'class_heritage'
@@ -4159,8 +4041,8 @@ export class TreeSitterExtractor {
         });
       }
 
-      // Recurse into container nodes (e.g. field_declaration_list in Go structs,
-      // class_heritage in TypeScript which wraps extends_clause/implements_clause)
+      // 递归进入容器节点（如 Go struct 中的 field_declaration_list，
+      // 以及 TypeScript 中包裹 extends_clause/implements_clause 的 class_heritage）
       if (child.type === 'field_declaration_list' || child.type === 'class_heritage') {
         this.extractInheritance(child, classId);
       }
@@ -4168,19 +4050,19 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Rust `impl Trait for Type` — creates an implements edge from Type to Trait.
-   * For plain `impl Type { ... }` (no trait), no inheritance edge is needed.
+   * Rust `impl Trait for Type` —— 从 Type 向 Trait 创建 implements 边。
+   * 对于普通的 `impl Type { ... }`（无 trait），不需要继承边。
    */
   private extractRustImplItem(node: SyntaxNode): void {
-    // Check if this is `impl Trait for Type` by looking for a `for` keyword
+    // 通过查找 `for` 关键字来判断是否为 `impl Trait for Type`
     const hasFor = node.children.some(
       (c: SyntaxNode) => c.type === 'for' && !c.isNamed
     );
     if (!hasFor) return;
 
-    // In `impl Trait for Type`, the type_identifiers are:
-    // first = Trait name, last = implementing Type name
-    // Also handle generic types like `impl<T> Trait for MyStruct<T>`
+    // 在 `impl Trait for Type` 中，type_identifier 的顺序为：
+    // 第一个 = Trait 名称，最后一个 = 实现类型名称
+    // 同时处理泛型类型，如 `impl<T> Trait for MyStruct<T>`
     const typeIdents = node.namedChildren.filter(
       (c: SyntaxNode) => c.type === 'type_identifier' || c.type === 'generic_type' || c.type === 'scoped_type_identifier'
     );
@@ -4189,12 +4071,12 @@ export class TreeSitterExtractor {
     const traitNode = typeIdents[0]!;
     const typeNode = typeIdents[typeIdents.length - 1]!;
 
-    // Get the trait name (handle scoped paths like std::fmt::Display)
+    // 获取 trait 名称（处理作用域路径，如 std::fmt::Display）
     const traitName = traitNode.type === 'scoped_type_identifier'
       ? this.source.substring(traitNode.startIndex, traitNode.endIndex)
       : getNodeText(traitNode, this.source);
 
-    // Get the implementing type name (extract inner type_identifier for generics)
+    // 获取实现类型名称（对泛型提取内层 type_identifier）
     let typeName: string;
     if (typeNode.type === 'generic_type') {
       const inner = typeNode.namedChildren.find(
@@ -4205,7 +4087,7 @@ export class TreeSitterExtractor {
       typeName = getNodeText(typeNode, this.source);
     }
 
-    // Find the struct/type node for the implementing type
+    // 查找实现类型对应的 struct/type 节点
     const typeNodeId = this.findNodeByName(typeName);
     if (typeNodeId) {
       this.unresolvedReferences.push({
@@ -4219,7 +4101,7 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Find a previously-extracted node by name (used for back-references like impl blocks)
+   * 通过名称查找之前提取的节点（用于 impl 块等反向引用）
    */
   private findNodeByName(name: string): string | undefined {
     for (const node of this.nodes) {
@@ -4231,15 +4113,15 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Languages that support type annotations (TypeScript, etc.)
+   * 支持类型注解的语言（TypeScript 等）
    */
   private readonly TYPE_ANNOTATION_LANGUAGES = new Set([
     'typescript', 'tsx', 'dart', 'kotlin', 'swift', 'rust', 'go', 'java', 'csharp', 'scala', 'php',
   ]);
 
   /**
-   * PHP pseudo-types and `self`/`static`/`parent` that aren't project symbols.
-   * (Scalar primitives parse as `primitive_type` and are skipped structurally.)
+   * PHP 伪类型及 `self`/`static`/`parent`——这些不是项目符号。
+   * （标量基础类型解析为 `primitive_type`，在结构层面被跳过。）
    */
   private readonly PHP_PSEUDO_TYPES = new Set([
     'self', 'static', 'parent', 'mixed', 'object', 'iterable', 'callable', 'void',
@@ -4247,7 +4129,7 @@ export class TreeSitterExtractor {
   ]);
 
   /**
-   * Built-in/primitive type names that shouldn't create references
+   * 不应创建引用的内置/基础类型名称
    */
   private readonly BUILTIN_TYPES = new Set([
     'string', 'number', 'boolean', 'void', 'null', 'undefined', 'never', 'any', 'unknown',
@@ -4260,46 +4142,45 @@ export class TreeSitterExtractor {
     // Go
     'int8', 'int16', 'int32', 'int64', 'uint8', 'uint16', 'uint32', 'uint64',
     'float32', 'float64', 'complex64', 'complex128', 'rune', 'error',
-    // Scala (capitalized primitives + ubiquitous stdlib aliases)
+    // Scala（大写基础类型 + 无处不在的 stdlib 别名）
     'Int', 'Long', 'Short', 'Byte', 'Float', 'Double', 'Boolean', 'Char', 'Unit',
     'String', 'Any', 'AnyRef', 'AnyVal', 'Nothing', 'Null',
   ]);
 
   /**
-   * Extract type references from type annotations on a function/method/field node.
-   * Creates 'references' edges for parameter types, return types, and field types.
+   * 从函数/方法/字段节点上的类型注解中提取类型引用。
+   * 为参数类型、返回类型和字段类型创建 'references' 边。
    */
   private extractTypeAnnotations(node: SyntaxNode, nodeId: string): void {
     if (!this.extractor) return;
     if (!this.TYPE_ANNOTATION_LANGUAGES.has(this.language)) return;
 
-    // C# tree-sitter doesn't produce `type_identifier` leaves — it uses
-    // `identifier`, `predefined_type`, `qualified_name`, `generic_name`,
-    // etc. — so the generic walker below emits zero references for it.
-    // Dispatch to a C#-aware path that only walks type-position subtrees
-    // (the `type` field of a parameter/method/property/field), so
-    // parameter NAMES never accidentally surface as type refs (#381).
+    // C# tree-sitter 不生成 `type_identifier` 叶节点——它使用
+    // `identifier`、`predefined_type`、`qualified_name`、`generic_name` 等，
+    // 因此下方的通用游走器不会为其发出任何引用。
+    // 分发至 C# 感知路径，仅游走类型位置子树
+    // （parameter/method/property/field 的 `type` 字段），
+    // 以防 parameter 名称意外被当作类型引用（#381）。
     if (this.language === 'csharp') {
       this.extractCsharpTypeRefs(node, nodeId);
       return;
     }
 
-    // PHP type-hints are `named_type`/`optional_type`/`union_type` wrapping a
-    // `name`/`qualified_name` — never `type_identifier` — so the generic walker
-    // below emits nothing for them. Dispatch to a PHP-aware path that walks only
-    // type positions (parameter / return / property types), so type-hinted
-    // dependencies (the constructor-injected contracts that dominate Laravel) are
-    // recorded and a `variable_name` like `$events` never mis-emits as a ref.
+    // PHP 类型提示为 `named_type`/`optional_type`/`union_type` 包裹的
+    // `name`/`qualified_name`——从不是 `type_identifier`——因此下方的通用游走器
+    // 对其不会发出任何引用。分发至 PHP 感知路径，仅游走类型位置
+    // （parameter/return/property 类型），以便记录类型提示依赖
+    // （Laravel 中占主导地位的构造函数注入契约），
+    // 同时防止 `$events` 这样的 `variable_name` 被误发为引用。
     if (this.language === 'php') {
       this.extractPhpTypeRefs(node, nodeId);
       return;
     }
 
-    // Dart: a `method_signature` wraps the real `function_signature` (where the
-    // params and return type live), and the return type is a bare
-    // `type_identifier` child, not a `type` field — so getChildByField below
-    // finds neither. Walk the inner signature: param names / the method name are
-    // `identifier` (not `type_identifier`), so only types surface.
+    // Dart：`method_signature` 包裹真正的 `function_signature`（参数和返回类型所在处），
+    // 且返回类型是裸 `type_identifier` 子节点，而非 `type` 字段——
+    // 因此下方的 getChildByField 两者均找不到。游走内层签名：
+    // 参数名/方法名为 `identifier`（非 `type_identifier`），因此只有类型会浮现。
     if (this.language === 'dart') {
       let sig: SyntaxNode | undefined = node;
       if (node.type === 'method_signature') {
@@ -4316,10 +4197,9 @@ export class TreeSitterExtractor {
       return;
     }
 
-    // Extract parameter type annotations. Scala curries — `def f(a)(implicit
-    // M: TC)` has MULTIPLE `parameters` siblings, and the typeclass is almost
-    // always in the trailing implicit list — so walk every parameter list, not
-    // just getChildByField's first match.
+    // 提取参数类型注解。Scala 柯里化——`def f(a)(implicit M: TC)` 有**多个**
+    // `parameters` 兄弟节点，typeclass 几乎总在尾部的 implicit 列表中——
+    // 因此游走每一个参数列表，而非只取 getChildByField 的第一个匹配。
     if (this.language === 'scala') {
       for (const pc of node.namedChildren) {
         if (pc.type === 'parameters') this.extractTypeRefsFromSubtree(pc, nodeId);
@@ -4331,19 +4211,18 @@ export class TreeSitterExtractor {
       }
     }
 
-    // Extract return type annotation
+    // 提取返回类型注解
     const returnType = getChildByField(node, this.extractor.returnField || 'return_type');
     if (returnType) {
       this.extractTypeRefsFromSubtree(returnType, nodeId);
     }
 
-    // Scala context bounds / type-parameter bounds: `def f[A: Monoid]`,
-    // `[F[_]: Monad]`, `[A <: Foo]` carry the bound type inside `type_parameters`.
-    // This is THE pervasive way a typeclass is required in Scala, yet the bound
-    // never appears in the value parameters. Param NAMES are `identifier` (not
-    // `type_identifier`), so only the bound types surface. Scala-only: in other
-    // languages a `type_parameters` child holds declaration names as
-    // `type_identifier` (TS `<T>`), which would wrongly surface as refs.
+    // Scala context bound / type parameter bound：`def f[A: Monoid]`、
+    // `[F[_]: Monad]`、`[A <: Foo]` 将约束类型包含在 `type_parameters` 中。
+    // 这是 Scala 中要求 typeclass 的**最常见**方式，但约束从不出现在值参数中。
+    // 参数**名称**为 `identifier`（非 `type_identifier`），因此只有约束类型会浮现。
+    // 仅限 Scala：在其他语言中，`type_parameters` 子节点以 `type_identifier` 持有
+    // 声明名称（TS 的 `<T>`），若在此处理会错误地将其视为引用。
     if (this.language === 'scala') {
       const typeParams = node.namedChildren.find(
         (c: SyntaxNode) => c.type === 'type_parameters'
@@ -4353,7 +4232,7 @@ export class TreeSitterExtractor {
       }
     }
 
-    // Extract direct type annotation (for class fields like `model: ITextModel`)
+    // 提取直接类型注解（如类字段 `model: ITextModel`）
     const typeAnnotation = node.namedChildren.find(
       (c: SyntaxNode) => c.type === 'type_annotation'
     );
@@ -4363,40 +4242,34 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Extract C# type references from a node that owns a type position —
-   * a method/constructor declaration, a property declaration, or a
-   * field declaration (which wraps `variable_declaration → type`).
+   * 从拥有类型位置的节点（method/constructor 声明、property 声明，
+   * 或包裹 `variable_declaration → type` 的 field 声明）中提取 C# 类型引用。
    *
-   * Walks ONLY into known type fields, so parameter names like
-   * `request` in `Build(UserDto request)` are never mis-emitted as
-   * type references. Once inside a type subtree, `walkCsharpTypePosition`
-   * recognizes C#'s actual type-leaf node kinds (`identifier`,
-   * `qualified_name`, `generic_name`, `array_type`, `nullable_type`,
-   * `tuple_type`, …) — none of which are `type_identifier`. Closes #381.
+   * **仅**游走已知的类型字段，以防 `Build(UserDto request)` 中的参数名
+   * `request` 被误发为类型引用。进入类型子树后，`walkCsharpTypePosition`
+   * 识别 C# 实际的类型叶节点类型（`identifier`、`qualified_name`、
+   * `generic_name`、`array_type`、`nullable_type`、`tuple_type` 等）——
+   * 这些均非 `type_identifier`。解决 #381。
    */
   private extractCsharpTypeRefs(node: SyntaxNode, nodeId: string): void {
-    // A property's type is under the `type` field; a method/constructor's RETURN
-    // type is under `returns` (tree-sitter-c-sharp 0.23.x — older builds used
-    // `type` for both). A node carries only one of the two, so checking both
-    // covers return types and property types without conflating them.
+    // property 的类型在 `type` 字段下；method/constructor 的**返回**类型在
+    // `returns` 字段下（tree-sitter-c-sharp 0.23.x——旧版本两者均使用 `type`）。
+    // 节点只携带其中之一，因此同时检查两者即可覆盖返回类型和属性类型，而不会混淆。
     const directType = getChildByField(node, 'type') ?? getChildByField(node, 'returns');
     if (directType) this.walkCsharpTypePosition(directType, nodeId);
 
-    // Field declarations wrap declarators in a `variable_declaration`
-    // whose `type` field carries the type. The outer `field_declaration`
-    // has no `type` field of its own, so the call above is a no-op here
-    // and we descend one level.
+    // 字段声明将 declarator 包裹在 `variable_declaration` 中，
+    // 该节点的 `type` 字段携带类型。外层 `field_declaration` 自身无 `type` 字段，
+    // 因此上方的调用在此为空操作，需向下一层递归。
     const varDecl = node.namedChildren.find((c: SyntaxNode) => c.type === 'variable_declaration');
     if (varDecl) {
       const vdType = getChildByField(varDecl, 'type');
       if (vdType) this.walkCsharpTypePosition(vdType, nodeId);
     }
 
-    // Method / constructor parameters. The field name on
-    // `method_declaration` is `parameters`; it points at a
-    // `parameter_list` whose `parameter` children each have their own
-    // `type` field. Walking ONLY the type field skips parameter NAMES,
-    // which would otherwise mis-emit as type references.
+    // method/constructor 参数。`method_declaration` 的字段名为 `parameters`，
+    // 指向 `parameter_list`，其 `parameter` 子节点各自具有 `type` 字段。
+    // **仅**游走 type 字段可跳过参数名，避免将其误发为类型引用。
     const params = getChildByField(node, 'parameters');
     if (params) {
       for (let i = 0; i < params.namedChildCount; i++) {
@@ -4409,15 +4282,12 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Record the dependencies declared by a C# PRIMARY CONSTRUCTOR
-   * (`class Svc(IRepo repo, [FromKeyedServices("k")] ICache cache) { … }`,
-   * C# 12+). The parameter list hangs off the class/struct/record declaration
-   * as an unnamed-field `parameter_list` child (not the `parameters` field a
-   * method uses), so it's found by node type. Each parameter's declared type
-   * becomes a `references` edge from the owning type — these are exactly the
-   * services a DI-registered type depends on, so impact/blast-radius and
-   * "who depends on this contract" now see them. No-op when there's no primary
-   * constructor. (#237)
+   * 记录 C# **主构造函数**（C# 12+，`class Svc(IRepo repo, [FromKeyedServices("k")] ICache cache) { … }`）
+   * 声明的依赖项。参数列表作为无字段名的 `parameter_list` 子节点挂在
+   * class/struct/record 声明上（与方法使用的 `parameters` 字段不同），
+   * 因此通过节点类型查找。每个参数的声明类型成为从所属类型发出的 `references` 边——
+   * 这正是 DI 注册类型所依赖的服务，使 impact/blast-radius 和
+   * "谁依赖此契约"查询得以覆盖它们。若无主构造函数则为空操作。（#237）
    */
   private extractCsharpPrimaryCtorParamRefs(node: SyntaxNode, ownerId: string): void {
     if (this.language !== 'csharp') return;
@@ -4432,15 +4302,15 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Walk a C# subtree that is KNOWN to be in a type position
-   * (return type, parameter type, property type, field type, generic
-   * argument). Identifiers here are type names, not parameter names.
+   * 游走**已知**处于类型位置的 C# 子树
+   * （返回类型、参数类型、属性类型、字段类型、泛型参数）。
+   * 此处的标识符是类型名称，而非参数名称。
    */
   private walkCsharpTypePosition(node: SyntaxNode, fromNodeId: string): void {
-    // `predefined_type` is int/string/bool/etc. — never a project ref.
+    // `predefined_type` 是 int/string/bool 等——从不是项目引用。
     if (node.type === 'predefined_type') return;
 
-    // Bare type name: `Foo` in `Foo bar`, or the `Foo` inside `List<Foo>`.
+    // 裸类型名称：`Foo bar` 中的 `Foo`，或 `List<Foo>` 内的 `Foo`。
     if (node.type === 'identifier') {
       const name = getNodeText(node, this.source);
       if (name && !this.BUILTIN_TYPES.has(name)) {
@@ -4455,9 +4325,8 @@ export class TreeSitterExtractor {
       return;
     }
 
-    // `Namespace.Foo` → the rightmost identifier is the type. Emit the
-    // full qualified name as the reference; the resolver can still match
-    // on the trailing simple name when needed.
+    // `Namespace.Foo` → 最右侧的标识符是类型。将完整限定名发出为引用；
+    // 需要时解析器仍可通过尾部简单名称进行匹配。
     if (node.type === 'qualified_name') {
       const text = getNodeText(node, this.source);
       const last = text.split('.').pop() ?? text;
@@ -4473,22 +4342,20 @@ export class TreeSitterExtractor {
       return;
     }
 
-    // `(int Code, Foo Payload)` — tuple element has BOTH a `type` and a
-    // `name` field; descending into all named children would mis-emit
-    // the element name (`Code`, `Payload`) as a type ref. Walk only the
-    // type field.
+    // `(int Code, Foo Payload)` —— tuple element 同时具有 `type` 和 `name` 字段；
+    // 遍历所有具名子节点会将元素名（`Code`、`Payload`）误发为类型引用。
+    // 仅游走 type 字段。
     if (node.type === 'tuple_element') {
       const t = getChildByField(node, 'type');
       if (t) this.walkCsharpTypePosition(t, fromNodeId);
       return;
     }
 
-    // Composite type nodes — recurse into named children. Covers
-    // `generic_name` (head identifier + `type_argument_list`),
-    // `nullable_type`, `array_type`, `pointer_type`, `tuple_type`,
-    // `ref_type`, and any newer wrapping shapes the grammar adds.
-    // Identifiers reached here are all type-positional (parameter/field
-    // names are gated out before we descend).
+    // 复合类型节点——递归进入具名子节点。涵盖：
+    // `generic_name`（头部标识符 + `type_argument_list`）、
+    // `nullable_type`、`array_type`、`pointer_type`、`tuple_type`、
+    // `ref_type`，以及 grammar 新增的任何包裹形状。
+    // 到达此处的标识符均处于类型位置（参数/字段名在递归前已被门控排除）。
     for (let i = 0; i < node.namedChildCount; i++) {
       const child = node.namedChild(i);
       if (child) this.walkCsharpTypePosition(child, fromNodeId);
@@ -4496,12 +4363,11 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Extract PHP type references from a method/function/property declaration.
-   * Walks ONLY type positions: each parameter's type child (inside
-   * `formal_parameters`), the return type, and a property's type — all
-   * `named_type` / `optional_type` / `union_type` / … direct children. Parameter
-   * and property NAMES are `variable_name` (`$x`), never type nodes, so they
-   * can't be mis-emitted.
+   * 从 method/function/property 声明中提取 PHP 类型引用。
+   * **仅**游走类型位置：每个参数的 type 子节点（在 `formal_parameters` 内）、
+   * 返回类型，以及属性类型——均为 `named_type` / `optional_type` / `union_type` / …
+   * 的直接子节点。参数和属性的**名称**是 `variable_name`（`$x`），从不是类型节点，
+   * 因此不会被误发。
    */
   private extractPhpTypeRefs(node: SyntaxNode, nodeId: string): void {
     const params = node.namedChildren.find((c: SyntaxNode) => c.type === 'formal_parameters');
@@ -4513,14 +4379,13 @@ export class TreeSitterExtractor {
         }
       }
     }
-    // Return type (method/function) and property type are TYPE nodes that are
-    // DIRECT children of the declaration.
+    // 方法/函数的返回类型和属性类型是声明的**直接**子节点中的 TYPE 节点。
     for (const c of node.namedChildren) {
       if (PHP_TYPE_NODES.has(c.type)) this.walkPhpTypePosition(c, nodeId);
     }
   }
 
-  /** Walk a PHP subtree KNOWN to be in a type position; emit class/interface refs. */
+  /** 游走**已知**处于类型位置的 PHP 子树；发出 class/interface 引用。 */
   private walkPhpTypePosition(node: SyntaxNode, fromNodeId: string): void {
     if (node.type === 'primitive_type') return; // int/string/void/…
     if (node.type === 'name') {
@@ -4534,8 +4399,8 @@ export class TreeSitterExtractor {
       return;
     }
     if (node.type === 'qualified_name') {
-      // `App\Contracts\Logger` → match on the trailing simple name (what the
-      // class node is stored as, and what a `use` import brings into scope).
+      // `App\Contracts\Logger` → 按尾部简单名称匹配（即 class 节点存储的名称，
+      // 以及 `use` import 引入作用域的名称）。
       const last = getNodeText(node, this.source).split('\\').pop() ?? '';
       if (last && !this.PHP_PSEUDO_TYPES.has(last)) {
         this.unresolvedReferences.push({
@@ -4545,7 +4410,7 @@ export class TreeSitterExtractor {
       }
       return;
     }
-    // optional_type / nullable_type / union_type / intersection_type / named_type → recurse
+    // optional_type / nullable_type / union_type / intersection_type / named_type → 递归
     for (let i = 0; i < node.namedChildCount; i++) {
       const child = node.namedChild(i);
       if (child) this.walkPhpTypePosition(child, fromNodeId);
@@ -4553,12 +4418,12 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Extract type references from a variable's type annotation.
+   * 从变量的类型注解中提取类型引用。
    */
   private extractVariableTypeAnnotation(node: SyntaxNode, nodeId: string): void {
     if (!this.TYPE_ANNOTATION_LANGUAGES.has(this.language)) return;
 
-    // Find type_annotation child (covers TS `: Type`, Rust `: Type`, etc.)
+    // 查找 type_annotation 子节点（涵盖 TS 的 `: Type`、Rust 的 `: Type` 等）
     const typeAnnotation = node.namedChildren.find(
       (c: SyntaxNode) => c.type === 'type_annotation'
     );
@@ -4568,8 +4433,8 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Recursively walk a subtree and extract all type_identifier references.
-   * Handles unions, intersections, generics, arrays, etc.
+   * 递归游走子树，提取所有 type_identifier 引用。
+   * 处理 union、intersection、泛型、数组等类型。
    */
   private extractTypeRefsFromSubtree(node: SyntaxNode, fromNodeId: string): void {
     if (node.type === 'type_identifier') {
@@ -4583,10 +4448,10 @@ export class TreeSitterExtractor {
           column: node.startPosition.column,
         });
       }
-      return; // type_identifier is a leaf
+      return; // type_identifier 是叶节点
     }
 
-    // Recurse into children (handles union_type, intersection_type, generic_type, etc.)
+    // 递归进入子节点（处理 union_type、intersection_type、generic_type 等）
     for (let i = 0; i < node.namedChildCount; i++) {
       const child = node.namedChild(i);
       if (child) {
@@ -4596,22 +4461,22 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Handle Pascal-specific AST structures.
-   * Returns true if the node was fully handled and children should be skipped.
+   * 处理 Pascal 专属的 AST 结构。
+   * 若节点已被完整处理且子节点应跳过，则返回 true。
    */
   private visitPascalNode(node: SyntaxNode): boolean {
     const nodeType = node.type;
 
-    // Unit/Program/Library → module node
+    // Unit/Program/Library → module 节点
     if (nodeType === 'unit' || nodeType === 'program' || nodeType === 'library') {
       const moduleNameNode = node.namedChildren.find(
         (c: SyntaxNode) => c.type === 'moduleName'
       );
       const name = moduleNameNode ? getNodeText(moduleNameNode, this.source) : '';
-      // Fallback to filename without extension if module name is empty
+      // 若模块名为空，则退回到无扩展名的文件名
       const moduleName = name || path.basename(this.filePath).replace(/\.[^.]+$/, '');
       this.createNode('module', moduleName, node);
-      // Continue visiting children (interface/implementation sections)
+      // 继续访问子节点（interface/implementation 节）
       for (let i = 0; i < node.namedChildCount; i++) {
         const child = node.namedChild(i);
         if (child) this.visitNode(child);
@@ -4619,20 +4484,20 @@ export class TreeSitterExtractor {
       return true;
     }
 
-    // declType wraps declClass/declIntf/declEnum/type-alias
-    // The name lives on declType, the inner node determines the kind
+    // declType 包裹 declClass/declIntf/declEnum/类型别名
+    // 名称在 declType 上，内层节点决定 kind
     if (nodeType === 'declType') {
       this.extractPascalDeclType(node);
       return true;
     }
 
-    // declUses → import nodes for each unit name
+    // declUses → 为每个单元名称创建 import 节点
     if (nodeType === 'declUses') {
       this.extractPascalUses(node);
       return true;
     }
 
-    // declConsts → container; visit children for individual declConst
+    // declConsts → 容器节点；访问子节点以处理各 declConst
     if (nodeType === 'declConsts') {
       for (let i = 0; i < node.namedChildCount; i++) {
         const child = node.namedChild(i);
@@ -4643,13 +4508,13 @@ export class TreeSitterExtractor {
       return true;
     }
 
-    // declConst at top level (outside declConsts)
+    // 顶层 declConst（在 declConsts 之外）
     if (nodeType === 'declConst') {
       this.extractPascalConst(node);
       return true;
     }
 
-    // declTypes → container for type declarations
+    // declTypes → 类型声明容器
     if (nodeType === 'declTypes') {
       for (let i = 0; i < node.namedChildCount; i++) {
         const child = node.namedChild(i);
@@ -4658,7 +4523,7 @@ export class TreeSitterExtractor {
       return true;
     }
 
-    // declVars → container for variable declarations
+    // declVars → 变量声明容器
     if (nodeType === 'declVars') {
       for (let i = 0; i < node.namedChildCount; i++) {
         const child = node.namedChild(i);
@@ -4673,13 +4538,13 @@ export class TreeSitterExtractor {
       return true;
     }
 
-    // defProc in implementation section → extract calls but don't create duplicate nodes
+    // implementation 节中的 defProc → 提取调用，但不创建重复节点
     if (nodeType === 'defProc') {
       this.extractPascalDefProc(node);
       return true;
     }
 
-    // declProp → property node
+    // declProp → property 节点
     if (nodeType === 'declProp') {
       const nameNode = getChildByField(node, 'name');
       if (nameNode) {
@@ -4690,7 +4555,7 @@ export class TreeSitterExtractor {
       return true;
     }
 
-    // declField → field node
+    // declField → field 节点
     if (nodeType === 'declField') {
       const nameNode = getChildByField(node, 'name');
       if (nameNode) {
@@ -4701,7 +4566,7 @@ export class TreeSitterExtractor {
       return true;
     }
 
-    // declSection → visit children (propagates visibility via getVisibility)
+    // declSection → 访问子节点（通过 getVisibility 传递可见性）
     if (nodeType === 'declSection') {
       for (let i = 0; i < node.namedChildCount; i++) {
         const child = node.namedChild(i);
@@ -4710,13 +4575,13 @@ export class TreeSitterExtractor {
       return true;
     }
 
-    // exprCall → extract function call reference
+    // exprCall → 提取函数调用引用
     if (nodeType === 'exprCall') {
       this.extractPascalCall(node);
       return true;
     }
 
-    // interface/implementation sections → visit children
+    // interface/implementation 节 → 访问子节点
     if (nodeType === 'interface' || nodeType === 'implementation') {
       for (let i = 0; i < node.namedChildCount; i++) {
         const child = node.namedChild(i);
@@ -4725,7 +4590,7 @@ export class TreeSitterExtractor {
       return true;
     }
 
-    // block (begin..end) → visit for calls
+    // block（begin..end）→ 访问以提取调用
     if (nodeType === 'block') {
       this.visitPascalBlock(node);
       return true;
@@ -4735,14 +4600,14 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Extract a Pascal declType node (class, interface, enum, or type alias)
+   * 提取 Pascal declType 节点（class、interface、enum 或类型别名）
    */
   private extractPascalDeclType(node: SyntaxNode): void {
     const nameNode = getChildByField(node, 'name');
     if (!nameNode) return;
     const name = getNodeText(nameNode, this.source);
 
-    // Find the inner type declaration
+    // 查找内层类型声明
     const declClass = node.namedChildren.find(
       (c: SyntaxNode) => c.type === 'declClass'
     );
@@ -4756,9 +4621,9 @@ export class TreeSitterExtractor {
     if (declClass) {
       const classNode = this.createNode('class', name, node);
       if (classNode) {
-        // Extract inheritance from typeref children of declClass
+        // 从 declClass 的 typeref 子节点提取继承关系
         this.extractPascalInheritance(declClass, classNode.id);
-        // Visit class body
+        // 访问 class body
         this.nodeStack.push(classNode.id);
         for (let i = 0; i < declClass.namedChildCount; i++) {
           const child = declClass.namedChild(i);
@@ -4769,7 +4634,7 @@ export class TreeSitterExtractor {
     } else if (declIntf) {
       const ifaceNode = this.createNode('interface', name, node);
       if (ifaceNode) {
-        // Visit interface members
+        // 访问 interface 成员
         this.nodeStack.push(ifaceNode.id);
         for (let i = 0; i < declIntf.namedChildCount; i++) {
           const child = declIntf.namedChild(i);
@@ -4778,14 +4643,14 @@ export class TreeSitterExtractor {
         this.nodeStack.pop();
       }
     } else if (typeChild) {
-      // Check if it contains a declEnum
+      // 检查是否包含 declEnum
       const declEnum = typeChild.namedChildren.find(
         (c: SyntaxNode) => c.type === 'declEnum'
       );
       if (declEnum) {
         const enumNode = this.createNode('enum', name, node);
         if (enumNode) {
-          // Extract enum members
+          // 提取 enum 成员
           this.nodeStack.push(enumNode.id);
           for (let i = 0; i < declEnum.namedChildCount; i++) {
             const child = declEnum.namedChild(i);
@@ -4799,17 +4664,17 @@ export class TreeSitterExtractor {
           this.nodeStack.pop();
         }
       } else {
-        // Simple type alias: type TFoo = string / type TFoo = Integer
+        // 简单类型别名：type TFoo = string / type TFoo = Integer
         this.createNode('type_alias', name, node);
       }
     } else {
-      // Fallback: could be a forward declaration or simple alias
+      // 兜底：可能是前向声明或简单别名
       this.createNode('type_alias', name, node);
     }
   }
 
   /**
-   * Extract Pascal uses clause into individual import nodes
+   * 将 Pascal uses 子句提取为各 import 节点
    */
   private extractPascalUses(node: SyntaxNode): void {
     const importText = getNodeText(node, this.source).trim();
@@ -4820,7 +4685,7 @@ export class TreeSitterExtractor {
         this.createNode('import', unitName, child, {
           signature: importText,
         });
-        // Create unresolved reference for resolution
+        // 创建未解析引用供后续解析
         if (this.nodeStack.length > 0) {
           const parentId = this.nodeStack[this.nodeStack.length - 1];
           if (parentId) {
@@ -4838,7 +4703,7 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Extract a Pascal constant declaration
+   * 提取 Pascal 常量声明
    */
   private extractPascalConst(node: SyntaxNode): void {
     const nameNode = getChildByField(node, 'name');
@@ -4852,7 +4717,7 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Extract Pascal inheritance (extends/implements) from declClass typeref children
+   * 从 declClass 的 typeref 子节点提取 Pascal 继承关系（extends/implements）
    */
   private extractPascalInheritance(declClass: SyntaxNode, classId: string): void {
     const typerefs = declClass.namedChildren.filter(
@@ -4872,11 +4737,11 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Extract calls and resolve method context from a Pascal defProc (implementation body).
-   * Does not create a new node — the declaration was already captured from the interface section.
+   * 从 Pascal defProc（实现体）中提取调用并解析方法上下文。
+   * 不创建新节点——声明已从 interface 节中捕获。
    */
   private extractPascalDefProc(node: SyntaxNode): void {
-    // Find the matching declaration node by name to use as call parent
+    // 按名称查找匹配的声明节点，用作调用的父节点
     const declProc = node.namedChildren.find(
       (c: SyntaxNode) => c.type === 'declProc'
     );
@@ -4885,27 +4750,27 @@ export class TreeSitterExtractor {
     const nameNode = getChildByField(declProc, 'name');
     if (!nameNode) return;
     const fullName = getNodeText(nameNode, this.source).trim();
-    // fullName is like "TAuthService.Create"
+    // fullName 形如 "TAuthService.Create"
     const shortName = fullName.includes('.') ? fullName.split('.').pop()! : fullName;
     const fullNameKey = fullName.toLowerCase();
     const shortNameKey = shortName.toLowerCase();
 
-    // Build method index on first use (O(n) once, then O(1) per lookup)
+    // 首次使用时构建方法索引（构建一次 O(n)，之后查找 O(1)）
     if (!this.methodIndex) {
       this.methodIndex = new Map();
       for (const n of this.nodes) {
         if (n.kind === 'method' || n.kind === 'function') {
           const nameKey = n.name.toLowerCase();
-          // Keep first seen short-name mapping to avoid silently overwriting earlier entries.
+          // 保留首次遇到的短名称映射，避免静默覆盖较早的条目。
           if (!this.methodIndex.has(nameKey)) {
             this.methodIndex.set(nameKey, n.id);
           }
 
-          // For Pascal methods, also index qualified forms (e.g. TAuthService.Create).
+          // 对于 Pascal 方法，同时索引限定形式（如 TAuthService.Create）。
           if (n.kind === 'method') {
             const qualifiedParts = n.qualifiedName.split('::');
             if (qualifiedParts.length >= 2) {
-              // Create suffix keys so both "Module.Class.Method" and "Class.Method" can resolve.
+              // 创建后缀键，使 "Module.Class.Method" 和 "Class.Method" 均可解析。
               for (let i = 0; i < qualifiedParts.length - 1; i++) {
                 const scopedName = qualifiedParts.slice(i).join('.').toLowerCase();
                 this.methodIndex.set(scopedName, n.id);
@@ -4920,13 +4785,12 @@ export class TreeSitterExtractor {
       this.methodIndex.get(fullNameKey) ||
       this.methodIndex.get(shortNameKey);
 
-    // No existing node? This is an implementation-only **free** procedure/function
-    // (`procedure Helper; begin … end;` with no interface declaration and not a
-    // class method). Create a function node so its body's calls attribute to it,
-    // not to the enclosing file/module. A method (`TClass.Method`, a dotted name)
-    // always has a node from its class declaration, so this only fires for free
-    // routines — and the methodIndex lookup above already covers interface-declared
-    // free routines, so there's no duplicate.
+    // 无现有节点？这是仅在 implementation 中定义的**自由**过程/函数
+    // （`procedure Helper; begin … end;`，无 interface 声明且非 class 方法）。
+    // 创建一个 function 节点，使其 body 内的调用归属于它，而非外围 file/module。
+    // 方法（`TClass.Method`，带点的名称）始终从其 class 声明中获得节点，
+    // 因此此处仅针对自由子程序触发——且上方的 methodIndex 查找
+    // 已涵盖 interface 声明的自由子程序，不会产生重复。
     if (!parentId && !fullName.includes('.')) {
       const fnNode = this.createNode('function', fullName, declProc, {
         signature: this.extractor?.getSignature?.(declProc, this.source),
@@ -4942,7 +4806,7 @@ export class TreeSitterExtractor {
     if (!parentId) parentId = this.nodeStack[this.nodeStack.length - 1];
     if (!parentId) return;
 
-    // Visit the block for calls
+    // 访问 block 以提取调用
     const block = node.namedChildren.find(
       (c: SyntaxNode) => c.type === 'block'
     );
@@ -4954,25 +4818,24 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Extract function calls from a Pascal expression
+   * 从 Pascal 表达式中提取函数调用
    */
   private extractPascalCall(node: SyntaxNode): void {
     if (this.nodeStack.length === 0) return;
     const callerId = this.nodeStack[this.nodeStack.length - 1];
     if (!callerId) return;
 
-    // Get the callee name — first child is typically the identifier or exprDot
+    // 获取被调用者名称——第一个子节点通常是 identifier 或 exprDot
     const firstChild = node.namedChild(0);
     if (!firstChild) return;
 
     let calleeName = '';
     if (firstChild.type === 'exprDot') {
-      // Chained static-factory call: `TFoo.GetInstance().DoIt()` — the exprDot's
-      // receiver is itself an `exprCall`, so the bare identifier list would
-      // collapse to just `DoIt` and mis-resolve to a same-named method on an
-      // unrelated class. Encode `TFoo.GetInstance().DoIt` so resolution infers
-      // DoIt's class from what `TFoo.GetInstance` RETURNS (#645/#608). Only a
-      // capitalized class-factory chain; a unary outer method.
+      // 链式静态工厂调用：`TFoo.GetInstance().DoIt()` —— exprDot 的接收者本身是
+      // `exprCall`，若直接取标识符列表会塌缩为仅 `DoIt`，误解析到无关类的同名方法。
+      // 将其编码为 `TFoo.GetInstance().DoIt`，以便解析器从 `TFoo.GetInstance` 的
+      // 返回值推断 DoIt 所属的类（#645/#608）。
+      // 仅针对大写类工厂链；外层方法为单目。
       const innerCall = firstChild.namedChildren.find((c: SyntaxNode) => c.type === 'exprCall');
       const outerId = firstChild.namedChildren.filter((c: SyntaxNode) => c.type === 'identifier').pop();
       const method = outerId ? getNodeText(outerId, this.source) : '';
@@ -4987,15 +4850,14 @@ export class TreeSitterExtractor {
         } else if (innerFirst?.type === 'identifier') {
           innerCallee = getNodeText(innerFirst, this.source);
         }
-        // Gate on the Delphi type-naming convention — `TFoo` classes / `IFoo`
-        // interfaces — so a class-factory chain re-encodes but a capitalized
-        // VARIABLE/parameter chain (Pascal capitalizes locals too: `Curve.X().Y()`,
-        // `Self.X().Y()`) stays bare and keeps its existing bare-name resolution.
+        // 门控于 Delphi 类型命名惯例——`TFoo` 类 / `IFoo` 接口——
+        // 使类工厂链重新编码，而大写变量/参数链（Pascal 局部变量也大写：
+        // `Curve.X().Y()`、`Self.X().Y()`）保持裸名并沿用现有裸名解析。
         calleeName = innerCallee && /^[TI][A-Z]/.test(innerCallee)
           ? `${innerCallee}().${method}`
           : method;
       } else {
-        // Qualified call: Obj.Method(...)
+        // 限定调用：Obj.Method(...)
         const identifiers = firstChild.namedChildren.filter(
           (c: SyntaxNode) => c.type === 'identifier'
         );
@@ -5017,7 +4879,7 @@ export class TreeSitterExtractor {
       });
     }
 
-    // Also visit arguments for nested calls
+    // 同时访问参数以提取嵌套调用
     const args = node.namedChildren.find(
       (c: SyntaxNode) => c.type === 'exprArgs'
     );
@@ -5027,14 +4889,12 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Extract a PAREN-LESS Pascal method/procedure call (`Obj.Method;`,
-   * `TFoo.GetInstance.DoIt;`). Pascal lets a no-arg method drop its parens, so it
-   * parses as a bare `exprDot` (not an `exprCall`). A bare `exprDot` is
-   * syntactically identical to a field/property access, so this is only ever
-   * called for a STATEMENT-level exprDot (caller-gated): a bare `Obj.Field;`
-   * statement is a no-op, so a statement-level dot expression is a call. (An
-   * exprDot in assignment LHS/RHS or a condition is left alone — there it really
-   * can be a field/property read.)
+   * 提取**无括号**的 Pascal 方法/过程调用（`Obj.Method;`、`TFoo.GetInstance.DoIt;`）。
+   * Pascal 允许无参方法省略括号，因此其解析为裸 `exprDot`（而非 `exprCall`）。
+   * 裸 `exprDot` 在语法上与字段/属性访问完全相同，因此此方法仅在**语句级**的
+   * exprDot 处被调用（由调用方门控）：语句级的裸 `Obj.Field;` 是空操作，
+   * 故语句级点表达式即为调用。（赋值 LHS/RHS 或条件中的 exprDot 原样保留——
+   * 那里它真的可能是字段/属性读取。）
    */
   private extractPascalParenlessCall(node: SyntaxNode): void {
     if (this.nodeStack.length === 0) return;
@@ -5047,11 +4907,11 @@ export class TreeSitterExtractor {
     if (!method) return;
 
     let calleeName = '';
-    // Chained: the receiver is itself a call — a paren-less `TFoo.GetInstance` (an
-    // inner exprDot) or a paren'd `TFoo.GetInstance()` (an exprCall). Encode the
-    // chain `TFoo.GetInstance().DoIt` so resolution infers DoIt's class from what
-    // the factory RETURNS (#645/#608), gated on the Delphi `TFoo`/`IFoo` type
-    // convention; a capitalized VARIABLE chain stays a bare method name.
+    // 链式：接收者本身是调用——无括号的 `TFoo.GetInstance`（内层 exprDot）
+    // 或有括号的 `TFoo.GetInstance()`（exprCall）。将链编码为
+    // `TFoo.GetInstance().DoIt`，以便解析器从工厂的返回值推断 DoIt 的类（#645/#608），
+    // 门控于 Delphi 的 `TFoo`/`IFoo` 类型惯例；
+    // 大写变量链保持裸方法名。
     if ((receiver?.type === 'exprDot' || receiver?.type === 'exprCall') && /^\w+$/.test(method)) {
       const innerCalleeNode = receiver.type === 'exprCall' ? receiver.namedChild(0) : receiver;
       const innerCallee = !innerCalleeNode
@@ -5064,14 +4924,14 @@ export class TreeSitterExtractor {
               .join('.');
       if (innerCallee && /^[TI][A-Z]/.test(innerCallee)) {
         calleeName = `${innerCallee}().${method}`;
-        // The T/I-prefixed inner is itself a real call — record it too.
+        // T/I 前缀的内层本身是真实调用——也记录它。
         if (receiver.type === 'exprCall') this.extractPascalCall(receiver);
         else this.extractPascalParenlessCall(receiver);
       } else {
-        calleeName = method; // non-class receiver: a bare method ref (no field-access ref)
+        calleeName = method; // 非 class 接收者：裸方法引用（无字段访问引用）
       }
     } else {
-      // Simple: `Obj.Method` → the dotted name (resolves via the receiver / bare name).
+      // 简单形式：`Obj.Method` → 带点名称（通过接收者/裸名解析）。
       calleeName = node.namedChildren
         .filter((c: SyntaxNode) => c.type === 'identifier')
         .map((id: SyntaxNode) => getNodeText(id, this.source))
@@ -5090,27 +4950,26 @@ export class TreeSitterExtractor {
   }
 
   /**
-   * Recursively visit a Pascal block/statement tree for call expressions
+   * 递归访问 Pascal block/statement 树以提取调用表达式
    */
   private visitPascalBlock(node: SyntaxNode): void {
     for (let i = 0; i < node.namedChildCount; i++) {
       const child = node.namedChild(i);
       if (!child) continue;
-      // Function-as-value capture (#756): Pascal bodies are walked here, not
-      // in visitNode/visitForCallsAndStructure, so the capture hook fires here
-      // — assignment RHS is the Delphi event-wiring idiom (`OnFire := Handler`).
+      // Function-as-value 捕获（#756）：Pascal body 在此游走，而非在
+      // visitNode/visitForCallsAndStructure 中，因此捕获钩子在此触发——
+      // 赋值 RHS 是 Delphi 事件绑定的惯用法（`OnFire := Handler`）。
       this.maybeCaptureFnRefs(child, child.type);
       if (child.type === 'exprCall') {
         this.extractPascalCall(child);
-        // The walker doesn't descend into a call's arguments — dispatch the
-        // argument container directly (`RegisterHandler(TargetCb)` / `(@Cb)`).
+        // 游走器不下沉到调用参数中——直接分发参数容器
+        // （`RegisterHandler(TargetCb)` / `(@Cb)`）。
         const args = child.namedChildren.find((c: SyntaxNode) => c.type === 'exprArgs');
         if (args) this.maybeCaptureFnRefs(args, 'exprArgs');
       } else if (child.type === 'exprDot') {
-        // A STATEMENT-level bare exprDot is a paren-less call (`Obj.Free;`,
-        // `TFoo.GetInstance.DoIt;`). Anywhere else (assignment side, condition,
-        // expression) a bare exprDot is ambiguous with a field/property access,
-        // so there we only descend for paren'd inner calls.
+        // **语句级**裸 exprDot 是无括号调用（`Obj.Free;`、`TFoo.GetInstance.DoIt;`）。
+        // 其他位置（赋值侧、条件、表达式）的裸 exprDot 与字段/属性访问语法相同，
+        // 因此仅下沉到有括号的内层调用。
         if (node.type === 'statement') {
           this.extractPascalParenlessCall(child);
         } else {
@@ -5130,11 +4989,11 @@ export class TreeSitterExtractor {
 
 
 /**
- * Extract nodes and edges from source code.
+ * 从源码中提取节点和边。
  *
- * If `frameworkNames` is provided, framework-specific extractors matching
- * those names and the file's language are run after the tree-sitter pass.
- * Their nodes/references/errors are merged into the returned result.
+ * 若提供了 `frameworkNames`，将在 tree-sitter 阶段完成后，
+ * 运行与这些名称及文件语言匹配的框架专属提取器，
+ * 并将其节点/引用/错误合并到返回结果中。
  */
 export function extractFromSource(
   filePath: string,
@@ -5147,42 +5006,41 @@ export function extractFromSource(
 
   let result: ExtractionResult;
 
-  // Use custom extractor for Svelte
+  // 使用 Svelte 的自定义提取器
   if (detectedLanguage === 'svelte') {
     const extractor = new SvelteExtractor(filePath, source);
     result = extractor.extract();
   } else if (detectedLanguage === 'vue') {
-    // Use custom extractor for Vue
+    // 使用 Vue 的自定义提取器
     const extractor = new VueExtractor(filePath, source);
     result = extractor.extract();
   } else if (detectedLanguage === 'astro') {
-    // Use custom extractor for Astro (frontmatter + template delegation)
+    // 使用 Astro 的自定义提取器（frontmatter + template 委托）
     const extractor = new AstroExtractor(filePath, source);
     result = extractor.extract();
   } else if (detectedLanguage === 'liquid') {
-    // Use custom extractor for Liquid
+    // 使用 Liquid 的自定义提取器
     const extractor = new LiquidExtractor(filePath, source);
     result = extractor.extract();
   } else if (detectedLanguage === 'razor') {
-    // Use custom extractor for ASP.NET Razor (.cshtml) / Blazor (.razor) markup
+    // 使用 ASP.NET Razor（.cshtml）/ Blazor（.razor）标记的自定义提取器
     const extractor = new RazorExtractor(filePath, source);
     result = extractor.extract();
   } else if (detectedLanguage === 'xml') {
-    // Custom extractor for MyBatis mapper XML. Non-mapper XML returns just a
-    // file node so the watcher tracks it without emitting symbols.
+    // MyBatis mapper XML 的自定义提取器。非 mapper XML 仅返回文件节点，
+    // 以供 watcher 追踪而不发出符号。
     const extractor = new MyBatisExtractor(filePath, source);
     result = extractor.extract();
   } else if (isFileLevelOnlyLanguage(detectedLanguage)) {
-    // No symbol extraction at this stage — files are tracked at the file-record
-    // level only. Framework extractors (Drupal routing yml, Spring `@Value`
-    // resolution against application.yml/application.properties) run later and
-    // add per-file nodes/references when they apply.
+    // 此阶段不提取符号——文件仅在文件记录级别追踪。
+    // 框架提取器（Drupal 路由 yml、针对 application.yml/application.properties
+    // 的 Spring `@Value` 解析）在之后运行，并在适用时添加各文件的节点/引用。
     result = { nodes: [], edges: [], unresolvedReferences: [], errors: [], durationMs: 0 };
   } else if (
     detectedLanguage === 'pascal' &&
     (fileExtension === '.dfm' || fileExtension === '.fmx')
   ) {
-    // Use custom extractor for DFM/FMX form files
+    // 使用 DFM/FMX 表单文件的自定义提取器
     const extractor = new DfmExtractor(filePath, source);
     result = extractor.extract();
   } else {
@@ -5190,7 +5048,7 @@ export function extractFromSource(
     result = extractor.extract();
   }
 
-  // Framework-specific extraction (routes, middleware, etc.)
+  // 框架专属提取（路由、middleware 等）
   if (frameworkNames && frameworkNames.length > 0) {
     const allResolvers = getAllFrameworkResolvers();
     const applicable = getApplicableFrameworks(

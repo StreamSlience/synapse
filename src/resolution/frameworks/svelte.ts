@@ -1,15 +1,15 @@
-﻿/**
- * Svelte / SvelteKit Framework Resolver
+/**
+ * Svelte / SvelteKit 框架解析器
  *
- * Handles Svelte component references, Svelte 5 runes,
- * store auto-subscriptions, and SvelteKit route/module patterns.
+ * 处理 Svelte 组件引用、Svelte 5 runes、
+ * store 自动订阅，以及 SvelteKit 路由/模块模式。
  */
 
 import { Node } from '../../types';
 import { FrameworkResolver, UnresolvedRef, ResolvedRef, ResolutionContext } from '../types';
 
 /**
- * Svelte 5 runes — compiler-provided, not user code
+ * Svelte 5 runes——由编译器提供，非用户代码
  */
 const SVELTE_RUNES = new Set([
   '$state',
@@ -28,7 +28,7 @@ const SVELTE_RUNES = new Set([
 ]);
 
 /**
- * SvelteKit framework-provided module prefixes
+ * SvelteKit 框架提供的模块前缀
  */
 const SVELTEKIT_MODULE_PREFIXES = [
   '$app/navigation',
@@ -47,7 +47,7 @@ export const svelteResolver: FrameworkResolver = {
   languages: ['svelte'],
 
   detect(context: ResolutionContext): boolean {
-    // Check for svelte or @sveltejs/kit in package.json
+    // 检查 package.json 中是否有 svelte 或 @sveltejs/kit
     const packageJson = context.readFile('package.json');
     if (packageJson) {
       try {
@@ -57,21 +57,21 @@ export const svelteResolver: FrameworkResolver = {
           return true;
         }
       } catch {
-        // Invalid JSON
+        // 无效的 JSON
       }
     }
 
-    // Check for .svelte files in project
+    // 检查项目中是否有 .svelte 文件
     const allFiles = context.getAllFiles();
     return allFiles.some((f) => f.endsWith('.svelte'));
   },
 
   resolve(ref: UnresolvedRef, context: ResolutionContext): ResolvedRef | null {
-    // Pattern 1: Svelte runes ($state, $derived, $effect, etc.)
+    // 模式 1：Svelte runes（$state、$derived、$effect 等）
     if (isRuneReference(ref.referenceName)) {
-      // Runes are compiler-provided — return a high-confidence "framework" resolution
-      // so Synapse doesn't waste time searching for user-defined symbols.
-      // We use the fromNodeId as targetNodeId since runes don't have real targets.
+      // Runes 由编译器提供——返回高可信度的"框架"解析，
+      // 避免 Synapse 浪费时间搜索用户定义的符号。
+      // 由于 runes 没有真实目标，使用 fromNodeId 作为 targetNodeId。
       return {
         original: ref,
         targetNodeId: ref.fromNodeId,
@@ -80,7 +80,7 @@ export const svelteResolver: FrameworkResolver = {
       };
     }
 
-    // Pattern 2: Store auto-subscriptions ($storeName)
+    // 模式 2：Store 自动订阅（$storeName）
     if (ref.referenceName.startsWith('$') && !ref.referenceName.startsWith('$$')) {
       const storeName = ref.referenceName.substring(1);
       const storeNode = context.getNodesByName(storeName).find(
@@ -96,12 +96,12 @@ export const svelteResolver: FrameworkResolver = {
       }
     }
 
-    // Pattern 3: SvelteKit module imports ($app/*, $env/*, $lib/*)
+    // 模式 3：SvelteKit 模块导入（$app/*、$env/*、$lib/*）
     if (ref.referenceKind === 'imports' && ref.referenceName.startsWith('$')) {
-      // $lib/* resolves to src/lib/* — try to find the target file
+      // $lib/* 解析到 src/lib/*——尝试找到目标文件
       if (ref.referenceName.startsWith('$lib/')) {
         const libPath = ref.referenceName.replace('$lib/', 'src/lib/');
-        // Try common extensions
+        // 尝试常见扩展名
         for (const ext of ['', '.ts', '.js', '.svelte', '/index.ts', '/index.js']) {
           const fullPath = libPath + ext;
           if (context.fileExists(fullPath)) {
@@ -118,7 +118,7 @@ export const svelteResolver: FrameworkResolver = {
         }
       }
 
-      // $app/* and $env/* are framework-provided
+      // $app/* 和 $env/* 由框架提供
       if (SVELTEKIT_MODULE_PREFIXES.some((prefix) => ref.referenceName.startsWith(prefix))) {
         return {
           original: ref,
@@ -129,7 +129,7 @@ export const svelteResolver: FrameworkResolver = {
       }
     }
 
-    // Pattern 4: Component references (PascalCase) — resolve to .svelte files
+    // 模式 4：组件引用（PascalCase）——解析到 .svelte 文件
     if (isPascalCase(ref.referenceName) && ref.referenceKind === 'calls') {
       const result = resolveComponent(ref.referenceName, ref.filePath, context);
       if (result) {
@@ -149,13 +149,13 @@ export const svelteResolver: FrameworkResolver = {
     const nodes: Node[] = [];
     const now = Date.now();
 
-    // Detect SvelteKit route files
+    // 检测 SvelteKit 路由文件
     const fileName = filePath.split(/[/\\]/).pop() || '';
     const routeMatch = getSvelteKitRouteInfo(fileName);
 
     if (routeMatch) {
-      // Extract route path from directory structure
-      // e.g., src/routes/blog/[slug]/+page.svelte -> /blog/:slug
+      // 从目录结构中提取路由路径
+      // 例如：src/routes/blog/[slug]/+page.svelte -> /blog/:slug
       const routePath = filePathToSvelteKitRoute(filePath);
 
       if (routePath) {
@@ -180,55 +180,54 @@ export const svelteResolver: FrameworkResolver = {
 };
 
 /**
- * Check if a reference name is a Svelte rune
+ * 检查引用名称是否为 Svelte rune
  */
 function isRuneReference(name: string): boolean {
-  // Direct match (e.g. $state, $derived)
+  // 直接匹配（如 $state、$derived）
   if (SVELTE_RUNES.has(name)) return true;
 
-  // Rune method calls come through as the base rune name
-  // e.g. $state.raw -> the call is to "$state" with ".raw" accessed as property
-  // Check if it's a base rune that has sub-methods
+  // Rune 方法调用以基础 rune 名称传入
+  // 例如 $state.raw -> 调用的是"$state"，".raw"作为属性访问
+  // 检查是否为具有子方法的基础 rune
   if (name === '$state' || name === '$derived' || name === '$effect') return true;
 
   return false;
 }
 
 /**
- * Check if string is PascalCase
+ * 检查字符串是否为 PascalCase
  */
 function isPascalCase(str: string): boolean {
   return /^[A-Z][a-zA-Z0-9]*$/.test(str);
 }
 
 /**
- * Resolve a Svelte component reference using name-based lookup
+ * 通过名称查找解析 Svelte 组件引用
  */
 function resolveComponent(
   name: string,
   fromFile: string,
   context: ResolutionContext
 ): string | null {
-  // Look for component nodes by name
+  // 按名称查找组件节点
   const candidates = context.getNodesByName(name);
   const components = candidates.filter((n) => n.kind === 'component');
 
   if (components.length === 0) return null;
 
-  // Prefer same directory
+  // 优先同目录
   const fromDir = fromFile.substring(0, fromFile.lastIndexOf('/'));
   const sameDir = components.filter((n) => n.filePath.startsWith(fromDir));
   if (sameDir.length > 0) return sameDir[0]!.id;
 
-  // No positional signal: only an UNAMBIGUOUS name may resolve — picking
-  // components[0] chose an arbitrary same-named component in a multi-app
-  // monorepo (#764). Ambiguity falls through to the name-matcher, whose
-  // proximity scoring decides.
+  // 无位置信号：只有名称无歧义时才解析——
+  // 在多应用 monorepo 中选择 components[0] 会随机命中同名组件（#764）。
+  // 有歧义时交由名称匹配器的邻近度评分决定。
   return components.length === 1 ? components[0]!.id : null;
 }
 
 /**
- * SvelteKit route file patterns
+ * SvelteKit 路由文件模式
  */
 const SVELTEKIT_ROUTE_FILES: Record<string, string> = {
   '+page.svelte': 'page',
@@ -247,37 +246,37 @@ const SVELTEKIT_ROUTE_FILES: Record<string, string> = {
 };
 
 /**
- * Check if filename is a SvelteKit route file
+ * 检查文件名是否为 SvelteKit 路由文件
  */
 function getSvelteKitRouteInfo(fileName: string): string | null {
   return SVELTEKIT_ROUTE_FILES[fileName] || null;
 }
 
 /**
- * Convert a file path to a SvelteKit route path
+ * 将文件路径转换为 SvelteKit 路由路径
  */
 function filePathToSvelteKitRoute(filePath: string): string | null {
-  // Normalize to forward slashes
+  // 规范化为正斜杠
   const normalized = filePath.replace(/\\/g, '/');
 
-  // Find the routes directory
+  // 找到 routes 目录
   const routesIndex = normalized.indexOf('/routes/');
   if (routesIndex === -1) return null;
 
-  // Extract the path after routes/
+  // 提取 routes/ 之后的路径
   const afterRoutes = normalized.substring(routesIndex + '/routes/'.length);
 
-  // Remove the file name
+  // 去除文件名
   const lastSlash = afterRoutes.lastIndexOf('/');
   const dirPath = lastSlash === -1 ? '' : afterRoutes.substring(0, lastSlash);
 
-  // Convert SvelteKit param syntax [param] to :param
+  // 转换 SvelteKit 参数语法 [param] 为 :param
   let route = '/' + dirPath
     .replace(/\[\.\.\.([^\]]+)\]/g, '*$1')  // [...rest] -> *rest
     .replace(/\[{2}([^\]]+)\]{2}/g, ':$1?') // [[optional]] -> :optional?
     .replace(/\[([^\]]+)\]/g, ':$1');        // [param] -> :param
 
   if (route === '/') return '/';
-  // Remove trailing slash
+  // 去除末尾斜杠
   return route.replace(/\/$/, '');
 }

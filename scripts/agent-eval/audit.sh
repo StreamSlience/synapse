@@ -1,14 +1,14 @@
 ﻿#!/usr/bin/env bash
-# One-shot Synapse quality audit:
-#   set version -> ensure corpus repo -> wipe+reindex with that version ->
-#   run with/without A/B -> restore the local dev link.
+# 一次性 Synapse 质量审计：
+#   设置版本 -> 确保语料库代码库存在 -> 用该版本清除+重索引 ->
+#   运行有/无 A/B -> 恢复本地开发链接。
 #
-# Usage: audit.sh <version> <repo-name> <repo-url> "<question>" [headless|all]
-#   <version>    "local" (build + npm link this repo) | "latest" | a version (e.g. 0.7.10)
-#   <repo-name>  dir name under the corpus dir
-#   <repo-url>   git URL (cloned --depth 1 when the repo dir is missing)
-#   [mode]       headless (default) | all (also the interactive tmux arms)
-# Env: CORPUS  corpus dir (default: /tmp/synapse-corpus)
+# 用法：audit.sh <version> <repo-name> <repo-url> "<question>" [headless|all]
+#   <version>    "local"（构建 + npm link 本仓库）| "latest" | 版本号（如 0.7.10）
+#   <repo-name>  语料库目录下的目录名
+#   <repo-url>   git URL（目录不存在时浅克隆）
+#   [mode]       headless（默认）| all（同时运行交互式 tmux 分组）
+# 环境变量：CORPUS  语料库目录（默认：/tmp/synapse-corpus）
 set -uo pipefail
 
 VERSION="${1:?usage: audit.sh <version> <repo-name> <repo-url> \"<question>\" [mode]}"
@@ -27,7 +27,7 @@ echo "==================== Synapse audit ===================="
 echo "version=$VERSION  repo=$NAME  mode=$MODE  corpus=$CORPUS"
 echo
 
-# 1. Set the synapse version under test (mutates the global install).
+# 1. 设置待测 synapse 版本（会修改全局安装）。
 if [ "$VERSION" = local ]; then
   echo "→ [1/4] building + linking local dev build (local-install.sh)"
   ( cd "$REPO_ROOT" && ./scripts/local-install.sh ) || { echo "local-install.sh failed"; exit 1; }
@@ -38,7 +38,7 @@ fi
 ACTUAL="$(synapse --version 2>/dev/null || echo '?')"
 echo "  synapse on PATH: $(command -v synapse) -> $ACTUAL"
 
-# 2. Ensure the corpus repo exists (clone shallow if missing, reuse if present).
+# 2. 确保语料库代码库存在（缺失时浅克隆，存在时复用）。
 mkdir -p "$CORPUS"
 if [ -d "$REPO/.git" ]; then
   echo "→ [2/4] reusing existing checkout: $REPO"
@@ -47,17 +47,17 @@ else
   git clone --depth 1 "$URL" "$REPO" || { echo "git clone failed"; exit 1; }
 fi
 
-# 3. Wipe + re-index with THIS version (the index must be built by the same
-#    binary that serves it — different versions extract differently).
+# 3. 清除 + 用当前版本重索引（索引必须由提供服务的同一二进制构建——
+#    不同版本的提取结果不同）。
 echo "→ [3/4] wiping .synapse and re-indexing with $ACTUAL"
 rm -rf "$REPO/.synapse"
 ( cd "$REPO" && synapse init -i ) || { echo "indexing failed"; exit 1; }
 
-# 4. Run the with/without A/B.
+# 4. 运行有/无 A/B 对比。
 echo "→ [4/4] running A/B harness (mode=$MODE)"
 bash "$HARNESS/run-all.sh" "$REPO" "$Q" "$MODE"
 
-# Restore the dev link (the normal working state in this repo).
+# 恢复开发链接（本仓库的正常工作状态）。
 echo
 echo "→ restoring local dev link (local-install.sh)"
 if ( cd "$REPO_ROOT" && ./scripts/local-install.sh >/dev/null 2>&1 ); then

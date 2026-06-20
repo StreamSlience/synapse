@@ -6,8 +6,8 @@ export const javascriptExtractor: LanguageExtractor = {
   functionTypes: ['function_declaration', 'arrow_function', 'function_expression'],
   classTypes: ['class_declaration'],
   methodTypes: ['method_definition', 'field_definition'],
-  // JS `field_definition` ≙ TS `public_field_definition`: plain fields are
-  // properties, function-valued fields are methods (#808).
+  // JS `field_definition` ≙ TS `public_field_definition`：普通字段是
+  // 属性，函数值字段是方法（#808）。
   classifyMethodNode: classifyTsClassMember,
   interfaceTypes: [],
   structTypes: [],
@@ -17,10 +17,9 @@ export const javascriptExtractor: LanguageExtractor = {
   callTypes: ['call_expression'],
   variableTypes: ['lexical_declaration', 'variable_declaration'],
   nameField: 'name',
-  // JS `field_definition` names its key the `property` field (TS's
-  // public_field_definition uses `name`). Without this, JS class fields —
-  // including arrow-function handler fields — extracted no name and produced
-  // no node at all (#808).
+  // JS `field_definition` 的键名使用 `property` 字段（TS 的
+  // public_field_definition 使用 `name`）。若不处理，JS 类字段——
+  // 包括箭头函数处理器字段——提取不到名称，完全不产生节点（#808）。
   resolveName: (node, source) => {
     if (node.type === 'field_definition') {
       const prop = getChildByField(node, 'property');
@@ -30,10 +29,10 @@ export const javascriptExtractor: LanguageExtractor = {
   },
   bodyField: 'body',
   resolveBody: (node, bodyField) => {
-    // field_definition (arrow function class fields) nest the body inside
-    // an arrow_function or function_expression child:
+    // field_definition（箭头函数类字段）将函数体嵌套在
+    // arrow_function 或 function_expression 子节点中：
     //   field_definition → arrow_function → body (statement_block)
-    // Also handles wrapper patterns like: field = throttle((e) => { ... })
+    // 同样处理包装模式，如：field = throttle((e) => { ... })
     //   field_definition → call_expression → arguments → arrow_function → body
     if (node.type === 'field_definition') {
       for (let i = 0; i < node.namedChildCount; i++) {

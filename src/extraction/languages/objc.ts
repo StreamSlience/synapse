@@ -12,7 +12,7 @@ function findCompoundStatement(node: SyntaxNode): SyntaxNode | null {
   return null;
 }
 
-/** Build ObjC selector: `greet`, `doThing:`, or `doThing:with:`. */
+/** 构建 ObjC 选择器：`greet`、`doThing:` 或 `doThing:with:`。 */
 function extractObjcMethodName(node: SyntaxNode, source: string): string | undefined {
   if (node.type !== 'method_definition' && node.type !== 'method_declaration') {
     return undefined;
@@ -31,8 +31,8 @@ function extractObjcMethodName(node: SyntaxNode, source: string): string | undef
   return identifiers.map((id) => `${getNodeText(id, source)}:`).join('');
 }
 
-/** Nullability / ARC qualifiers that sit where a return type's first type
- *  identifier does (`(nonnull instancetype)`, `(nullable Bar *)`) — never the type. */
+/** 位于返回类型第一个 type_identifier 处的可空性 / ARC 限定符
+ *（`(nonnull instancetype)`、`(nullable Bar *)`）——永远不是类型本身。 */
 const OBJC_TYPE_QUALIFIERS = new Set([
   'nonnull', 'nullable', 'null_unspecified', 'null_resettable',
   '_Nonnull', '_Nullable', '_Null_unspecified', '__nonnull', '__nullable',
@@ -40,7 +40,7 @@ const OBJC_TYPE_QUALIFIERS = new Set([
   '__strong', '__weak', '__unsafe_unretained', '__autoreleasing', '__kindof',
 ]);
 
-/** Collect the type identifiers under a `method_type`, in document order. */
+/** 按文档顺序收集 `method_type` 下的 type_identifier。 */
 function collectTypeIdentifiers(node: SyntaxNode, source: string, out: string[]): void {
   if (node.type === 'type_identifier') out.push(getNodeText(node, source).trim());
   for (let i = 0; i < node.namedChildCount; i++) {
@@ -50,13 +50,12 @@ function collectTypeIdentifiers(node: SyntaxNode, source: string, out: string[])
 }
 
 /**
- * Capture an ObjC method's declared return type as a bare class name, for the
- * chained static-factory call mechanism (#750). `+ (Bar *)create` yields `Bar`;
- * a nullability/ARC qualifier (`(nonnull instancetype)`, `(nullable Bar *)`) is
- * skipped to reach the real type. `void` / `id` / `instancetype` / primitives
- * yield undefined — for a class-message factory that means the receiver's type
- * is the class itself (handled in resolution), so `[[X alloc] init]` and
- * singleton chains still resolve.
+ * 捕获 ObjC 方法的声明返回类型为裸类名，用于链式静态工厂调用机制（#750）。
+ * `+ (Bar *)create` 返回 `Bar`；可空性/ARC 限定符
+ *（`(nonnull instancetype)`、`(nullable Bar *)`）被跳过以获取真实类型。
+ * `void` / `id` / `instancetype` / 基本类型返回 undefined——对于类消息工厂，
+ * 意味着接收者的类型就是类本身（由解析处理），所以 `[[X alloc] init]` 和
+ * 单例链仍然能够解析。
  */
 function extractObjcReturnType(node: SyntaxNode, source: string): string | undefined {
   if (node.type !== 'method_definition' && node.type !== 'method_declaration') return undefined;
@@ -97,7 +96,7 @@ function extractObjcPropertyName(node: SyntaxNode, source: string): string | nul
 
 export const objcExtractor: LanguageExtractor = {
   functionTypes: ['function_definition'],
-  // Only @interface emits a class node; @implementation reuses it via visitNode.
+  // 只有 @interface 触发类节点；@implementation 通过 visitNode 复用它。
   classTypes: ['class_interface'],
   methodTypes: ['method_definition'],
   interfaceTypes: ['protocol_declaration'],

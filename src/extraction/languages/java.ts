@@ -3,9 +3,8 @@ import { getNodeText, getChildByField } from '../tree-sitter-helpers';
 import type { LanguageExtractor } from '../tree-sitter-types';
 
 /**
- * Tree-sitter-java node types for a method's `type` (return) field that can
- * never be a method receiver — there's no class to chain a `.method()` on, so we
- * store no `returnType` for them.
+ * tree-sitter-java 中方法 `type`（返回值）字段的节点类型，
+ * 不可作为方法接收者——没有可以链式调用 `.method()` 的类。
  */
 const JAVA_NON_CLASS_RETURN_NODES = new Set([
   'void_type',
@@ -15,22 +14,21 @@ const JAVA_NON_CLASS_RETURN_NODES = new Set([
 ]);
 
 /**
- * A Java method's declared return type, normalized to the bare class name a
- * chained `Foo.getInstance().bar()` could be called on (the #645/#608 mechanism).
- * Reads the `type` field: primitives/void/arrays yield undefined (no class to
- * chain on), `List<Foo>` is unwrapped to its base type `List`, and a dotted
- * package/outer-class qualifier (`java.util.List`) is stripped to the simple
- * name. Constructors have no `type` field → undefined.
+ * Java 方法的声明返回类型，规范化为可用于链式调用 `Foo.getInstance().bar()`
+ * 的裸类名（#645/#608 机制）。读取 `type` 字段：基本类型/void/数组返回 undefined
+ *（没有可链式调用的类），`List<Foo>` 解包为其基类型 `List`，
+ * 带点的包/外层类限定符（`java.util.List`）缩减为简单名称。
+ * 构造函数没有 `type` 字段，返回 undefined。
  */
 function extractJavaReturnType(node: SyntaxNode, source: string): string | undefined {
   const typeNode = getChildByField(node, 'type');
   if (!typeNode) return undefined;
   if (JAVA_NON_CLASS_RETURN_NODES.has(typeNode.type)) return undefined;
-  // An array return (`Foo[]`) isn't a receiver you call instance methods on.
+  // 数组返回值（`Foo[]`）不是可以调用实例方法的接收者。
   if (typeNode.type === 'array_type') return undefined;
-  // Strip type arguments (`List<Foo>` → `List`) — the chain resolves on the base.
+  // 去除类型参数（`List<Foo>` → `List`）——链式调用在基类型上解析。
   const raw = getNodeText(typeNode, source).trim().replace(/<[^>]*>/g, '');
-  // Strip a dotted package / outer-class qualifier (`java.util.List` → `List`).
+  // 去除带点的包 / 外层类限定符（`java.util.List` → `List`）。
   const last = raw.split('.').pop()?.trim();
   if (!last || !/^[A-Za-z_]\w*$/.test(last)) return undefined;
   return last;
@@ -40,10 +38,10 @@ export const javaExtractor: LanguageExtractor = {
   functionTypes: [],
   classTypes: ['class_declaration'],
   methodTypes: ['method_declaration', 'constructor_declaration'],
-  // `annotation_type_declaration` is `@interface Foo { … }` — an annotation
-  // definition. Without it, annotation types (`@SerializedName`, `@GetMapping`,
-  // JPA/Spring annotations) aren't nodes, so the `@Foo` usages that DO get
-  // extracted can't resolve and the annotation file shows zero dependents.
+  // `annotation_type_declaration` 即 `@interface Foo { … }`——注解定义。
+  // 若不包含这些，注解类型（`@SerializedName`、`@GetMapping`、
+  // JPA/Spring 注解）就不是节点，已提取的 `@Foo` 用法无法解析，
+  // 注解文件也显示零依赖方。
   interfaceTypes: ['interface_declaration', 'annotation_type_declaration'],
   structTypes: [],
   enumTypes: ['enum_declaration'],
@@ -86,9 +84,9 @@ export const javaExtractor: LanguageExtractor = {
     }
     return false;
   },
-  // A `static final` field is a Java constant (`MAX_ITEMS`, lookup tables,
-  // shared config). Drives `constant` kind so value-reference edges target it;
-  // instance / `final`-only / `static`-only fields stay mutable `field`s.
+  // `static final` 字段是 Java 常量（`MAX_ITEMS`、查找表、共享配置）。
+  // 驱动 `constant` 类型以便值引用边指向它；
+  // 实例 / 仅 `final` / 仅 `static` 字段保持为可变 `field`。
   isConst: (node) => {
     for (let i = 0; i < node.childCount; i++) {
       const child = node.child(i);
@@ -110,7 +108,7 @@ export const javaExtractor: LanguageExtractor = {
   },
   packageTypes: ['package_declaration'],
   extractPackage: (node, source) => {
-    // package_declaration → scoped_identifier or identifier (single-segment)
+    // package_declaration → scoped_identifier 或 identifier（单段）
     const id = node.namedChildren.find(
       (c: SyntaxNode) => c.type === 'scoped_identifier' || c.type === 'identifier'
     );

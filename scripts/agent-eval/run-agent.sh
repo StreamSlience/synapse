@@ -1,12 +1,12 @@
 ﻿#!/usr/bin/env bash
-# Headless Claude Code run against a repo with synapse MCP, capturing the
-# full stream-json so we can see tool calls + token usage. Complements the
-# interactive itrun.sh: headless gives a clean per-tool breakdown + exact
-# tokens/cost, but defaults to the general-purpose subagent (not Explore).
-# To force the Explore path, ask for it in the prompt.
+# 对带有 synapse MCP 的代码库运行无头 Claude Code，捕获完整的
+# stream-json 以查看工具调用 + token 用量。与交互式 itrun.sh 互补：
+# 无头模式提供干净的每工具明细 + 精确的 token/费用，
+# 但默认使用通用子 agent（非 Explore）。若要强制 Explore 路径，
+# 在 prompt 中明确要求。
 #
-# Usage: run-agent.sh <repo-path> <label> "<prompt>"
-# Env: AGENT_EVAL_OUT (default /tmp/agent-eval), CG_BIN (synapse dist binary)
+# 用法：run-agent.sh <repo-path> <label> "<prompt>"
+# 环境变量：AGENT_EVAL_OUT（默认 /tmp/agent-eval），CG_BIN（synapse dist 二进制）
 set -uo pipefail
 
 REPO="$1"; LABEL="$2"; PROMPT="$3"

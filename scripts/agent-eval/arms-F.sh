@@ -1,7 +1,6 @@
 ﻿#!/usr/bin/env bash
-# Arm F (body-inlining trace + trace-first steering) across the same 6 repos as
-# arms-matrix.sh, so F vs B isolates the trace-enrichment effect (same surface,
-# old thin trace in B vs body-inlining trace here).
+# F 组（正文内联 trace + trace 优先引导）在与 arms-matrix.sh 相同的 6 个代码库上运行，
+# 使 F vs B 能隔离 trace 增强效果（相同工具面，B 为旧的精简 trace，此处为正文内联 trace）。
 set -uo pipefail
 H="$(cd "$(dirname "$0")" && pwd)"; RUNS="${RUNS:-2}"; C="${CORPUS:-/tmp/synapse-corpus}"
 ROWS=(

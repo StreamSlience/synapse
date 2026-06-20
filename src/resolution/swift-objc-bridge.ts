@@ -1,21 +1,20 @@
 /**
- * Swift ↔ Objective-C bridging rules.
+ * Swift ↔ Objective-C 桥接规则。
  *
- * Apple's auto-bridging mechanism exposes Swift declarations to the ObjC
- * runtime under a deterministic selector name. The full rule set:
+ * Apple 的自动桥接机制会按照确定性的选择器命名规则，将 Swift 声明暴露给
+ * ObjC 运行时。完整规则集：
  * https://developer.apple.com/documentation/swift/importing-swift-into-objective-c
  *
- * This module is **pure name math** — given a Swift declaration's base name
- * + parameter external labels (or the raw signature text), produce the
- * bridged ObjC selector(s); given an ObjC selector, produce the
- * candidate Swift base names. No graph/DB access here.
+ * 本模块是**纯名称计算**——给定 Swift 声明的基础名称及参数外部标签
+ * （或原始签名文本），生成桥接后的 ObjC 选择器；给定 ObjC 选择器，
+ * 生成候选的 Swift 基础名称。此处不涉及图/数据库访问。
  *
- * Used by `frameworks/swift-objc.ts` (the framework resolver that wires
- * the rules into the resolution pipeline) and by its tests.
+ * 由 `frameworks/swift-objc.ts`（将规则接入解析流水线的框架解析器）
+ * 及其测试使用。
  *
- * ─── Bridging cheat sheet ───────────────────────────────────────────────
+ * ─── 桥接速查表 ─────────────────────────────────────────────────────────
  *
- *   Swift declaration                             ObjC selector
+ *   Swift 声明                                    ObjC 选择器
  *   ─────────────────────────────────────────     ─────────────────────────
  *   func play()                                    play
  *   func play(_ song: String)                      play:
@@ -25,53 +24,50 @@
  *   init(name: String)                             initWithName:
  *   init(name: String, age: Int)                   initWithName:age:
  *   var name: String  (getter / setter)            name  /  setName:
- *   @objc(custom:) func f(_ x: Int)                custom:        (literal override)
+ *   @objc(custom:) func f(_ x: Int)                custom:        （字面量覆盖）
  *
- * The reverse direction (ObjC → Swift) collapses the bridge: a Swift call
- * site for `play(song:)` reaches us as the bare base name `play` (Swift's
- * tree-sitter call_expression strips parameter labels from the callee
- * name). So `swiftBaseNamesForObjcSelector('playWithSong:')` returns
- * `['play']` — the resolver looks up Swift methods named `play`.
+ * 反向（ObjC → Swift）会折叠桥接：Swift 调用点对 `play(song:)` 的调用，
+ * 在 tree-sitter 的 call_expression 中被解析为裸基础名称 `play`（参数标签
+ * 从被调用名称中剥离）。因此 `swiftBaseNamesForObjcSelector('playWithSong:')`
+ * 返回 `['play']`——解析器会查找名为 `play` 的 Swift 方法。
  */
 
 /**
- * Capitalize the first character of a string. Used for the "With"-prefix
- * form on the first selector keyword when the Swift declaration has an
- * explicit first-parameter label (e.g. `func play(song:)` → `playWithSong:`).
+ * 将字符串首字符大写。用于当 Swift 声明含有显式的第一参数标签时，
+ * 在选择器首关键字上添加 "With" 前缀
+ * （例如 `func play(song:)` → `playWithSong:`）。
  */
 function capFirst(s: string): string {
   return s.length > 0 ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 }
 
 /**
- * Lowercase the first character. Used in reverse: `setName:` setter ↔
- * Swift property `name`.
+ * 将字符串首字符小写。用于反向转换：`setName:` setter ↔
+ * Swift 属性 `name`。
  */
 function lowerFirst(s: string): string {
   return s.length > 0 ? s.charAt(0).toLowerCase() + s.slice(1) : s;
 }
 
 /**
- * Compute the auto-bridged ObjC selector for a Swift method declaration.
+ * 计算 Swift 方法声明自动桥接后的 ObjC 选择器。
  *
- * @param baseName  The Swift method's base name (e.g. `play`).
- * @param externalLabels  Parameter EXTERNAL labels in declaration order;
- *                        `null` for a `_` (unlabeled) parameter.
- *                        `[]` for a no-parameter method.
- * @param explicitObjcName  If `@objc(customSel:)` was specified, the
- *                          literal selector — short-circuits the rule
- *                          and is returned as-is.
- * @returns The ObjC selector (e.g. `playWithSong:by:`), or `null` if it
- *          can't be determined.
+ * @param baseName  Swift 方法的基础名称（例如 `play`）。
+ * @param externalLabels  按声明顺序排列的参数外部标签；
+ *                        `null` 表示 `_`（无标签）参数；
+ *                        `[]` 表示无参数方法。
+ * @param explicitObjcName  若指定了 `@objc(customSel:)`，则为字面量选择器——
+ *                          此时短路所有规则，直接原样返回。
+ * @returns ObjC 选择器（例如 `playWithSong:by:`），若无法确定则返回 `null`。
  *
- * **Method rules:**
- * - No params → base name (no colons)
- * - Single param, `_` label → `baseName:`
- * - Single param, explicit label `L` → `baseNameWithL:`
- * - Multi-param, `_` first label → `baseName:label2:label3:`
- * - Multi-param, explicit first label `L1` → `baseNameWithL1:label2:label3:`
+ * **方法规则：**
+ * - 无参数 → 基础名称（无冒号）
+ * - 单参数，`_` 标签 → `baseName:`
+ * - 单参数，显式标签 `L` → `baseNameWithL:`
+ * - 多参数，首标签为 `_` → `baseName:label2:label3:`
+ * - 多参数，首标签为显式 `L1` → `baseNameWithL1:label2:label3:`
  *
- * Initializer rules are handled by `objcSelectorForSwiftInit`.
+ * 初始化方法规则由 `objcSelectorForSwiftInit` 处理。
  */
 export function objcSelectorForSwiftMethod(
   baseName: string,
@@ -86,10 +82,10 @@ export function objcSelectorForSwiftMethod(
   }
 
   const [first, ...rest] = externalLabels;
-  // Single param: "_" → "base:" ; "label" → "baseWithLabel:"
-  // Multi-param mirrors the same first-keyword formation, then appends each
-  // subsequent label as its own keyword. A `null` later label is invalid
-  // ObjC (no way to express unlabeled middle params) — keep as `:` to be safe.
+  // 单参数："_" → "base:" ；"label" → "baseWithLabel:"
+  // 多参数与单参数的首关键字构造规则相同，然后将每个后续标签作为独立关键字追加。
+  // 后续标签中的 `null` 在 ObjC 中无效（无法表达无标签的中间参数）——
+  // 为安全起见，保留为 `:`。
   const firstKeyword =
     first === null || first === undefined || first === '_' || first === ''
       ? `${baseName}:`
@@ -100,19 +96,18 @@ export function objcSelectorForSwiftMethod(
 }
 
 /**
- * Compute the bridged ObjC selector for a Swift `init(...)` declaration.
+ * 计算 Swift `init(...)` 声明桥接后的 ObjC 选择器。
  *
- * **Init rules** (different from regular methods — Apple always uses
- * `initWith` regardless of whether the first label is `_`):
+ * **初始化方法规则**（与普通方法不同——无论首标签是否为 `_`，
+ * Apple 始终使用 `initWith`）：
  * - `init()`                       → `init`
- * - `init(_ name: String)`         → `initWithName:`  (uses the INTERNAL
- *                                    name when external is `_`, per Apple's
- *                                    bridging conventions)
+ * - `init(_ name: String)`         → `initWithName:`  （外部标签为 `_` 时使用
+ *                                    内部名称，遵循 Apple 的桥接约定）
  * - `init(name: String)`           → `initWithName:`
  * - `init(name: String, age: Int)` → `initWithName:age:`
  *
- * For the `_` case we need the internal (second identifier) name —
- * passed via `internalNames`.
+ * 对于 `_` 的情况，需要使用内部（第二个标识符）名称——
+ * 通过 `internalNames` 传入。
  */
 export function objcSelectorForSwiftInit(
   externalLabels: (string | null)[],
@@ -127,8 +122,8 @@ export function objcSelectorForSwiftInit(
 
   const [firstExt, ...restExt] = externalLabels;
   const [firstInt] = internalNames;
-  // Use the internal name when external is "_"; ObjC needs *some* keyword,
-  // and Swift's auto-bridger uses the parameter's local name in this case.
+  // 当外部标签为 "_" 时使用内部名称；ObjC 需要某个关键字，
+  // Swift 的自动桥接器在此情况下会使用参数的局部名称。
   const firstLabel =
     firstExt === null || firstExt === '_' || firstExt === ''
       ? firstInt
@@ -147,25 +142,24 @@ export function objcSelectorForSwiftInit(
 }
 
 /**
- * Compute the bridged ObjC getter + setter for a Swift `@objc` property.
+ * 计算 Swift `@objc` 属性桥接后的 ObjC getter 与 setter。
  *
- * - `var name: String`        → getter `name`, setter `setName:`
- * - `var isReady: Bool`       → getter `isReady`, setter `setIsReady:`
- *   (no special `is` handling — Swift's `isReady` stays as `isReady` in ObjC;
- *   `@objc(name:)` overrides if a Cocoa-style getter `isReady` / setter
- *   `setReady:` pairing is needed — that's the responsibility of the
- *   declaration's `@objc(customGetter)` annotation, which we surface via
- *   `explicitObjcName`.)
+ * - `var name: String`        → getter `name`，setter `setName:`
+ * - `var isReady: Bool`       → getter `isReady`，setter `setIsReady:`
+ *   （不做特殊的 `is` 处理——Swift 的 `isReady` 在 ObjC 中保持为 `isReady`；
+ *   若需要 Cocoa 风格的 getter `isReady` / setter `setReady:` 配对，
+ *   可通过 `@objc(name:)` 覆盖——这是声明上 `@objc(customGetter)` 注解
+ *   的职责，通过 `explicitObjcName` 向上透传。）
  */
 export function objcAccessorsForSwiftProperty(
   swiftName: string,
   explicitObjcName?: string | null
 ): { getter: string; setter: string } | null {
   if (!swiftName) return null;
-  // The override syntax `@objc(customGetterName)` re-points the GETTER only;
-  // the setter still follows the `setX:` rule but is keyed off the override.
-  // (`@objc(getX:setY:)` is not currently supported — that's a rarer
-  // shape; can extend later if a real codebase needs it.)
+  // 覆盖语法 `@objc(customGetterName)` 只重定向 GETTER；
+  // setter 仍遵循 `setX:` 规则，但以覆盖名称为基础。
+  // （`@objc(getX:setY:)` 目前不支持——这是较罕见的形式；
+  // 若真实代码库有需要，可在后续扩展。）
   const getter = explicitObjcName ?? swiftName;
   return {
     getter,
@@ -174,53 +168,51 @@ export function objcAccessorsForSwiftProperty(
 }
 
 /**
- * Reverse: from an ObjC selector, return the candidate Swift base names
- * the resolver should try when looking for the bridged Swift declaration.
+ * 反向：给定一个 ObjC 选择器，返回解析器在查找被桥接 Swift 声明时
+ * 应当尝试的候选 Swift 基础名称。
  *
- * Examples:
+ * 示例：
  *   `play`                 → ['play']
  *   `play:`                → ['play']
  *   `playWithSong:`        → ['play', 'playWithSong']
  *   `play:by:`             → ['play']
  *   `playWithSong:by:`     → ['play', 'playWithSong']
- *   `initWithName:`        → ['init']                      (init is its own base name)
+ *   `initWithName:`        → ['init']                      （init 自身即为基础名称）
  *   `initWithName:age:`    → ['init']
- *   `setName:`             → ['name', 'setName']           (could be a setter OR a regular func)
+ *   `setName:`             → ['name', 'setName']           （可能是 setter，也可能是普通函数）
  *   `tableView:didSel…:`   → ['tableView']
  *
- * Returns multiple candidates because the bare base name is ambiguous —
- * `playWithSong:` could correspond to either `func play(song:)` or
- * `func playWithSong(_ x:)` (a Swift method literally named that with a
- * `_` first label). The resolver tries each.
+ * 返回多个候选，因为裸基础名称存在歧义——`playWithSong:` 既可能对应
+ * `func play(song:)`，也可能对应 `func playWithSong(_ x:)`（一个字面命名如此、
+ * 首标签为 `_` 的 Swift 方法）。解析器会逐一尝试。
  */
 export function swiftBaseNamesForObjcSelector(selector: string): string[] {
   if (!selector) return [];
 
-  // Strip trailing colons and split into keywords.
+  // 去掉尾部冒号并按冒号拆分为关键字列表。
   const keywords = selector.replace(/:+$/g, '').split(':');
   const firstKeyword = keywords[0];
   if (!firstKeyword) return [];
 
   const candidates: Set<string> = new Set();
 
-  // Always a candidate: the raw first keyword. Covers
+  // 始终是候选：原始首关键字。涵盖以下情形：
   //   `play:`           → `play`
   //   `play:by:`        → `play`
-  //   `playWithSong:`   → `playWithSong` (a literal Swift name)
+  //   `playWithSong:`   → `playWithSong`（Swift 字面名称）
   //   `tableView:...:`  → `tableView`
   candidates.add(firstKeyword);
 
-  // `initWith<X>:` and `initWith<X>:<more>:` always reduce to `init`.
+  // `initWith<X>:` 和 `initWith<X>:<more>:` 始终归约为 `init`。
   if (firstKeyword.startsWith('initWith')) {
     candidates.add('init');
   }
 
-  // Preposition-prefix patterns: `<base>(With|For|By|In|On|At|From|To|Of|As)<Cap>:`
-  // covers both Swift's @objc EXPORT rule (always "With") and Cocoa's
-  // IMPORTED selectors which use other prepositions natively (e.g.
-  // `objectForKey:`, `stringWithFormat:`, `compareTo:`,
-  // `imageNamed:inBundle:`). Strip to recover the Swift base name a caller
-  // would use (e.g. `object`, `string`, `compare`, `image`).
+  // 介词前缀模式：`<base>(With|For|By|In|On|At|From|To|Of|As)<Cap>:`
+  // 同时涵盖 Swift 的 @objc 导出规则（始终为 "With"）和 Cocoa 原生导入选择器
+  // 中使用其他介词的情形（例如 `objectForKey:`、`stringWithFormat:`、
+  // `compareTo:`、`imageNamed:inBundle:`）。剥离介词以还原调用方
+  // 使用的 Swift 基础名称（例如 `object`、`string`、`compare`、`image`）。
   const prepositionMatch = firstKeyword.match(
     /^([a-z][a-zA-Z0-9]*?)(?:With|For|By|In|On|At|From|To|Of|As)[A-Z]/
   );
@@ -228,8 +220,8 @@ export function swiftBaseNamesForObjcSelector(selector: string): string[] {
     candidates.add(prepositionMatch[1]);
   }
 
-  // `setX:` could be a property setter — the Swift property is `x` (lowercase).
-  // Only fires for the obvious shape: `set` + capital letter + ':' (one param).
+  // `setX:` 可能是属性 setter——对应的 Swift 属性名为 `x`（小写）。
+  // 仅在明确的形式下触发：`set` + 大写字母 + ':' （单参数）。
   if (
     keywords.length === 1 &&
     /^set[A-Z]/.test(firstKeyword) &&
@@ -243,32 +235,29 @@ export function swiftBaseNamesForObjcSelector(selector: string): string[] {
 }
 
 /**
- * Detect whether a Swift method `@objc` declaration uses the `@objc(custom:)`
- * override form, returning the literal selector when present.
+ * 检测 Swift 方法的 `@objc` 声明是否使用了 `@objc(custom:)` 覆盖形式，
+ * 若存在则返回字面量选择器。
  *
- * Regex-based scan over the small chunk of source preceding the declaration —
- * tree-sitter would be more precise but this is only consulted as a fallback
- * when the structured AST isn't available (e.g. resolver-time lookups
- * via `context.readFile`).
+ * 基于正则对声明前的一小段源码进行扫描——tree-sitter 会更精确，
+ * 但此函数仅作为结构化 AST 不可用时的后备方案（例如通过
+ * `context.readFile` 进行的解析器时查找）。
  *
- * Returns `null` when the declaration is plain `@objc` (no override) or has
- * no `@objc` attribute at all.
+ * 当声明为普通 `@objc`（无覆盖）或完全没有 `@objc` 属性时，返回 `null`。
  */
 export function detectExplicitObjcName(sourceSlice: string): string | null {
-  // `@objc(customName:)` or `@objc(custom:name:)` — the parens contents are
-  // the literal ObjC selector. Whitespace permitted.
+  // `@objc(customName:)` 或 `@objc(custom:name:)`——括号内的内容即为字面量
+  // ObjC 选择器。允许空白字符。
   const m = sourceSlice.match(/@objc\s*\(\s*([^)\s]+)\s*\)/);
   return m && m[1] ? m[1] : null;
 }
 
 /**
- * Detect whether a Swift declaration is `@objc`-exposed by scanning the
- * source slice that precedes it. Returns true for explicit `@objc`,
- * `@objc(custom:)`, or membership in a `@objcMembers` class (caller's
- * responsibility to pass class-level context if relevant).
+ * 检测 Swift 声明是否通过扫描其前置源码片段而暴露为 `@objc`。
+ * 对于显式 `@objc`、`@objc(custom:)` 或属于 `@objcMembers` 类的成员，
+ * 均返回 true（若需传入类级别上下文，由调用方负责）。
  *
- * `@nonobjc` returns false even if `@objc` also appears (per Swift's rule
- * that `@nonobjc` opts out of class-level `@objcMembers`).
+ * 若同时出现 `@nonobjc`，即使存在 `@objc` 也返回 false
+ * （遵循 Swift 规则：`@nonobjc` 可退出类级别的 `@objcMembers`）。
  */
 export function isObjcExposed(sourceSlice: string): boolean {
   if (/@nonobjc\b/.test(sourceSlice)) return false;

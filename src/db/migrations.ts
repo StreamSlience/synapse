@@ -1,18 +1,18 @@
 /**
- * Database Migrations
+ * 数据库迁移
  *
- * Schema versioning and migration support.
+ * schema 版本管理与迁移支持。
  */
 
 import { SqliteDatabase } from './sqlite-adapter';
 
 /**
- * Current schema version
+ * 当前 schema 版本
  */
 export const CURRENT_SCHEMA_VERSION = 5;
 
 /**
- * Migration definition
+ * 迁移定义
  */
 interface Migration {
   version: number;
@@ -21,10 +21,10 @@ interface Migration {
 }
 
 /**
- * All migrations in order
+ * 按顺序排列的所有迁移
  *
- * Note: Version 1 is the initial schema, handled by schema.sql
- * Future migrations go here.
+ * 注意：版本 1 是初始 schema，由 schema.sql 处理。
+ * 后续迁移放在这里。
  */
 const migrations: Migration[] = [
   {
@@ -78,7 +78,7 @@ const migrations: Migration[] = [
 ];
 
 /**
- * Get the current schema version from the database
+ * 从数据库获取当前 schema 版本
  */
 export function getCurrentVersion(db: SqliteDatabase): number {
   try {
@@ -87,13 +87,13 @@ export function getCurrentVersion(db: SqliteDatabase): number {
       .get() as { version: number | null } | undefined;
     return row?.version ?? 0;
   } catch {
-    // Table doesn't exist yet
+    // 表尚不存在
     return 0;
   }
 }
 
 /**
- * Record a migration as applied
+ * 记录某次迁移已应用
  */
 function recordMigration(db: SqliteDatabase, version: number, description: string): void {
   db.prepare(
@@ -102,7 +102,7 @@ function recordMigration(db: SqliteDatabase, version: number, description: strin
 }
 
 /**
- * Run all pending migrations
+ * 运行所有待执行的迁移
  */
 export function runMigrations(db: SqliteDatabase, fromVersion: number): void {
   const pending = migrations.filter((m) => m.version > fromVersion);
@@ -111,10 +111,10 @@ export function runMigrations(db: SqliteDatabase, fromVersion: number): void {
     return;
   }
 
-  // Sort by version
+  // 按版本排序
   pending.sort((a, b) => a.version - b.version);
 
-  // Run each migration in a transaction
+  // 在事务中逐个运行迁移
   for (const migration of pending) {
     db.transaction(() => {
       migration.up(db);
@@ -124,7 +124,7 @@ export function runMigrations(db: SqliteDatabase, fromVersion: number): void {
 }
 
 /**
- * Check if the database needs migration
+ * 检查数据库是否需要迁移
  */
 export function needsMigration(db: SqliteDatabase): boolean {
   const current = getCurrentVersion(db);
@@ -132,7 +132,7 @@ export function needsMigration(db: SqliteDatabase): boolean {
 }
 
 /**
- * Get list of pending migrations
+ * 获取待执行迁移列表
  */
 export function getPendingMigrations(db: SqliteDatabase): Migration[] {
   const current = getCurrentVersion(db);
@@ -142,7 +142,7 @@ export function getPendingMigrations(db: SqliteDatabase): Migration[] {
 }
 
 /**
- * Get migration history from database
+ * 从数据库获取迁移历史
  */
 export function getMigrationHistory(
   db: SqliteDatabase

@@ -1,25 +1,22 @@
 ﻿/**
- * Anonymous usage telemetry — client side.
+ * 匿名使用遥测——客户端。
  *
- * The contract for what may be collected lives in docs/design/telemetry.md
- * (and user-facing TELEMETRY.md); the ingest endpoint that enforces it is
- * public at telemetry-worker/. This module honors four invariants:
+ * 可收集内容的约定位于 docs/design/telemetry.md
+ * （以及面向用户的 TELEMETRY.md）；执行该约定的摄取端点
+ * 公开于 telemetry-worker/。本模块遵守四条不变式：
  *
- * 1. Zero hot-path cost: recording is an in-memory increment. Disk writes are
- *    a tiny synchronous append at process exit (works under `process.exit()`,
- *    where `beforeExit` never fires); network sends happen opportunistically
- *    (startup of long-running commands, daemon interval, bounded await at the
- *    end of install/init) and are fire-and-forget everywhere else.
- * 2. Zero stdout: stdio is the MCP protocol channel. Notices and debug output
- *    go to stderr only.
- * 3. Off is off: when disabled, nothing is recorded, nothing is sent, and no
- *    socket is opened — there is no "opted out" ping. Turning telemetry off
- *    also deletes any buffered, unsent data.
- * 4. Fail silent: offline, endpoint down, disk full — every failure mode is
- *    silence, never a retry loop, never an error surfaced to the user/agent.
+ * 1. 零热路径开销：记录仅为内存中的计数递增。磁盘写入是进程退出时
+ *    的一次微小同步追加（在 `process.exit()` 下也有效，`beforeExit` 不会触发）；
+ *    网络发送在长期运行命令启动时按需触发、在守护进程间隔时触发、
+ *    在 install/init 结束时有界等待，其他情况下均为触发后不等待。
+ * 2. 零 stdout：stdio 是 MCP 协议通道。通知和调试输出仅写入 stderr。
+ * 3. 关闭即关闭：禁用后，不记录、不发送、不开 socket——
+ *    不存在"已退出"的心跳包。关闭遥测同时删除所有已缓冲但未发送的数据。
+ * 4. 静默失败：离线、端点宕机、磁盘满——所有失败模式均静默处理，
+ *    绝不重试循环，绝不向用户/智能体暴露错误。
  *
- * Usage counts aggregate locally into per-day rollups; only *completed* (UTC)
- * days are sent, so volume scales with active machines, not with tool calls.
+ * 使用计数在本地按天聚合；仅发送已*完成*的（UTC）天，
+ * 因此流量随活跃机器数扩展，而非随工具调用次数扩展。
  */
 
 import * as fs from 'fs';
@@ -34,13 +31,13 @@ const SCHEMA_VERSION = 1;
 const MAX_BUFFER_BYTES = 256 * 1024;
 const MAX_EVENTS_PER_REQUEST = 100;
 const DEFAULT_FLUSH_TIMEOUT_MS = 1500;
-/** A crashed sender's claimed file is merged back after this long. */
+/** 崩溃的发送方声明的文件在此时间后合并回来。 */
 const STALE_CLAIM_MS = 60 * 60_000;
 
 export type UsageKind = 'mcp_tool' | 'cli_command';
 export type LifecycleEvent = 'install' | 'index' | 'uninstall';
 
-/** Coarse buckets — exact counts are deliberately not collected. */
+/** 粗粒度分桶——故意不收集精确计数。 */
 export function bucketFileCount(n: number): '<100' | '100-1k' | '1k-10k' | '10k+' {
   if (n < 100) return '<100';
   if (n < 1000) return '100-1k';
@@ -55,15 +52,15 @@ export function bucketDuration(ms: number): '<10s' | '10-60s' | '1-5m' | '5m+' {
   return '5m+';
 }
 
-/** Collapse a backend identifier (e.g. `node-sqlite`) to the schema's enum. */
+/** 将后端标识符（如 `node-sqlite`）折叠为 schema 的枚举值。 */
 export function backendKind(backend: string): 'native' | 'wasm' {
   return backend.toLowerCase().includes('wasm') ? 'wasm' : 'native';
 }
 
 /**
- * Shared "a full index completed" event (CLI init/index + installer local
- * init): language names and coarse buckets only — never paths, file names,
- * or exact counts. Structurally typed so callers don't need engine imports.
+ * 共享的"完整索引已完成"事件（CLI init/index + 安装器本地 init）：
+ * 仅包含语言名称和粗粒度分桶——绝不包含路径、文件名或精确计数。
+ * 结构化类型，调用方无需引入引擎模块。
  */
 export function recordIndexEvent(
   cg: { getStats(): { filesByLanguage: Record<string, number> }; getBackend(): string },
@@ -99,22 +96,22 @@ interface ConfigFile {
 
 export interface TelemetryStatus {
   enabled: boolean;
-  /** What decided the current state — mirrors the precedence order. */
+  /** 决定当前状态的因素——与优先级顺序对应。 */
   decidedBy: 'DO_NOT_TRACK' | 'SYNAPSE_TELEMETRY' | 'config' | 'default';
   machineId: string | null;
   configPath: string;
 }
 
-/** One buffered line: either a usage-count delta or a lifecycle event. */
+/** 一条缓冲行：使用计数增量或生命周期事件。 */
 interface CountLine {
   v: number;
-  d: string; // UTC day YYYY-MM-DD
+  d: string; // UTC 日期 YYYY-MM-DD
   k: UsageKind;
   n: string;
-  c: number; // calls
-  e: number; // errors
-  cn?: string; // client name (mcp_tool only)
-  cv?: string; // client version
+  c: number; // 调用次数
+  e: number; // 错误次数
+  cn?: string; // 客户端名称（仅 mcp_tool）
+  cv?: string; // 客户端版本
 }
 interface EventLine {
   v: number;
@@ -125,26 +122,26 @@ interface EventLine {
 type BufferLine = CountLine | EventLine;
 
 export interface TelemetryOptions {
-  /** Global state dir; defaults to ~/.synapse. Tests inject a temp dir. */
+  /** 全局状态目录；默认为 ~/.synapse。测试中注入临时目录。 */
   dir?: string;
   fetchImpl?: typeof globalThis.fetch;
   now?: () => Date;
   env?: NodeJS.ProcessEnv;
   stderr?: (line: string) => void;
-  /** Tests opt out so short-lived instances don't pile onto process 'exit'. */
+  /** 测试中退出，以避免短生命周期实例在 process 'exit' 上堆积。 */
   installExitHook?: boolean;
 }
 
-// One process-level 'exit' listener for ALL instances (in practice: the
-// singleton) — N instances must not mean N listeners on process.
+// 进程级别唯一的 'exit' 监听器，用于所有实例（实际上是单例）——
+// N 个实例不应意味着 N 个 process 监听器。
 const exitInstances = new Set<Telemetry>();
 let exitListenerRegistered = false;
 function registerForExit(instance: Telemetry): void {
   exitInstances.add(instance);
   if (!exitListenerRegistered) {
     exitListenerRegistered = true;
-    // 'exit' fires under process.exit() too (unlike beforeExit); handlers must
-    // be synchronous — persistSync is a single small file write.
+    // 'exit' 在 process.exit() 下也会触发（与 beforeExit 不同）；处理函数必须
+    // 是同步的——persistSync 只是一次小型文件写入。
     process.on('exit', () => {
       for (const i of exitInstances) i.persistSync();
     });
@@ -174,7 +171,7 @@ export class Telemetry {
     this.installExitHook = opts.installExitHook ?? true;
   }
 
-  // ---------------------------------------------------------------- consent
+  // ---------------------------------------------------------------- 同意
 
   get configPath(): string {
     return path.join(this.dir, 'telemetry.json');
@@ -184,8 +181,8 @@ export class Telemetry {
   }
 
   /**
-   * Resolution order (first match wins) — keep in sync with TELEMETRY.md:
-   * DO_NOT_TRACK=1 > SYNAPSE_TELEMETRY=0|1 > stored config > default on.
+   * 解析顺序（首个匹配生效）——与 TELEMETRY.md 保持同步：
+   * DO_NOT_TRACK=1 > SYNAPSE_TELEMETRY=0|1 > 存储的配置 > 默认开启。
    */
   getStatus(): TelemetryStatus {
     const config = this.readConfig();
@@ -210,9 +207,8 @@ export class Telemetry {
   }
 
   /**
-   * Persist an explicit user choice (installer toggle or `synapse
-   * telemetry on|off`). Turning telemetry off also deletes any buffered,
-   * unsent data — off means off.
+   * 持久化用户的显式选择（安装器开关或 `synapse telemetry on|off`）。
+   * 关闭遥测时同时删除所有已缓冲但未发送的数据——关闭就是关闭。
    */
   setEnabled(enabled: boolean, source: 'installer' | 'cli'): void {
     const existing = this.readConfig();
@@ -228,14 +224,14 @@ export class Telemetry {
     }
   }
 
-  /** True once any consent decision (or the first-run notice) is on disk. */
+  /** 一旦任何同意决策（或首次运行通知）已写入磁盘，返回 true。 */
   hasStoredChoice(): boolean {
     return this.readConfig() !== null;
   }
 
-  // -------------------------------------------------------------- recording
+  // -------------------------------------------------------------- 记录
 
-  /** In-memory increment — safe on the MCP tool-call hot path. */
+  /** 内存中递增——在 MCP 工具调用热路径上安全使用。 */
   recordUsage(kind: UsageKind, name: string, ok: boolean, client?: ClientInfo): void {
     if (!this.isEnabled()) return;
     const day = this.utcDay();
@@ -255,27 +251,27 @@ export class Telemetry {
     this.ensureExitHook();
   }
 
-  /** install / index / uninstall — buffered like everything else. */
+  /** install / index / uninstall——与其他内容一样缓冲。 */
   recordLifecycle(event: LifecycleEvent, props: Record<string, unknown>): void {
     if (!this.isEnabled()) return;
     this.events.push({ v: SCHEMA_VERSION, ev: event, ts: this.now().toISOString(), props });
     this.ensureExitHook();
   }
 
-  // ---------------------------------------------------------------- sending
+  // ---------------------------------------------------------------- 发送
 
   /**
-   * Fire-and-forget send of everything sendable. Never throws, never logs
-   * above debug. Safe to call at startup of long-running commands.
+   * 触发后不等待的发送，发送所有可发送内容。永不抛出，永不记录调试以上级别的日志。
+   * 适合在长期运行命令启动时调用。
    */
   maybeFlush(): void {
     void this.flushNow().catch(() => { /* fail silent */ });
   }
 
   /**
-   * Drain in-memory state to the buffer, then send completed-day rollups and
-   * lifecycle events. Bounded by `timeoutMs`; leftovers stay buffered for the
-   * next process. Awaited only where latency is invisible (install/init).
+   * 将内存状态刷入缓冲区，然后发送已完成天的汇总和生命周期事件。
+   * 受 `timeoutMs` 限制；未发完的内容留在缓冲区等待下次进程处理。
+   * 仅在延迟不可见的地方（install/init）才会被 await。
    */
   async flushNow(timeoutMs: number = DEFAULT_FLUSH_TIMEOUT_MS): Promise<void> {
     if (!this.isEnabled()) return;
@@ -295,17 +291,15 @@ export class Telemetry {
       }
       let failed: BufferLine[] = [];
       if (sendable.length > 0) {
-        // Consent gate: the one-time notice precedes the FIRST bytes that
-        // ever leave the machine (and mints the machine id). Recording only
-        // buffers locally, so it stays silent — this lets the installer show
-        // its explicit consent toggle before any notice can fire, instead of
-        // the preAction usage count pre-empting it. An explicit installer/CLI
-        // choice sets first_run_notice_shown and suppresses this permanently.
+        // 同意门控：一次性通知在第一批字节离开机器之前展示
+      // （同时生成 machine id）。记录只在本地缓冲，保持静默——
+      // 这样安装器可以在任何通知触发之前显示其显式同意开关，
+      // 而不会被预操作使用计数抢先触发。
+      // 安装器/CLI 的显式选择会设置 first_run_notice_shown，永久抑制此通知。
         this.firstRunNotice();
         failed = await this.send(sendable, timeoutMs);
       }
-      // Whatever didn't go out returns to the queue (append — writers may
-      // have created a fresh queue file while we held the claim).
+      // 未发出的内容返回队列（追加——持有声明期间其他写入方可能已创建新队列文件）。
       const back = [...failed, ...keep];
       if (back.length > 0) this.appendLines(back);
       try { fs.rmSync(claimPath, { force: true }); } catch { /* fail silent */ }
@@ -315,8 +309,8 @@ export class Telemetry {
   }
 
   /**
-   * Periodic flush for long-lived processes (MCP daemon / serve). Unref'd so
-   * it never keeps the process alive.
+   * 长期运行进程（MCP 守护进程/serve）的周期性刷新。
+   * 已 unref，永不阻止进程退出。
    */
   startInterval(everyMs: number = 6 * 60 * 60_000): void {
     if (this.intervalHandle || !this.isEnabled()) return;
@@ -332,7 +326,7 @@ export class Telemetry {
     }
   }
 
-  // -------------------------------------------------------------- internals
+  // -------------------------------------------------------------- 内部实现
 
   private utcDay(): string {
     return this.now().toISOString().slice(0, 10);
@@ -360,8 +354,8 @@ export class Telemetry {
   }
 
   /**
-   * Default-on consent is gated by a one-time stderr notice (interactive
-   * installs record their choice explicitly and never reach this).
+   * 默认开启的同意由一次性 stderr 通知守卫
+   * （交互式安装已显式记录选择，不会走到这里）。
    */
   private firstRunNotice(): void {
     const config = this.readConfig();
@@ -384,16 +378,16 @@ export class Telemetry {
   }
 
   /**
-   * Synchronous, tiny, exit-safe: drain in-memory deltas to the JSONL queue.
-   * Runs on `process.on('exit')`, so it must never be async or slow.
+   * 同步、微小、退出安全：将内存中的增量刷入 JSONL 队列。
+   * 在 `process.on('exit')` 中运行，因此绝不能是异步或慢速操作。
    */
   persistSync(): void {
     if (this.counts.size === 0 && this.events.length === 0) return;
     const lines: BufferLine[] = [...this.counts.values(), ...this.events];
     this.counts.clear();
     this.events = [];
-    // Re-check at persist time: `synapse telemetry off` mid-process must not
-    // have its own invocation resurrect the queue file at exit.
+    // 在持久化时重新检查：进程中途执行 `synapse telemetry off` 时，
+    // 不得让本次调用在退出时重新创建队列文件。
     if (!this.isEnabled()) return;
     this.appendLines(lines);
   }
@@ -402,8 +396,8 @@ export class Telemetry {
     try {
       fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 });
       const payload = lines.map((l) => JSON.stringify(l)).join('\n') + '\n';
-      // Cap the buffer: drop oldest lines first (telemetry is best-effort —
-      // bounded disk use beats completeness).
+      // 限制缓冲区大小：优先丢弃最旧的行（遥测是尽力而为的——
+      // 有界的磁盘用量比完整性更重要）。
       let existing = '';
       try { existing = fs.readFileSync(this.queuePath, 'utf8'); } catch { /* no queue yet */ }
       let combined = existing + payload;
@@ -418,9 +412,8 @@ export class Telemetry {
   }
 
   /**
-   * Atomically claim the queue for sending (rename). Concurrent processes
-   * can't double-send; a crash mid-send leaves a claim file that
-   * `recoverStaleClaims` merges back after an hour.
+   * 原子性地声明队列以便发送（重命名）。并发进程无法重复发送；
+   * 发送中途崩溃会留下一个声明文件，`recoverStaleClaims` 在一小时后将其合并回来。
    */
   private claimQueue(): { claimPath: string; lines: BufferLine[] } | null {
     const claimPath = path.join(this.dir, `telemetry-queue.sending.${process.pid}.jsonl`);
@@ -437,7 +430,7 @@ export class Telemetry {
           const parsed = JSON.parse(raw) as BufferLine;
           if (parsed && typeof parsed === 'object' && parsed.v === SCHEMA_VERSION) lines.push(parsed);
         } catch {
-          /* skip corrupt line */
+          /* 跳过损坏的行 */
         }
       }
     } catch {
@@ -467,7 +460,7 @@ export class Telemetry {
     }
   }
 
-  /** Returns the lines that did NOT make it out (to be re-queued). */
+  /** 返回未能发出的行（用于重新入队）。 */
   private async send(lines: BufferLine[], timeoutMs: number): Promise<BufferLine[]> {
     const config = this.readConfig();
     if (!config) return [];
@@ -502,7 +495,7 @@ export class Telemetry {
       const body = JSON.stringify({ ...envelope, events: chunk });
       this.debug(`POST ${endpoint} (${chunk.length} events)`);
       try {
-        // Any response — 204, 4xx, anything — is final. No retries.
+        // 任何响应——204、4xx、任何内容——均为终态。不重试。
         await this.fetchImpl(endpoint, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
@@ -519,7 +512,7 @@ export class Telemetry {
 
   private packageVersion(): string {
     try {
-      // dist/telemetry/index.js → ../../package.json (same layout in src/ for tests via tsx)
+      // dist/telemetry/index.js → ../../package.json（在 src/ 中通过 tsx 运行测试时布局相同）
       const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'package.json'), 'utf8')) as { version?: string };
       return pkg.version ?? '0.0.0';
     } catch {
@@ -540,7 +533,7 @@ export class Telemetry {
   }
 }
 
-// Process-wide singleton — app code goes through this; tests construct their own.
+// 进程级别单例——应用代码通过此访问；测试自行构造实例。
 let singleton: Telemetry | null = null;
 
 export function getTelemetry(): Telemetry {

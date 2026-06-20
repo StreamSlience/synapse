@@ -1,52 +1,46 @@
 ﻿/**
- * Agent target abstraction for the installer.
+ * 安装器的智能体 target 抽象。
  *
- * Each MCP-capable agent (Claude Code, Cursor, Codex CLI, opencode, ...)
- * implements this interface so the installer orchestrator can write the
- * right MCP-server config + instructions file + permissions for that
- * agent without baking client-specific paths into core code. Adding a
- * new agent = one new file in `targets/` + one entry in `registry.ts`.
+ * 每个支持 MCP 的智能体（Claude Code、Cursor、Codex CLI、opencode……）
+ * 都实现此接口，安装器编排器由此可以为该智能体写入正确的 MCP 服务器配置、
+ * instructions 文件和权限，而无需将客户端专属路径硬编码到核心代码中。
+ * 新增智能体 = 在 `targets/` 中新建一个文件 + 在 `registry.ts` 中添加一条记录。
  *
- * Closes the Claude-locked installer issue (upstream #137). The
- * runtime MCP server is already agent-agnostic; this brings the
- * installer to the same surface.
+ * 关闭了仅限 Claude 的安装器问题（上游 #137）。运行时 MCP 服务器本已与智能体
+ * 无关；此举将安装器带到同一水平。
  */
 
 export type Location = 'global' | 'local';
 
 /**
- * Stable string id used in the `--target` CLI flag and the registry
- * lookup. New targets add a value here when they're added to the
- * registry. Keep these short and lowercase.
+ * 在 `--target` CLI 标志和注册表查找中使用的稳定字符串 id。
+ * 新 target 加入注册表时在此处添加一个值。保持简短且小写。
  */
 export type TargetId = 'claude' | 'cursor' | 'codex' | 'opencode' | 'hermes' | 'gemini' | 'antigravity' | 'kiro';
 
 /**
- * Result of `target.detect(location)`.
+ * `target.detect(location)` 的返回结果。
  *
- * `installed` is a best-effort heuristic that the agent's CLI / app /
- * config dir is present on this system — used to default the
- * multiselect prompt to "what's actually here." False positives are
- * acceptable (we still write); false negatives just mean the user
- * has to opt in manually.
+ * `installed` 是尽力而为的启发式判断，表示该智能体的 CLI / 应用 /
+ * 配置目录是否存在于当前系统——用于将多选提示默认勾选"实际存在"的内容。
+ * 误报可以接受（我们仍会写入）；漏报仅意味着用户需要手动选择。
  *
- * `alreadyConfigured` reports whether synapse has already been
- * wired into this target at this location — drives the
- * "Updated"-vs-"Added" log line and lets `--check` exit 0/1.
+ * `alreadyConfigured` 报告 synapse 是否已在此位置连接到该 target——
+ * 驱动"Updated"与"Added"日志行，并让 `--check` 以 0/1 退出。
  */
 export interface DetectionResult {
   installed: boolean;
   alreadyConfigured: boolean;
-  /** Path inspected; surfaced in diagnostic / dry-run output. */
+  /** 已检查的路径；显示在诊断/试运行输出中。 */
   configPath?: string;
 }
 
 /**
- * What `target.install(location)` actually changed on disk. The
- * orchestrator renders one log line per file using `action`.
+ * `target.install(location)` 实际在磁盘上完成的变更。编排器使用 `action`
+ * 为每个文件渲染一行日志。
  *
- * `unchanged` means we touched the file but its contents were already
- * what we'd write — used for byte-identical idempotent re-runs.
+ * `unchanged` 表示我们访问了该文件，但其内容已与我们要写入的内容完全一致——
+ * 用于字节完全相同的幂等重复运行。
  */
 export interface WriteResult {
   files: Array<{
@@ -54,53 +48,50 @@ export interface WriteResult {
     action: 'created' | 'updated' | 'unchanged' | 'removed' | 'not-found' | 'kept';
   }>;
   /**
-   * Optional one-line notes the orchestrator surfaces verbatim — e.g.
-   * "Restart Cursor to apply." Keep these short; multi-line goes in
-   * the README.
+   * 编排器逐字展示的可选单行说明——例如
+   * "重启 Cursor 以应用更改。"保持简短；多行内容放入 README。
    */
   notes?: string[];
 }
 
 export interface InstallOptions {
   /**
-   * Whether to write the agent's permissions / auto-allow surface
-   * (Claude `settings.json`, others where applicable). When the
-   * target has no permissions concept this option is a no-op.
+   * 是否写入智能体的权限/自动允许配置
+   * （Claude `settings.json`，其他目标在适用时同样处理）。
+   * 若目标没有权限概念，此选项为空操作。
    */
   autoAllow: boolean;
 }
 
 export interface AgentTarget {
-  /** Stable id; matches the `TargetId` union. */
+  /** 稳定 id；与 `TargetId` 联合类型匹配。 */
   readonly id: TargetId;
-  /** Human-readable name shown in clack prompts and log lines. */
+  /** 在 clack 提示和日志行中显示的可读名称。 */
   readonly displayName: string;
-  /** Optional URL for "where do I learn more about this agent." */
+  /** 可选 URL，用于"在哪里了解更多关于此智能体的信息"。 */
   readonly docsUrl?: string;
   /**
-   * Whether this target supports the given install location.
+   * 此 target 是否支持给定的安装位置。
    *
-   * Some agents (Codex CLI as of 2026-05) have no project-local
-   * config concept — only a single `~/.codex/` dir. Returning false
-   * for an unsupported (target, location) pair lets the orchestrator
-   * skip cleanly with a clear message.
+   * 部分智能体（截至 2026-05 的 Codex CLI）没有项目本地配置概念——
+   * 只有单一的 `~/.codex/` 目录。对不支持的（target, location）组合
+   * 返回 false，可让编排器以清晰的消息跳过。
    */
   supportsLocation(loc: Location): boolean;
   detect(loc: Location): DetectionResult;
   install(loc: Location, opts: InstallOptions): WriteResult;
   /**
-   * Inverse of install. Removes only what install would have written;
-   * preserves sibling MCP servers, sibling permissions, and unrelated
-   * markdown sections. Must be safe to call when nothing was ever
-   * installed (returns `not-found` actions).
+   * install 的逆操作。仅删除 install 写入的内容；
+   * 保留同级 MCP 服务器、同级权限以及无关的 markdown 章节。
+   * 在从未安装过的情况下调用必须是安全的（返回 `not-found` action）。
    */
   uninstall(loc: Location): WriteResult;
   /**
-   * Print the MCP-server snippet a user would paste manually for this
-   * target. Used by `synapse install --print-config <id>` and by
-   * the README. Must NOT touch the filesystem.
+   * 打印用户可手动粘贴的此 target 的 MCP 服务器片段。
+   * 供 `synapse install --print-config <id>` 及 README 使用。
+   * 绝不得访问文件系统。
    */
   printConfig(loc: Location): string;
-  /** Filesystem paths this target would write to at this location. */
+  /** 此 target 在该位置会写入的文件系统路径。 */
   describePaths(loc: Location): string[];
 }

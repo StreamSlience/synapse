@@ -1,11 +1,9 @@
 ﻿/**
- * Helpers shared across `AgentTarget` implementations.
+ * 各 `AgentTarget` 实现共用的辅助函数。
  *
- * Lifted from the original `config-writer.ts` so each target can
- * compose them without inheritance. Kept deliberately small — the
- * targets are different enough (JSON vs TOML vs Markdown, varying
- * idempotency markers) that a base class would force the awkward
- * shape onto everyone.
+ * 从原始的 `config-writer.ts` 提取而来，使每个 target 可以组合使用，
+ * 而无需继承。刻意保持精简——各 target 差异足够大（JSON vs TOML vs Markdown，
+ * 幂等标记各异），基类反而会把不自然的形状强加给所有人。
  */
 
 import * as fs from 'fs';
@@ -17,9 +15,9 @@ import {
 } from '../instructions-template';
 
 /**
- * The MCP-server config block synapse injects. Same shape across
- * all JSON-shaped agent configs (Claude, Cursor, opencode), only the
- * surrounding wrapper differs. Codex (TOML) builds its own block.
+ * synapse 注入的 MCP 服务器配置块。在所有 JSON 格式的智能体配置
+ * （Claude、Cursor、opencode）中形状相同，只有外层包装不同。
+ * Codex（TOML）自行构建配置块。
  */
 export function getMcpServerConfig(): { type: string; command: string; args: string[] } {
   return {
@@ -30,9 +28,8 @@ export function getMcpServerConfig(): { type: string; command: string; args: str
 }
 
 /**
- * Permissions list for Claude `settings.json`. Other targets that
- * have a permissions concept can compose this list directly. The
- * permission strings follow Claude's `mcp__<server>__<tool>` format.
+ * Claude `settings.json` 的权限列表。其他有权限概念的 target 可直接
+ * 组合此列表。权限字符串遵循 Claude 的 `mcp__<server>__<tool>` 格式。
  */
 export function getSynapsePermissions(): string[] {
   return [
@@ -48,11 +45,10 @@ export function getSynapsePermissions(): string[] {
 }
 
 /**
- * Read a JSON file, returning `{}` when missing or unparseable.
+ * 读取 JSON 文件，文件不存在或无法解析时返回 `{}`。
  *
- * Unparseable files are backed up to `<path>.backup` BEFORE we return
- * `{}` — so an idempotent re-run never silently deletes a user's
- * existing config that happened to break JSON parse temporarily.
+ * 无法解析的文件在返回 `{}` 前会被备份到 `<path>.backup`——
+ * 这样幂等的重复运行就不会在用户现有配置临时无法解析时悄悄删除它。
  */
 export function readJsonFile(filePath: string): Record<string, any> {
   if (!fs.existsSync(filePath)) {
@@ -66,16 +62,15 @@ export function readJsonFile(filePath: string): Record<string, any> {
     console.warn(`  A backup will be created before overwriting.`);
     try {
       fs.copyFileSync(filePath, filePath + '.backup');
-    } catch { /* ignore backup failure */ }
+    } catch { /* 忽略备份失败 */ }
     return {};
   }
 }
 
 /**
- * Write a file atomically: write to `<path>.tmp.<pid>`, then rename.
+ * 原子写入文件：先写入 `<path>.tmp.<pid>`，再重命名。
  *
- * Prevents corruption if the process crashes mid-write. The temp
- * file is cleaned up on rename failure.
+ * 防止进程在写入过程中崩溃导致文件损坏。重命名失败时会清理临时文件。
  */
 export function atomicWriteFileSync(filePath: string, content: string): void {
   const dir = path.dirname(filePath);
@@ -87,25 +82,24 @@ export function atomicWriteFileSync(filePath: string, content: string): void {
     fs.writeFileSync(tmpPath, content);
     fs.renameSync(tmpPath, filePath);
   } catch (err) {
-    try { fs.unlinkSync(tmpPath); } catch { /* ignore */ }
+    try { fs.unlinkSync(tmpPath); } catch { /* 忽略 */ }
     throw err;
   }
 }
 
 /**
- * Atomic JSON write. Trailing newline matches the convention every
- * existing target had — preserves diff-friendly file shape.
+ * 原子 JSON 写入。末尾换行符遵循每个现有 target 的惯例——
+ * 保持对 diff 友好的文件格式。
  */
 export function writeJsonFile(filePath: string, data: Record<string, any>): void {
   atomicWriteFileSync(filePath, JSON.stringify(data, null, 2) + '\n');
 }
 
 /**
- * Compare two JSON values for deep equality, ignoring key order.
+ * 对两个 JSON 值进行深度相等比较，忽略键的顺序。
  *
- * Used for idempotency: when the on-disk config already exactly
- * matches what we'd write, return action=`unchanged` instead of
- * re-writing (and emitting a confusing "Updated" log line).
+ * 用于幂等性判断：当磁盘上的配置已与我们要写入的内容完全一致时，
+ * 返回 action=`unchanged` 而非重写（避免输出令人困惑的"Updated"日志行）。
  */
 export function jsonDeepEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
@@ -127,16 +121,14 @@ export function jsonDeepEqual(a: unknown, b: unknown): boolean {
 }
 
 /**
- * Replace or append a marker-delimited section in a markdown-ish file.
+ * 替换或追加 markdown 类文件中的标记分隔章节。
  *
- * Used by Claude / Codex for the `<!-- SYNAPSE_START --> ... <!--
- * SYNAPSE_END -->` block. Preserves all content outside the
- * markers verbatim.
+ * 供 Claude / Codex 用于 `<!-- SYNAPSE_START --> ... <!-- SYNAPSE_END -->`
+ * 块。逐字保留标记以外的所有内容。
  *
- * Returns `created` when the file didn't exist; `updated` when
- * markers were found and content swapped; `appended` when markers
- * weren't found and section was added at end. `unchanged` when the
- * existing block already matches `body`.
+ * 文件不存在时返回 `created`；找到标记并替换内容时返回 `updated`；
+ * 未找到标记并在末尾追加章节时返回 `appended`；现有块已与 `body`
+ * 完全一致时返回 `unchanged`。
  */
 export function replaceOrAppendMarkedSection(
   filePath: string,
@@ -164,8 +156,7 @@ export function replaceOrAppendMarkedSection(
     return 'updated';
   }
 
-  // No markers — append. Preserve existing content with a separating
-  // blank line.
+  // 无标记——追加。保留现有内容并以空行分隔。
   const trimmed = content.trimEnd();
   const sep = trimmed.length > 0 ? '\n\n' : '';
   atomicWriteFileSync(filePath, trimmed + sep + body + '\n');
@@ -173,14 +164,12 @@ export function replaceOrAppendMarkedSection(
 }
 
 /**
- * Upsert the Synapse instructions block into an agent instructions
- * file (CLAUDE.md / AGENTS.md / GEMINI.md). The one write shared by
- * every target: self-heals a stale pre-#529 long block (markers match →
- * replaced by the current short one), appends after existing user
- * content otherwise, and reports `unchanged` on byte-equal re-runs so
- * install stays idempotent. See `instructions-template.ts` for why this
- * block exists (#704: subagents + non-MCP harnesses never see the MCP
- * initialize instructions).
+ * 将 Synapse instructions 块更新插入到智能体 instructions 文件
+ * （CLAUDE.md / AGENTS.md / GEMINI.md）中。每个 target 共享的唯一写入操作：
+ * 自动修复过时的 #529 前长块（标记匹配则替换为当前短块），否则追加在现有
+ * 用户内容之后，字节完全相同的重复运行报告 `unchanged` 以保持幂等性。
+ * 参见 `instructions-template.ts`，了解此块存在的原因（#704：子智能体 +
+ * 非 MCP 运行环境从不接收 MCP initialize 指令）。
  */
 export function upsertInstructionsEntry(file: string): { path: string; action: 'created' | 'updated' | 'unchanged' } {
   const action = replaceOrAppendMarkedSection(
@@ -193,13 +182,12 @@ export function upsertInstructionsEntry(file: string): { path: string; action: '
 }
 
 /**
- * Inverse of `replaceOrAppendMarkedSection`. Strips the marker
- * block from `filePath` if present. If the file becomes empty after
- * removal, deletes the file entirely (matches the existing Claude
- * uninstall behavior).
+ * `replaceOrAppendMarkedSection` 的逆操作。若存在标记块则从
+ * `filePath` 中移除。移除后文件为空时，完全删除该文件（与现有
+ * Claude 卸载行为一致）。
  *
- * Returns `removed` when content was stripped, `not-found` when
- * the markers weren't present, `kept` when the file didn't exist.
+ * 内容被移除时返回 `removed`，标记不存在时返回 `not-found`，
+ * 文件本就不存在时返回 `kept`。
  */
 export function removeMarkedSection(
   filePath: string,
@@ -224,7 +212,7 @@ export function removeMarkedSection(
   const joined = before + (before && after ? '\n\n' : '') + after;
 
   if (joined.trim() === '') {
-    try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+    try { fs.unlinkSync(filePath); } catch { /* 忽略 */ }
   } else {
     atomicWriteFileSync(filePath, joined.trim() + '\n');
   }

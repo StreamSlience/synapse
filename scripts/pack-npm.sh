@@ -1,20 +1,19 @@
 ﻿#!/usr/bin/env bash
 #
-# Assemble the npm thin-installer packages from built bundles (esbuild pattern).
+# 从已构建的 bundle 组装 npm 精简安装器包（esbuild 模式）。
 #
-# Produces, under release/npm/:
-#   synapse-<target>/   one per built bundle — the vendored Node + app, tagged
-#                         with os/cpu so npm installs only the matching one.
-#   main/                 the @colbymchenry/synapse shim package: a tiny bin
-#                         that execs the matching platform bundle, with every
-#                         platform package in optionalDependencies.
+# 在 release/npm/ 下产出：
+#   synapse-<target>/   每个已构建 bundle 对应一个——内置 Node + 应用，
+#                         附带 os/cpu 标记，使 npm 仅安装匹配的平台包。
+#   main/                 @colbymchenry/synapse shim 包：一个小型 bin，
+#                         负责执行匹配的平台 bundle，所有平台包位于
+#                         optionalDependencies 中。
 #
-# The release pipeline then `npm publish`es each dir. This does NOT touch the
-# repo's package.json — the dev/from-source path keeps working; the *published*
-# main package's shape is generated here.
+# 发布流水线随后对每个目录执行 `npm publish`。本脚本不修改仓库的
+# package.json——开发/从源码路径保持正常工作；*已发布*主包的结构在此生成。
 #
-# Prereq: run build-bundle.sh for each target first (release/synapse-*.tar.gz).
-# Usage:  scripts/pack-npm.sh [version]    (default: version from package.json)
+# 前提：先为每个 target 运行 build-bundle.sh（release/synapse-*.tar.gz）。
+# 用法：scripts/pack-npm.sh [version]    （默认：从 package.json 读取版本）
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -71,18 +70,18 @@ for archive in "${archives[@]}"; do
   echo "[pack-npm] ${SCOPE}/synapse-${target}@${VERSION}"
 done
 
-# Main shim package.
-#   npm-shim.js  CLI/MCP launcher (execs the bundled Node) — the `bin`.
-#   npm-sdk.js   programmatic/embedded entry (#354): re-exports the installed
-#                platform bundle's compiled library — the `main`.
-#   dist/        the .d.ts tree only (types). The runtime .js stays in the
-#                per-platform bundle so its deps aren't duplicated here.
+# 主 shim 包。
+#   npm-shim.js  CLI/MCP 启动器（执行打包的 Node）——`bin` 入口。
+#   npm-sdk.js   编程/嵌入式入口（#354）：重导出已安装平台 bundle
+#                的编译库——`main` 入口。
+#   dist/        仅包含 .d.ts 类型树。运行时 .js 留在各平台 bundle 中，
+#                避免在此处重复依赖。
 cp "$ROOT/scripts/npm-shim.js" "$NPM/main/npm-shim.js"
 cp "$ROOT/scripts/npm-sdk.js" "$NPM/main/npm-sdk.js"
 [ -f "$ROOT/README.md" ] && cp "$ROOT/README.md" "$NPM/main/README.md"
 
-# Ship the type declarations so `types`/`exports.types` resolve. Built from this
-# same release, so they can't skew from the runtime npm-sdk.js re-exports.
+# 随包发布类型声明，使 `types`/`exports.types` 能正确解析。
+# 由同一次发布构建，因此不会与运行时 npm-sdk.js 重导出内容产生偏差。
 [ -f "$ROOT/dist/index.d.ts" ] || ( echo "[pack-npm] building dist for .d.ts" >&2 && cd "$ROOT" && npm run build >/dev/null )
 ROOT="$ROOT" DEST="$NPM/main" node -e '
   const fs=require("fs"), path=require("path");

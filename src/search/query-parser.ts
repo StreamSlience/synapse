@@ -1,58 +1,54 @@
 /**
- * Field-qualified search query parser.
+ * 字段限定搜索查询解析器。
  *
- * Splits a raw query like
+ * 将如下原始查询
  *
  *     kind:function name:auth path:src/api authenticate
  *
- * into structured filters (kind=function, name="auth", path prefix
- * "src/api") plus the free-text portion ("authenticate") that goes
- * to FTS. Free-text and filters compose: filters narrow the result
- * set, FTS scores within the narrowed set.
+ * 拆分为结构化过滤器（kind=function、name="auth"、path 前缀
+ * "src/api"）以及送入 FTS 的自由文本部分（"authenticate"）。
+ * 自由文本与过滤器可组合使用：过滤器缩小结果集，FTS 在缩小后的
+ * 结果集内打分。
  *
- * Recognised fields (case-insensitive, value is the rest until
- * whitespace):
+ * 支持的字段（大小写不敏感，值为下一个空白字符之前的内容）：
  *
- *   kind:    one of function|method|class|interface|struct|...
- *   lang:    one of typescript|python|go|...   (alias: language:)
- *   path:    case-insensitive substring of file_path
- *   name:    case-insensitive substring of the symbol's name
+ *   kind:    function|method|class|interface|struct|... 之一
+ *   lang:    typescript|python|go|... 之一   （别名：language:）
+ *   path:    file_path 的大小写不敏感子串
+ *   name:    符号名称的大小写不敏感子串
  *
- * Unknown field prefixes (e.g. `foo:bar`) are passed through to FTS
- * as plain text — that's how someone searching for `TODO:` gets a
- * result instead of a parse error.
+ * 未知字段前缀（如 `foo:bar`）会作为纯文本传给 FTS——
+ * 这样搜索 `TODO:` 时会返回结果而不是解析错误。
  *
- * Quoting:
- *   kind:function path:"src/some path/with spaces" → handled by stripping
- *   the surrounding double quotes from the value (single token only,
- *   no nested escapes).
+ * 引号处理：
+ *   kind:function path:"src/some path/with spaces" → 通过去除值两侧的
+ *   双引号来处理（仅限单一 token，不支持嵌套转义）。
  */
 
 import { NODE_KINDS, LANGUAGES } from '../types';
 import type { NodeKind, Language } from '../types';
 
 export interface ParsedQuery {
-  /** Free-text portion to feed to FTS / LIKE. May be empty. */
+  /** 送入 FTS / LIKE 的自由文本部分，可为空。 */
   text: string;
-  /** kind: filters (OR'd). Empty when none specified. */
+  /** kind: 过滤器（取 OR）。未指定时为空。 */
   kinds: NodeKind[];
-  /** lang:/language: filters (OR'd). Empty when none specified. */
+  /** lang:/language: 过滤器（取 OR）。未指定时为空。 */
   languages: Language[];
-  /** path: filters (OR'd, case-insensitive substring of file_path). Empty when none. */
+  /** path: 过滤器（取 OR，对 file_path 大小写不敏感子串匹配）。未指定时为空。 */
   pathFilters: string[];
-  /** name: filters (OR'd, case-insensitive substring of node.name). */
+  /** name: 过滤器（取 OR，对 node.name 大小写不敏感子串匹配）。 */
   nameFilters: string[];
 }
 
-// Derived from the canonical `NODE_KINDS` / `LANGUAGES` arrays in
-// types.ts so adding a new kind or language doesn't silently fall
-// through to plain text here.
+// 派生自 types.ts 中权威的 `NODE_KINDS` / `LANGUAGES` 数组，
+// 这样新增 kind 或 language 时不会悄悄地走到纯文本分支。
 const KIND_VALUES: ReadonlySet<string> = new Set<NodeKind>(NODE_KINDS);
 const LANGUAGE_VALUES: ReadonlySet<string> = new Set<Language>(LANGUAGES);
 
 /**
- * Strip a surrounding pair of double quotes from `s`. Allows users to
- * keep whitespace in path filters: `path:"my dir/file"`.
+ * 去除 `s` 两侧的双引号。允许用户在路径过滤器中保留空格：
+ * `path:"my dir/file"`。
  */
 function unquote(s: string): string {
   if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) return s.slice(1, -1);
@@ -60,8 +56,8 @@ function unquote(s: string): string {
 }
 
 /**
- * Parse a raw query into structured filters + remaining text.
- * Always returns a value; never throws.
+ * 将原始查询解析为结构化过滤器 + 剩余文本。
+ * 始终返回值，从不抛出异常。
  */
 export function parseQuery(raw: string): ParsedQuery {
   const out: ParsedQuery = {
@@ -72,10 +68,10 @@ export function parseQuery(raw: string): ParsedQuery {
     nameFilters: [],
   };
 
-  // Tokenise on whitespace, preserving quoted spans as part of the
-  // current token. Quotes can appear at the start (`"…"`) OR mid-token
-  // (`path:"…"`); in both cases everything from the opening `"` to the
-  // matching `"` is included in the token, whitespace and all.
+  // 按空白字符分词，同时将引号内的内容保留为当前 token 的一部分。
+  // 引号可出现在开头（`"…"`）或 token 中间（`path:"…"`）；
+  // 两种情况下，从开头 `"` 到匹配的 `"` 之间的所有内容（含空格）
+  // 都包含在该 token 中。
   const tokens: string[] = [];
   let i = 0;
   while (i < raw.length) {
@@ -86,8 +82,8 @@ export function parseQuery(raw: string): ParsedQuery {
       if (raw[i] === '"') {
         const end = raw.indexOf('"', i + 1);
         if (end === -1) {
-          // Unterminated quote — swallow the rest of the input as
-          // one token. Forgiving rather than throwing.
+          // 未闭合的引号——将剩余输入全部作为一个 token 吞入。
+          // 宽容处理，不抛出异常。
           i = raw.length;
           break;
         }
@@ -147,12 +143,12 @@ export function parseQuery(raw: string): ParsedQuery {
 }
 
 /**
- * Damerau-Levenshtein-ish bounded edit distance. Returns `maxDist + 1`
- * as soon as the distance is known to exceed `maxDist`; that early-exit
- * makes the fuzzy fallback cheap even over tens of thousands of names.
+ * 有界 Damerau-Levenshtein 编辑距离。一旦确认距离超过 `maxDist`
+ * 就立即返回 `maxDist + 1`；这种提前退出机制使模糊回退即便面对
+ * 数万个名称也开销极低。
  *
- * Pure DP, O(min(len(a), len(b))) memory. Compares case-folded inputs;
- * callers should pass `lowercase(name)` strings.
+ * 纯 DP，O(min(len(a), len(b))) 空间复杂度。比较折叠大小写后的输入；
+ * 调用方应传入 `lowercase(name)` 字符串。
  */
 export function boundedEditDistance(a: string, b: string, maxDist: number): number {
   if (a === b) return 0;

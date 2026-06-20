@@ -1,13 +1,12 @@
 ﻿/**
- * SQLite Adapter
+ * SQLite 适配器
  *
- * Thin wrapper over Node's built-in `node:sqlite` (`DatabaseSync`), exposed
- * through a small better-sqlite3-shaped interface so the rest of the codebase
- * is storage-agnostic.
+ * 对 Node 内置 `node:sqlite`（`DatabaseSync`）的薄封装，
+ * 通过小型 better-sqlite3 风格接口暴露出去，使代码库其余部分与存储无关。
  *
- * Synapse ships with a bundled Node runtime, so `node:sqlite` (real SQLite,
- * with WAL + FTS5) is always available — there is no native build step and no
- * wasm fallback. When run from source instead, it requires Node >= 22.5.
+ * Synapse 附带了打包好的 Node 运行时，因此 `node:sqlite`（真正的 SQLite，
+ * 支持 WAL + FTS5）始终可用——无需原生构建步骤，也无需 WASM 回退。
+ * 从源码运行时，需要 Node >= 22.5。
  */
 
 export interface SqliteStatement {
@@ -15,10 +14,10 @@ export interface SqliteStatement {
   get(...params: any[]): any;
   all(...params: any[]): any[];
   /**
-   * Lazily yield result rows one at a time instead of materializing the whole
-   * set with `all()`. Use for unbounded scans (e.g. every function/method node)
-   * so memory stays O(1) in the row count rather than O(rows) — see #610, where
-   * `all()`-ing every symbol on a dense project spiked the heap into an OOM.
+   * 逐行懒惰地产出结果行，而不是用 `all()` 一次性物化整个结果集。
+   * 用于无界扫描（例如每个 function/method 节点），
+   * 使内存保持 O(1)（相对于行数）而非 O(rows)——
+   * 参见 #610，在密集项目上对所有符号调用 `all()` 会导致堆内存 OOM。
    */
   iterate(...params: any[]): IterableIterator<any>;
 }
@@ -33,19 +32,19 @@ export interface SqliteDatabase {
 }
 
 /**
- * The active SQLite backend. Only one now (`node:sqlite`); kept as a named type
- * so `synapse status` and the per-instance reporting have a stable shape.
+ * 当前活跃的 SQLite 后端。现在只有一个（`node:sqlite`）；保留为具名类型
+ * 以便 `synapse status` 和每实例报告具有稳定的形状。
  */
 export type SqliteBackend = 'node-sqlite';
 
 /**
- * Wraps Node's built-in `node:sqlite` (`DatabaseSync`) to match the
- * better-sqlite3 interface the rest of the code expects.
+ * 封装 Node 内置 `node:sqlite`（`DatabaseSync`），以匹配其余代码期望的
+ * better-sqlite3 接口。
  *
- * node:sqlite is real SQLite compiled into Node, so it supports WAL, FTS5,
- * mmap, and `@named` params natively — the only shims needed are the
- * better-sqlite3 conveniences node:sqlite omits: a `.pragma()` helper, a
- * `.transaction()` helper, and `open` (node:sqlite exposes `isOpen`).
+ * node:sqlite 是编译进 Node 的真正 SQLite，支持 WAL、FTS5、
+ * mmap 和 `@named` 参数——唯一需要的垫片是 node:sqlite 省略的
+ * better-sqlite3 便利方法：`.pragma()` 辅助器、`.transaction()` 辅助器
+ * 以及 `open`（node:sqlite 暴露的是 `isOpen`）。
  */
 class NodeSqliteAdapter implements SqliteDatabase {
   private _db: any;
@@ -61,9 +60,8 @@ class NodeSqliteAdapter implements SqliteDatabase {
   }
 
   prepare(sql: string): SqliteStatement {
-    // node:sqlite matches better-sqlite3's calling convention (variadic
-    // positional args, or a single object for @named params), so params forward
-    // through unchanged.
+    // node:sqlite 匹配 better-sqlite3 的调用约定（可变数量的位置参数，
+    // 或用于 @named 参数的单个对象），因此参数直接透传。
     const stmt = this._db.prepare(sql);
     return {
       run(...params: any[]) {
@@ -91,14 +89,14 @@ class NodeSqliteAdapter implements SqliteDatabase {
 
   pragma(str: string, options?: { simple?: boolean }): any {
     const trimmed = str.trim();
-    // Write pragma ("key = value"): node:sqlite is real SQLite, so every pragma
-    // (WAL, mmap, synchronous, …) applies as-is.
+    // 写入 pragma（"key = value"）：node:sqlite 是真正的 SQLite，因此每个 pragma
+    // （WAL、mmap、synchronous 等）均按原样生效。
     if (trimmed.includes('=')) {
       this._db.exec(`PRAGMA ${trimmed}`);
       return;
     }
-    // Read pragma. Default: the row object (e.g. { journal_mode: 'wal' }).
-    // `{ simple: true }` returns just the single column value, like better-sqlite3.
+    // 读取 pragma。默认：行对象（例如 { journal_mode: 'wal' }）。
+    // `{ simple: true }` 只返回单列值，与 better-sqlite3 一致。
     const row = this._db.prepare(`PRAGMA ${trimmed}`).get();
     if (options?.simple) {
       return row && typeof row === 'object' ? Object.values(row)[0] : row;
@@ -121,18 +119,17 @@ class NodeSqliteAdapter implements SqliteDatabase {
   }
 
   close(): void {
-    // node:sqlite's DatabaseSync.close() throws if already closed; make it
-    // idempotent to match better-sqlite3 (callers may close more than once).
+    // node:sqlite 的 DatabaseSync.close() 在已关闭时会抛出异常；将其改为
+    // 幂等操作以匹配 better-sqlite3（调用方可能关闭多次）。
     if (this._db.isOpen) this._db.close();
   }
 }
 
 /**
- * Create a database connection backed by `node:sqlite`.
+ * 创建由 `node:sqlite` 支撑的数据库连接。
  *
- * Returns the active backend alongside the db so each `DatabaseConnection` can
- * report it per-instance — MCP can open multiple project DBs in one process, so
- * a process-global would race.
+ * 将活跃后端与 db 一起返回，以便每个 `DatabaseConnection` 能按实例报告它——
+ * MCP 可以在同一进程中打开多个项目数据库，因此进程全局变量会产生竞争。
  */
 export function createDatabase(dbPath: string): { db: SqliteDatabase; backend: SqliteBackend } {
   try {

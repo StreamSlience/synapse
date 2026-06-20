@@ -1,11 +1,11 @@
 ﻿#!/usr/bin/env bash
-# Does the agent PICK synapse_node to read a file, vs the built-in Read tool?
-# Build A/B: NEW build (HEAD, synapse_node has Read parity) vs BASELINE build
-# (a ref where it doesn't), BOTH synapse-attached + pre-warmed, same task. The
-# metric is tool CHOICE: Read calls vs synapse_node[file] calls per run.
+# agent 是否会优先选择 synapse_node 来读文件，而非内置 Read 工具？
+# 构建 A/B：新构建（HEAD，synapse_node 具备 Read 对等性）vs 基线构建
+#（该 ref 上尚无此能力），两者均接入 synapse + 预热，任务相同。
+# 指标是工具选择：每次运行的 Read 调用 vs synapse_node[file] 调用。
 #
-# Usage: ab-adoption.sh <indexed-repo> "<task>" [runs-per-arm] [baseline-ref]
-# Env: AGENT_EVAL_OUT (default: /tmp/ab-adoption)
+# 用法：ab-adoption.sh <indexed-repo> "<task>" [runs-per-arm] [baseline-ref]
+# 环境变量：AGENT_EVAL_OUT（默认：/tmp/ab-adoption）
 set -uo pipefail
 TARGET="${1:?usage: ab-adoption.sh <indexed-repo> \"<task>\" [runs] [baseline-ref]}"
 TASK="${2:?task required}"
@@ -38,7 +38,7 @@ prewarm() {
   node -e 'const fs=require("fs");let n=0;const t=setInterval(()=>{if(fs.existsSync(process.argv[1]+"/.synapse/daemon.sock")){clearInterval(t);process.exit(0)}if(n++>150){clearInterval(t);process.exit(1)}},100)' "$1" >/dev/null 2>&1
 }
 
-# Per-run tool-choice counts: Read vs synapse_node[file] vs [symbol].
+# 每次运行的工具选择计数：Read vs synapse_node[file] vs [symbol]。
 count() {
   node -e '
     const fs=require("fs");

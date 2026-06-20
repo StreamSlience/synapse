@@ -1,21 +1,18 @@
 ﻿/**
- * MCP proxy mode — issue #411.
+ * MCP 代理模式 — issue #411。
  *
- * The proxy is a near-transparent stdio↔socket pipe. Once it has verified
- * the daemon's hello line (same major.minor.patch as ours), it does no
- * protocol parsing of its own: every byte the MCP host writes to the proxy's
- * stdin goes straight to the daemon socket, and every byte the daemon emits
- * goes straight to the host's stdout. Server-initiated JSON-RPC requests
- * (e.g. `roots/list`) flow through the same pipe transparently.
+ * 代理是一个近乎透明的 stdio↔socket 管道。一旦验证了守护进程的 hello 行
+ * （与本进程的主版本.次版本.补丁版本完全一致），它就不再自行解析协议：
+ * MCP 宿主写入代理 stdin 的每个字节都直接传到守护进程 socket，
+ * 守护进程发出的每个字节都直接传到宿主的 stdout。
+ * 服务器发起的 JSON-RPC 请求（如 `roots/list`）也通过同一管道透明地流通。
  *
- * Lifecycle expectations:
- *   - The proxy exits when *either* stream closes (host stdin closed →
- *     daemon socket end, or daemon-side socket close → host stdout end).
- *   - Closing the socket on the proxy side is what tells the daemon to
- *     decrement its connected-clients refcount.
- *   - On a parent-process death we can't detect via stdin close (e.g. SIGKILL
- *     of the MCP host), the proxy's PPID watchdog catches it — same logic
- *     the direct-mode server uses; see issue #277.
+ * 生命周期预期：
+ *   - 代理在*任一*流关闭时退出（宿主 stdin 关闭 → 守护进程 socket 结束，
+ *     或守护进程侧 socket 关闭 → 宿主 stdout 结束）。
+ *   - 在代理侧关闭 socket 是通知守护进程递减已连接客户端引用计数的方式。
+ *   - 对于无法通过 stdin 关闭感知的父进程死亡（如 MCP 宿主被 SIGKILL），
+ *     代理的 PPID 看门狗会捕获它 — 与直接模式服务器使用的逻辑相同；参见 issue #277。
  */
 
 import * as fs from 'fs';
@@ -31,21 +28,21 @@ import { getStaticTools } from './tools';
 import { getTelemetry, ClientInfo } from '../telemetry';
 import type { MCPEngine } from './engine';
 
-/** Default poll cadence for the PPID watchdog (same as the direct server). */
+/** PPID 看门狗的默认轮询间隔（与直接模式服务器相同）。 */
 const DEFAULT_PPID_POLL_MS = 5000;
 
 /**
- * Env var that opts INTO the "attached to shared daemon" log line. Off by
- * default: the line is benign INFO, but MCP hosts render any server stderr at
- * error level (and append an `undefined` data field), so on every session start
- * a healthy attach showed up as `[error] … undefined`. Set to `1` to surface it
- * when debugging daemon attach. (#618; approach from #640 by @mturac)
+ * 选择加入"已连接到共享守护进程"日志行的环境变量。默认关闭：
+ * 该行是无害的 INFO，但 MCP 宿主会将服务器 stderr 渲染为错误级别
+ * （并附加一个 `undefined` 数据字段），导致每次会话启动时
+ * 一条正常的连接成功日志显示为 `[error] … undefined`。
+ * 调试守护进程连接时设为 `1` 以启用。（#618；方案来自 #640，作者 @mturac）
  */
 const LOG_ATTACH_ENV = 'SYNAPSE_MCP_LOG_ATTACH';
 
 /**
- * Log a successful daemon attach — gated behind {@link LOG_ATTACH_ENV} so it is
- * silent by default (see #618). Exported for tests.
+ * 记录成功的守护进程连接 — 受 {@link LOG_ATTACH_ENV} 门控，默认静默
+ * （见 #618）。导出以供测试使用。
  */
 export function logAttachedDaemon(socketPath: string, hello: DaemonHello): void {
   if (process.env[LOG_ATTACH_ENV] !== '1') return;
@@ -56,37 +53,34 @@ export function logAttachedDaemon(socketPath: string, hello: DaemonHello): void 
 
 export interface ProxyResult {
   /**
-   * `proxied` — successfully attached to a same-version daemon and piped
-   * stdio. The proxy stays alive until either end closes.
-   * `fallback-needed` — the daemon rejected us (version mismatch / unreachable
-   * socket) and the caller should run the server in direct mode.
+   * `proxied` — 成功连接到同版本守护进程并完成 stdio 管道传输。
+   * 代理保持存活直到任一端关闭。
+   * `fallback-needed` — 守护进程拒绝了我们（版本不匹配/socket 不可达），
+   * 调用方应以直接模式运行服务器。
    */
   outcome: 'proxied' | 'fallback-needed';
   reason?: string;
 }
 
 /**
- * Attempt to connect to the daemon at `socketPath` and pipe stdio through it.
+ * 尝试连接到 `socketPath` 处的守护进程并通过它管道传输 stdio。
  *
- * Returns a promise that resolves when either:
- *   - the connection succeeded and one of stdin/socket has now closed
- *     (after which the process should exit), or
- *   - the connection failed early enough that the caller can still fall
- *     back to direct mode.
+ * 返回一个 Promise，在以下情况之一时 resolve：
+ *   - 连接成功且 stdin/socket 中的一个已关闭
+ *     （此后进程应退出），或
+ *   - 连接在足够早期失败，调用方仍可回退到直接模式。
  *
- * The `expectedVersion` param defaults to the package's own version — daemon
- * and proxy MUST match exactly. Mismatch resolves with
- * `outcome: 'fallback-needed'` so the caller can transparently start its own
- * server. (We accept the cost of two concurrent servers in this case as the
- * price of never silently running a stale daemon against newer client code.)
+ * `expectedVersion` 参数默认为包自身的版本 — 守护进程和代理*必须*完全匹配。
+ * 不匹配时以 `outcome: 'fallback-needed'` resolve，调用方可透明地启动
+ * 自己的服务器。（我们接受此情况下两个并发服务器的代价，以确保
+ * 永远不会静默地用旧守护进程运行新客户端代码。）
  */
 export async function runProxy(
   socketPath: string,
   expectedVersion: string = SynapsePackageVersion,
 ): Promise<ProxyResult> {
-  // POSIX: refuse to connect to a stale socket file that points at no
-  // listening process. `fs.existsSync` is a cheap pre-check; a real
-  // ECONNREFUSED below catches the rare "exists but unbound" race.
+  // POSIX：拒绝连接到没有监听进程的过期 socket 文件。
+  // `fs.existsSync` 是廉价的预检；真正的 ECONNREFUSED 会捕获罕见的"文件存在但未绑定"竞争。
   if (process.platform !== 'win32' && !fs.existsSync(socketPath)) {
     return { outcome: 'fallback-needed', reason: 'socket file missing' };
   }
@@ -116,17 +110,17 @@ export async function runProxy(
   sendClientHello(socket);
   startPpidWatchdog(socket);
   await pipeUntilClose(socket);
-  // Host disconnected (or the daemon went away). The proxy's only job is the
-  // pipe; exit now so we don't linger — process.stdin's 'data' listener would
-  // otherwise keep the event loop alive and leave a zombie launcher behind.
+  // 宿主断连（或守护进程消失）。代理的唯一职责是管道传输；
+  // 现在退出，以免我们滞留 — process.stdin 的 'data' 监听器
+  // 否则会让事件循环保持活跃，留下一个僵尸启动器。
   process.exit(0);
 }
 
 /**
- * Connect to a daemon at `socketPath` and verify its hello (exact version match).
- * Returns the live socket (hello already consumed) or null if unreachable / stale
- * / version-mismatched. Unlike {@link runProxy} it does NOT pipe — the caller
- * owns the socket. Used by the local-handshake proxy's background connect.
+ * 连接到 `socketPath` 处的守护进程并验证其 hello（精确版本匹配）。
+ * 返回存活的 socket（hello 已消费）或在不可达/过期/版本不匹配时返回 null。
+ * 与 {@link runProxy} 不同，它*不*做管道传输 — 调用方拥有该 socket。
+ * 供本地握手代理的后台连接使用。
  */
 export async function connectWithHello(
   socketPath: string,
@@ -138,11 +132,11 @@ export async function connectWithHello(
   const hello = await readHelloLine(socket).catch(() => null);
   if (!hello) {
     socket.destroy();
-    return null; // no daemon yet — caller should keep polling
+    return null; // 守护进程尚未就绪 — 调用方应继续轮询
   }
   if (hello.synapse !== expectedVersion) {
-    // A daemon IS up but it's the wrong version — definitive, not a "not yet".
-    // Don't poll; the caller serves in-process so we never run stale-vs-new.
+    // 守护进程*已*启动但版本错误 — 这是确定性的，不是"尚未就绪"。
+    // 不要轮询；调用方在进程内响应，以确保不会运行旧版对新版。
     process.stderr.write(
       `[Synapse MCP] Found a daemon on ${socketPath} but version (${hello.synapse}) ` +
       `differs from ours (${expectedVersion}); serving this session in-process.\n`
@@ -156,13 +150,12 @@ export async function connectWithHello(
 }
 
 /**
- * Tell the daemon our pids right after we verify its hello, so its liveness
- * sweep can reap this client if our process dies without the socket ever
- * signalling close (the Windows named-pipe hazard behind #692). Best-effort:
- * sent before any piped bytes so it's always the daemon's first line from us,
- * and a write failure here is harmless (the daemon just falls back to the
- * socket-close lifecycle). `hostPid` mirrors the PPID watchdog: the threaded
- * host pid if set, else our own parent (the host, on a no-relaunch bundle).
+ * 验证守护进程 hello 后立即告知守护进程我们的 pid，以便其活跃性扫描
+ * 能在我们的进程死亡但 socket 未能触发关闭时回收此客户端
+ * （Windows 命名管道的 #692 隐患）。尽力而为：在任何管道字节之前发送，
+ * 因此始终是守护进程从我们这里收到的第一行；此处写入失败无害
+ * （守护进程仅回退到 socket 关闭生命周期）。`hostPid` 镜像 PPID 看门狗：
+ * 若已设置则为透传的宿主 pid，否则为我们自己的父进程（无重启 bundle 时的宿主）。
  */
 function sendClientHello(socket: net.Socket): void {
   const clientHello: DaemonClientHello = {
@@ -175,48 +168,44 @@ function sendClientHello(socket: net.Socket): void {
 
 type JsonRpc = Record<string, unknown>;
 
-/** Dependencies the local-handshake proxy needs, injected by MCPServer (which
- *  owns the daemon-spawn machinery and the engine factory). */
+/** 本地握手代理所需的依赖项，由 MCPServer 注入
+ *  （MCPServer 拥有守护进程派生机制和引擎工厂）。 */
 export interface LocalHandshakeDeps {
-  /** Probe → spawn → retry → hello-verify; resolves a connected daemon socket,
-   *  or null when the daemon path is genuinely unavailable (→ in-process fallback). */
+  /** 探测 → 派生 → 重试 → hello 验证；resolve 一个已连接的守护进程 socket，
+   *  或在守护进程路径确实不可用时返回 null（→ 进程内回退）。 */
   getDaemonSocket(): Promise<net.Socket | null>;
-  /** Lazily create an in-process engine — used ONLY if the daemon never comes up,
-   *  preserving the "a broken daemon never wedges a session" guarantee. */
+  /** 惰性创建进程内引擎 — 仅在守护进程始终未启动时使用，
+   *  保持"损坏的守护进程永远不会卡住会话"的保证。 */
   makeEngine(): MCPEngine;
-  /** Project root for the fallback engine's lazy init. */
+  /** 回退引擎惰性初始化的项目根目录。 */
   root: string;
 }
 
 /**
- * Local-handshake proxy (the cold-start fix).
+ * 本地握手代理（冷启动修复）。
  *
- * Answers `initialize` + `tools/list` from STATIC constants the instant the
- * client asks — tools register in ~process-startup time instead of waiting
- * ~600ms for the daemon to spawn+bind, which is what produced the "No such tool
- * available" race that made headless agents flail into grep/Read. Tool CALLS are
- * forwarded to the shared daemon (connected in the background); the daemon's
- * response to the forwarded `initialize` is suppressed (the client already got
- * the local one). If the daemon never comes up (version mismatch / spawn fail),
- * a lazily-created in-process engine serves the calls — so the handshake speedup
- * never costs the old fall-back-to-direct robustness.
+ * 在客户端请求的瞬间，立即从*静态常量*响应 `initialize` + `tools/list` —
+ * 工具注册在约进程启动时间内完成，而不是等待守护进程派生+绑定的约 600ms，
+ * 正是这个等待产生了"No such tool available"竞争，导致无头智能体乱用 grep/Read。
+ * 工具*调用*转发到共享守护进程（在后台连接）；守护进程对转发的 `initialize`
+ * 的响应被抑制（客户端已收到本地响应）。如果守护进程始终未启动
+ * （版本不匹配/派生失败），惰性创建的进程内引擎负责处理调用 —
+ * 因此握手加速从不牺牲原有的回退到直接模式的健壮性。
  */
 export async function runLocalHandshakeProxy(deps: LocalHandshakeDeps): Promise<void> {
   let daemonStatus: 'connecting' | 'ready' | 'failed' = 'connecting';
   let daemonSocket: net.Socket | null = null;
-  let clientInitId: unknown = undefined;   // suppress the daemon's reply to the forwarded initialize
-  // Telemetry attribution for the in-process fallback only — calls routed to
-  // the daemon are counted by the daemon's own session (which receives the
-  // forwarded initialize, clientInfo included), never double-counted here.
+  let clientInitId: unknown = undefined;   // 抑制守护进程对转发的 initialize 的回复
+  // 仅用于进程内回退的遥测归因 — 路由到守护进程的调用由守护进程自己的会话计数
+  // （接收转发的 initialize，含 clientInfo），在此处永不重复计数。
   let telemetryClient: ClientInfo | undefined;
-  const pending: string[] = [];            // client lines buffered until the daemon resolves
+  const pending: string[] = [];            // 守护进程 resolve 前缓冲的客户端行
   let engine: MCPEngine | null = null;
   let engineReady: Promise<void> | null = null;
   let shuttingDown = false;
-  // Requests forwarded to the daemon and not yet answered, keyed by JSON-RPC id.
-  // If the daemon dies mid-session (#662 — e.g. an MCP host SIGTERM's it when a
-  // new session starts), these would otherwise hang forever; we re-serve them
-  // in-process so the host always gets a reply.
+  // 转发到守护进程但尚未收到答复的请求，以 JSON-RPC id 为键。
+  // 如果守护进程在会话中途消失（#662 — 例如 MCP 宿主在新会话启动时 SIGTERM 它），
+  // 这些请求否则会永久挂起；我们在进程内重新响应，确保宿主始终收到回复。
   const inflight = new Map<unknown, string>();
   const trackInflight = (line: string): void => {
     try {
@@ -258,11 +247,11 @@ export async function runLocalHandshakeProxy(deps: LocalHandshakeDeps): Promise<
     } else if (msg.method === 'ping' && id !== undefined) {
       writeClient({ jsonrpc: '2.0', id, result: {} });
     } else if (id !== undefined && msg.method !== 'initialize') {
-      // A request we can't serve in-process (and the daemon is gone) — answer
-      // with an error rather than let the host hang on a reply that won't come.
+      // 无法在进程内响应的请求（且守护进程已消失）— 返回错误而非让宿主
+      // 等待一个永不会来的回复。
       writeClient({ jsonrpc: '2.0', id, error: { code: -32603, message: 'Synapse daemon unavailable' } });
     }
-    // initialize already answered locally; notifications (initialized) need no reply.
+    // initialize 已在本地响应；通知（initialized）不需要回复。
   };
   const routeToDaemon = (line: string): void => {
     if (daemonStatus === 'ready' && daemonSocket) {
@@ -300,8 +289,7 @@ export async function runLocalHandshakeProxy(deps: LocalHandshakeDeps): Promise<
       } else if (msg.method === 'tools/list') {
         writeClient({ jsonrpc: '2.0', id: msg.id, result: { tools: getStaticTools() } });
       } else if (msg.method === 'resources/list') {
-        // No resources exposed — answer the probe locally so it never reaches
-        // the daemon as an unhandled method and logs `-32601`. (#621)
+        // 不暴露任何资源 — 在本地响应探测，以防它作为未处理方法到达守护进程并记录 `-32601`。(#621)
         writeClient({ jsonrpc: '2.0', id: msg.id, result: { resources: [] } });
       } else if (msg.method === 'resources/templates/list') {
         writeClient({ jsonrpc: '2.0', id: msg.id, result: { resourceTemplates: [] } });
@@ -312,10 +300,9 @@ export async function runLocalHandshakeProxy(deps: LocalHandshakeDeps): Promise<
       }
     }
   });
-  // Shut down when stdin ends/closes — and also on a stdin `'error'`, which a
-  // socket-backed stdin (the VS Code stdio shape) can emit on client death
-  // instead of a clean close; destroying the stream stops a hung fd from
-  // busy-spinning the event loop (#799).
+  // 当 stdin 结束/关闭时关闭 — 同样监听 stdin `'error'`，
+  // socket 后端的 stdin（VS Code stdio 形式）在客户端死亡时可能发出此事件
+  // 而非干净的关闭；销毁流可防止挂起的 fd 忙自旋事件循环（#799）。
   treatStdinFailureAsShutdown(shutdown);
   startPpidWatchdogNoSocket(shutdown);
 
@@ -338,21 +325,20 @@ export async function runLocalHandshakeProxy(deps: LocalHandshakeDeps): Promise<
         let resp: JsonRpc | null = null;
         try { resp = JSON.parse(line) as JsonRpc; } catch { /* not JSON — relay verbatim */ }
         if (resp && resp.id !== undefined && ('result' in resp || 'error' in resp)) {
-          inflight.delete(resp.id); // answered — no longer in flight
-          // Suppress the daemon's reply to the initialize we forwarded to prime it
-          // (the client already got the local handshake response).
+          inflight.delete(resp.id); // 已响应 — 不再进行中
+          // 抑制守护进程对我们转发的用于初始化它的 initialize 的回复
+          // （客户端已收到本地握手响应）。
           if (clientInitId !== undefined && resp.id === clientInitId) continue;
         }
         writeClient(line);
       }
     });
-    // The daemon going away does NOT end the session (#662). An MCP host can
-    // SIGTERM the shared daemon when another session starts; if we exited here,
-    // this host would silently lose Synapse and any in-flight request would
-    // hang. Instead, fall back to the in-process engine for the rest of the
-    // session and re-serve whatever the dead daemon never answered.
+    // 守护进程消失不会结束会话（#662）。MCP 宿主可能在另一个会话启动时
+    // SIGTERM 共享守护进程；如果我们在此退出，该宿主会静默地失去 Synapse，
+    // 所有进行中的请求都会挂起。改为回退到进程内引擎服务本会话剩余请求，
+    // 并重新响应守护进程未完成的请求。
     const onDaemonLost = (): void => {
-      if (shuttingDown || daemonStatus !== 'ready') return; // host teardown, or already handled
+      if (shuttingDown || daemonStatus !== 'ready') return; // 宿主正在拆解，或已处理
       daemonStatus = 'failed';
       try { daemonSocket?.destroy(); } catch { /* ignore */ }
       daemonSocket = null;
@@ -377,9 +363,8 @@ export async function runLocalHandshakeProxy(deps: LocalHandshakeDeps): Promise<
   await new Promise<void>(() => { /* stdin keeps the loop alive; exit via shutdown() */ });
 }
 
-/** PPID watchdog for the local-handshake proxy — same #277 logic as
- *  {@link startPpidWatchdog} but with no socket to close (the caller's shutdown
- *  handles teardown). */
+/** 本地握手代理的 PPID 看门狗 — 与 {@link startPpidWatchdog} 相同的 #277 逻辑，
+ *  但没有 socket 可关闭（调用方的 shutdown 处理拆解）。 */
 function startPpidWatchdogNoSocket(onDeath: () => void): void {
   const pollMs = parsePollMs(process.env.SYNAPSE_PPID_POLL_MS);
   if (pollMs <= 0) return;
@@ -401,10 +386,9 @@ function startPpidWatchdogNoSocket(onDeath: () => void): void {
 }
 
 /**
- * Read one CRLF/LF-terminated JSON line from the socket, parse it as the
- * daemon hello, and return it. Bounded to {@link MAX_HELLO_LINE_BYTES} so a
- * malicious or broken peer can't OOM us. Times out at 3s — a healthy daemon
- * sends hello immediately on accept.
+ * 从 socket 读取一行 CRLF/LF 终止的 JSON，将其解析为守护进程 hello 并返回。
+ * 限制为 {@link MAX_HELLO_LINE_BYTES}，防止恶意或损坏的对端导致 OOM。
+ * 超时 3s — 正常的守护进程在 accept 后立即发送 hello。
  */
 function readHelloLine(socket: net.Socket): Promise<DaemonHello> {
   return new Promise((resolve, reject) => {
@@ -430,7 +414,7 @@ function readHelloLine(socket: net.Socket): Promise<DaemonHello> {
       const tail = buffer.slice(idx + 1);
       cleanup();
       if (tail.length > 0) {
-        // Push back via unshift — Node's net.Socket supports it on readable streams.
+        // 通过 unshift 推回 — Node 的 net.Socket 在可读流上支持它。
         socket.unshift(tail);
       }
       try {
@@ -458,11 +442,10 @@ function readHelloLine(socket: net.Socket): Promise<DaemonHello> {
 }
 
 /**
- * Pipe stdin → socket and socket → stdout. Resolves once either end closes
- * so the process can exit. Note: we deliberately do NOT use
- * `process.stdin.pipe(socket)` because pipe propagates 'end' onto the
- * downstream, which would close the socket prematurely if stdin happens to
- * end early — the MCP spec allows it to stay open across reconnects.
+ * 管道传输 stdin → socket 和 socket → stdout。在任一端关闭后 resolve，
+ * 以便进程退出。注意：我们刻意不使用 `process.stdin.pipe(socket)`，
+ * 因为 pipe 会将 'end' 传播到下游，如果 stdin 恰好提前结束，
+ * 这会过早关闭 socket — MCP 规范允许它在重连间保持开放。
  */
 function pipeUntilClose(socket: net.Socket): Promise<void> {
   return new Promise((resolve) => {
@@ -476,9 +459,9 @@ function pipeUntilClose(socket: net.Socket): Promise<void> {
       try { socket.end(); } catch { /* ignore */ }
       done();
     });
-    // 'close' and 'error' both tear down: a socket-backed stdin can fail with
-    // an 'error' (ECONNRESET/hangup) rather than a clean close; destroying it
-    // stops a hung fd from busy-spinning the event loop (#799).
+    // 'close' 和 'error' 都会触发拆解：socket 后端的 stdin 可能以
+    // 'error'（ECONNRESET/hangup）而非干净的关闭结束；销毁它
+    // 可防止挂起的 fd 忙自旋事件循环（#799）。
     const teardown = () => {
       try { process.stdin.destroy(); } catch { /* ignore */ }
       try { socket.destroy(); } catch { /* ignore */ }
@@ -500,13 +483,13 @@ function pipeUntilClose(socket: net.Socket): Promise<void> {
 }
 
 /**
- * PPID watchdog mirroring the one in `MCPServer.start` — kills the proxy if
- * the MCP host (or its proxy of a host, see HOST_PPID_ENV) goes away without
- * closing stdin. Issue #277 documents why we can't rely on stdin EOF on
- * Linux: the parent may be SIGKILL'd and reparenting doesn't close pipes.
+ * PPID 看门狗，镜像 `MCPServer.start` 中的看门狗 — 当 MCP 宿主
+ * （或其代理的宿主，见 HOST_PPID_ENV）消失但未关闭 stdin 时终止代理。
+ * Issue #277 记录了为何在 Linux 上不能依赖 stdin EOF：
+ * 父进程可能被 SIGKILL，而重新挂载不会关闭管道。
  *
- * The proxy's "kill" is just a socket close + process.exit — no SQLite or
- * watchers to clean up, so this is cheap.
+ * 代理的"终止"只是关闭 socket + process.exit — 没有 SQLite 或监视器需要清理，
+ * 所以代价很低。
  */
 function startPpidWatchdog(socket: net.Socket): void {
   const pollMs = parsePollMs(process.env.SYNAPSE_PPID_POLL_MS);

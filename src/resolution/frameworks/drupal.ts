@@ -1,50 +1,44 @@
 ﻿/**
- * Drupal Framework Resolver
+ * Drupal 框架解析器
  *
- * Supports Drupal 8/9/10/11 (Composer-based projects). Drupal 7 is not supported.
+ * 支持 Drupal 8/9/10/11（基于 Composer 的项目）。不支持 Drupal 7。
  *
- * ## What this resolver does
+ * ## 此解析器的功能
  *
- * 1. **Detection** — reads composer.json and checks for any `drupal/*` dependency in
- *    `require` or `require-dev`.
+ * 1. **检测** — 读取 composer.json，检查 `require` 或 `require-dev` 中是否存在任何 `drupal/*` 依赖。
  *
- * 2. **Route extraction** — parses `*.routing.yml` files and emits `route` nodes for each
- *    Drupal route, with `references` edges to the `_controller`, `_form`, or entity handler
- *    class/method.
+ * 2. **路由提取** — 解析 `*.routing.yml` 文件，为每条 Drupal 路由生成 `route` 节点，
+ *    并生成指向 `_controller`、`_form` 或实体处理器类/方法的 `references` 边。
  *
- * 3. **Hook detection** — scans `.module`, `.install`, `.theme`, and `.inc` files for Drupal
- *    hook implementations. Two strategies are used:
- *      a. Docblock: `@Implements hook_X()` → precise, no false positives.
- *      b. Name pattern: function `{moduleName}_{hookSuffix}()` → catches hooks without
- *         docblocks but may produce false positives on helper functions.
- *    Detected hooks emit an `UnresolvedRef` from the implementing function node to the
- *    canonical `hook_X` name, linking implementations to the hook when `synapse_callers`
- *    is invoked.
+ * 3. **Hook 检测** — 扫描 `.module`、`.install`、`.theme` 和 `.inc` 文件中的 Drupal
+ *    hook 实现。使用两种策略：
+ *      a. 文档块：`@Implements hook_X()` → 精确，无假阳性。
+ *      b. 名称模式：函数名为 `{moduleName}_{hookSuffix}()` → 可捕获无文档块的 hook，
+ *         但对辅助函数可能产生假阳性。
+ *    检测到的 hook 会从实现函数节点向规范 `hook_X` 名称生成 `UnresolvedRef`，
+ *    在调用 `synapse_callers` 时将实现链接到 hook。
  *
- * ## Design decisions (review in future iterations)
+ * ## 设计决策（供未来迭代审阅）
  *
- * - Hook graph resolution (v1): hook references are stored as UnresolvedRef pointing to the
- *   canonical `hook_X` name. If Drupal core is indexed, these will resolve to core hook
- *   definitions. Without core, they remain unresolved but are still searchable via
- *   `synapse_search("form_alter")`. Full hook-node creation (virtual nodes for every hook)
- *   is deferred to a future iteration.
+ * - Hook 图谱解析（v1）：hook 引用作为指向规范 `hook_X` 名称的 UnresolvedRef 存储。
+ *   若 Drupal 核心已建立索引，这些引用将解析到核心 hook 定义。否则保持未解析，
+ *   但仍可通过 `synapse_search("form_alter")` 搜索到。为每个 hook 创建完整 hook
+ *   节点（虚拟节点）的工作推迟到未来迭代。
  *
- * - Services / plugins (out of scope for v1): `*.services.yml` service definitions and plugin
- *   annotations (`@Block`, `@FormElement`, etc.) are not extracted. Add a TODO below when
- *   ready to implement.
+ * - Services / 插件（v1 范围外）：`*.services.yml` 服务定义和插件注解
+ *   （`@Block`、`@FormElement` 等）不予提取。准备实现时在下方添加 TODO。
  *
- * - Twig templates (out of scope for v1): `.twig` files are tracked as file nodes but no
- *   symbol extraction is performed (no tree-sitter Twig grammar). Implement when a Twig
- *   grammar WASM is available.
+ * - Twig 模板（v1 范围外）：`.twig` 文件作为文件节点跟踪，但不进行符号提取
+ *   （无 tree-sitter Twig 语法）。待 Twig 语法 WASM 可用时实现。
  *
- * ## TODOs for future iterations
+ * ## 未来迭代的 TODO
  *
- * - TODO: Extract service definitions from `*.services.yml` files (class → service-id edges).
- * - TODO: Extract plugin annotations (`@Block`, `@FormElement`, `@Field`, etc.) from PHP
- *   docblocks and emit plugin nodes with references to the annotated class.
- * - TODO: Add Twig symbol extraction when a tree-sitter Twig grammar becomes available.
- * - TODO: Improve hook resolution: create virtual `hook_*` nodes so `synapse_callers`
- *   returns all implementations even when Drupal core is not indexed.
+ * - TODO：从 `*.services.yml` 文件提取服务定义（类 → 服务 ID 边）。
+ * - TODO：从 PHP 文档块中提取插件注解（`@Block`、`@FormElement`、`@Field` 等），
+ *   并为被注解的类生成插件节点和引用。
+ * - TODO：待 tree-sitter Twig 语法可用时添加 Twig 符号提取。
+ * - TODO：改进 hook 解析：创建虚拟 `hook_*` 节点，使 `synapse_callers` 在
+ *   Drupal 核心未建立索引时也能返回所有实现。
  */
 
 import { generateNodeId } from '../../extraction/tree-sitter-helpers';
@@ -52,12 +46,12 @@ import { Node } from '../../types';
 import { FrameworkResolver, ResolutionContext, ResolvedRef, UnresolvedRef } from '../types';
 
 // ---------------------------------------------------------------------------
-// Helpers
+// 辅助函数
 // ---------------------------------------------------------------------------
 
 /**
- * Parse the last PHP namespace segment from a FQCN like `\Drupal\mymodule\Controller\Foo`.
- * Returns `null` for strings that don't look like a FQCN.
+ * 从 `\Drupal\mymodule\Controller\Foo` 之类的 FQCN 中解析最后一个 PHP 命名空间段。
+ * 对于不像 FQCN 的字符串返回 `null`。
  */
 function lastSegment(fqcn: string): string | null {
   const clean = fqcn.replace(/^\\+/, '').trim();
@@ -67,8 +61,8 @@ function lastSegment(fqcn: string): string | null {
 }
 
 /**
- * Derive the Drupal module name from a file path.
- * e.g. `web/modules/custom/my_module/my_module.module` → `my_module`
+ * 从文件路径推导 Drupal 模块名称。
+ * 例如：`web/modules/custom/my_module/my_module.module` → `my_module`
  */
 function moduleNameFromPath(filePath: string): string | null {
   const match = filePath.match(/\/([^/]+)\.[^./]+$/);
@@ -76,13 +70,13 @@ function moduleNameFromPath(filePath: string): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// Route extraction helpers
+// 路由提取辅助函数
 // ---------------------------------------------------------------------------
 
 /**
- * Extract route nodes and handler references from a Drupal `*.routing.yml` file.
+ * 从 Drupal `*.routing.yml` 文件中提取路由节点和 handler 引用。
  *
- * Drupal routing YAML format:
+ * Drupal 路由 YAML 格式：
  *
  *   route.name:
  *     path: '/some/path'
@@ -92,7 +86,7 @@ function moduleNameFromPath(filePath: string): string | null {
  *       _title: 'Page title'
  *     requirements:
  *       _permission: 'access content'
- *     methods: [GET, POST]   # optional
+ *     methods: [GET, POST]   # 可选
  */
 function extractDrupalRoutes(
   filePath: string,
@@ -148,7 +142,7 @@ function extractDrupalRoutes(
 
     if (!trimmed || trimmed.startsWith('#')) continue;
 
-    // Top-level route name: no leading whitespace, ends with a colon (no value after)
+    // 顶层路由名称：无前导空白，以冒号结尾（冒号后无值）
     if (/^\S.*:\s*$/.test(line) && !/^\s/.test(line)) {
       flushRoute();
       pending = { name: trimmed.slice(0, -1).trim(), lineNum: i + 1 };
@@ -179,14 +173,14 @@ function extractDrupalRoutes(
       continue;
     }
 
-    // _entity_form / _entity_list / _entity_view: entity.type
+    // _entity_form / _entity_list / _entity_view：entity.type
     const entityMatch = trimmed.match(/^_(entity_form|entity_list|entity_view):\s*['"]?([^'"#\n]+?)['"]?\s*(?:#.*)?$/);
     if (entityMatch) {
       handlerRefs.push(entityMatch[2]!.trim());
       continue;
     }
 
-    // methods: [GET, POST]  or  methods: [GET]
+    // methods: [GET, POST]  或  methods: [GET]
     const methodsMatch = trimmed.match(/^methods:\s*\[([^\]]+)\]/);
     if (methodsMatch) {
       methods = methodsMatch[1]!.split(',').map((m) => m.trim().toUpperCase()).filter(Boolean);
@@ -199,7 +193,7 @@ function extractDrupalRoutes(
 }
 
 // ---------------------------------------------------------------------------
-// Hook detection helpers
+// Hook 检测辅助函数
 // ---------------------------------------------------------------------------
 
 const HOOK_FILE_EXTENSIONS = ['.module', '.install', '.theme', '.inc'];
@@ -209,19 +203,16 @@ function isDrupalHookFile(filePath: string): boolean {
 }
 
 /**
- * Extract hook implementation references from a Drupal PHP file.
+ * 从 Drupal PHP 文件中提取 hook 实现引用。
  *
- * Strategy A (primary): look for docblocks containing `Implements hook_X().`
- * followed immediately by the function definition. This is the Drupal coding
- * standard and is precise.
+ * 策略 A（主要）：查找包含 `Implements hook_X().` 的文档块，其后紧跟函数定义。
+ * 这是 Drupal 编码规范，精确且无假阳性。
  *
- * Strategy B (fallback): for functions whose name starts with `{moduleName}_`,
- * treat the suffix as the hook name. Catches hooks without docblocks but may
- * produce false positives on non-hook helper functions.
+ * 策略 B（回退）：对于名称以 `{moduleName}_` 开头的函数，将后缀视为 hook 名称。
+ * 可捕获无文档块的 hook，但对非 hook 辅助函数可能产生假阳性。
  *
- * Each detected hook emits an UnresolvedRef from the implementing function node
- * (identified by computing the same ID tree-sitter would generate) to the
- * canonical hook name, e.g. `hook_form_alter`.
+ * 每个检测到的 hook 从实现函数节点（通过计算与 tree-sitter 相同的 ID 来识别）
+ * 向规范 hook 名称（如 `hook_form_alter`）生成 UnresolvedRef。
  */
 function extractDrupalHooks(
   filePath: string,
@@ -229,15 +220,15 @@ function extractDrupalHooks(
 ): { nodes: Node[]; references: UnresolvedRef[] } {
   const references: UnresolvedRef[] = [];
 
-  // Build a map of function name → 1-indexed line number for all top-level functions.
-  // This mirrors tree-sitter's line numbering so we can reconstruct node IDs.
+  // 构建函数名 → 1-indexed 行号的映射，覆盖所有顶层函数。
+  // 这与 tree-sitter 的行号计算方式一致，用于重建节点 ID。
   const funcLineMap = new Map<string, number>();
   const funcDef = /^function\s+(\w+)\s*\(/gm;
   let fm: RegExpExecArray | null;
   while ((fm = funcDef.exec(content)) !== null) {
     const name = fm[1]!;
     if (!funcLineMap.has(name)) {
-      // line = number of newlines before match start + 1
+      // 行号 = 匹配起始位置前的换行符数量 + 1
       funcLineMap.set(name, content.slice(0, fm.index).split('\n').length);
     }
   }
@@ -257,8 +248,8 @@ function extractDrupalHooks(
     });
   };
 
-  // Strategy A: docblock `Implements hook_X().` followed by function definition.
-  // The docblock and function may be separated by blank lines.
+  // 策略 A：文档块中包含 `Implements hook_X().`，其后跟函数定义。
+  // 文档块与函数之间可以有空行。
   const docblockPattern =
     /\/\*\*[\s\S]*?(?:@|\*\s+)Implements\s+(hook_\w+)\s*\(\)[\s\S]*?\*\/\s*\n(?:\s*\n)*function\s+(\w+)\s*\(/g;
   const docblockMatched = new Set<string>();
@@ -269,9 +260,8 @@ function extractDrupalHooks(
     docblockMatched.add(funcName!);
   }
 
-  // Strategy B: fallback name-pattern matching for functions without docblocks.
-  // Only applies to functions whose name starts with {moduleName}_ and that were
-  // not already matched by Strategy A.
+  // 策略 B：对无文档块的函数进行名称模式匹配回退。
+  // 仅适用于名称以 {moduleName}_ 开头且未被策略 A 匹配的函数。
   const moduleName = moduleNameFromPath(filePath);
   if (moduleName) {
     const prefix = moduleName + '_';
@@ -280,8 +270,8 @@ function extractDrupalHooks(
       if (!funcName.startsWith(prefix)) continue;
       const hookSuffix = funcName.slice(prefix.length);
       if (!hookSuffix) continue;
-      // Emit a reference to hook_{suffix} — the resolver will link it if the
-      // hook is defined somewhere in the indexed graph (e.g. Drupal core).
+      // 向 hook_{suffix} 生成引用——若该 hook 在已索引图谱中有定义
+      // （例如 Drupal 核心），解析器会将其链接。
       emitHookRef(`hook_${hookSuffix}`, funcName);
     }
   }
@@ -290,18 +280,18 @@ function extractDrupalHooks(
 }
 
 // ---------------------------------------------------------------------------
-// Resolver
+// 解析器
 // ---------------------------------------------------------------------------
 
 export const drupalResolver: FrameworkResolver = {
   name: 'drupal',
   languages: ['php', 'yaml'],
 
-  // Drupal route handlers are FQCNs (`\Drupal\…\Class::method`, the single-colon
-  // controller-service form `\Drupal\…\Class:method`, or a bare `\…\FormClass`)
-  // and hook refs are canonical `hook_*` names — none match a declared symbol, so
-  // resolveOne's pre-filter would drop them before resolve() runs. Claim the
-  // shapes resolve() handles (mirrors the Rails `controller#action` claim).
+  // Drupal 路由 handler 为 FQCN（`\Drupal\…\Class::method`、单冒号
+  // controller-service 形式 `\Drupal\…\Class:method`，或裸 `\…\FormClass`），
+  // hook 引用为规范 `hook_*` 名称——两者均不匹配已声明的符号，因此
+  // resolveOne 的预过滤器会在 resolve() 运行前将其丢弃。在此声明认领
+  // resolve() 处理的形式（与 Rails `controller#action` 声明方式一致）。
   claimsReference(name: string): boolean {
     return (
       name.startsWith('hook_') ||
@@ -311,10 +301,10 @@ export const drupalResolver: FrameworkResolver = {
   },
 
   detect(context: ResolutionContext): boolean {
-    // Primary: composer.json identifies a Drupal project/module/theme/profile.
-    // A contrib module often has an EMPTY `require` (no `drupal/*` dep) but still
-    // declares `"name": "drupal/<module>"` and `"type": "drupal-module"`, so check
-    // those too — checking deps alone misses every standalone contrib module.
+    // 主要方式：composer.json 标识 Drupal 项目/模块/主题/配置文件。
+    // contrib 模块的 `require` 通常为空（无 `drupal/*` 依赖），但仍会声明
+    // `"name": "drupal/<module>"` 和 `"type": "drupal-module"`，因此也需
+    // 检查这些字段——仅检查依赖项会遗漏所有独立的 contrib 模块。
     const composer = context.readFile('composer.json');
     if (composer) {
       try {
@@ -329,14 +319,13 @@ export const drupalResolver: FrameworkResolver = {
         const deps = { ...json.require, ...(json['require-dev'] ?? {}) };
         if (Object.keys(deps).some((k) => k.startsWith('drupal/'))) return true;
       } catch {
-        // malformed composer.json — fall through to file-based detection
+      // malformed composer.json——回退到基于文件的检测
       }
     }
 
-    // Fallback (composer-less module, or a non-Drupal composer.json): the
-    // unmistakable Drupal signature is a `*.info.yml` manifest alongside a
-    // Drupal PHP/route file. Require both so a stray `.info.yml` elsewhere
-    // doesn't trigger a false positive.
+    // 回退（无 composer 的模块，或非 Drupal 的 composer.json）：
+    // Drupal 不可混淆的特征是 `*.info.yml` 清单文件与 Drupal PHP/路由文件并存。
+    // 两者都要求，避免其他位置的 `.info.yml` 触发误判。
     const files = context.getAllFiles();
     const hasInfoYml = files.some((f) => f.endsWith('.info.yml'));
     if (!hasInfoYml) return false;
@@ -352,8 +341,8 @@ export const drupalResolver: FrameworkResolver = {
   resolve(ref: UnresolvedRef, context: ResolutionContext): ResolvedRef | null {
     const name = ref.referenceName;
 
-    // _controller: '\Drupal\module\...\ClassName::methodName' (double colon) or the
-    // single-colon controller-service form '\Drupal\...\ClassName:methodName'.
+    // _controller：'\Drupal\module\...\ClassName::methodName'（双冒号）或
+    // 单冒号 controller-service 形式 '\Drupal\...\ClassName:methodName'。
     const controllerMatch = name.match(/^\\?(?:Drupal\\[^:]+\\)?([^\\:]+):{1,2}(\w+)$/);
     if (controllerMatch) {
       const [, className, methodName] = controllerMatch;
@@ -369,7 +358,7 @@ export const drupalResolver: FrameworkResolver = {
       }
     }
 
-    // _form / _entity_form: '\Drupal\module\...\ClassName'  (bare FQCN, no method)
+    // _form / _entity_form：'\Drupal\module\...\ClassName'（裸 FQCN，无方法名）
     if (name.includes('\\') && !name.includes(':')) {
       const className = lastSegment(name);
       if (className) {
@@ -381,9 +370,9 @@ export const drupalResolver: FrameworkResolver = {
       }
     }
 
-    // hook_X — find any function whose name ends in _{hookSuffix} in a hook file
+    // hook_X——在 hook 文件中查找名称以 _{hookSuffix} 结尾的任意函数
     if (name.startsWith('hook_')) {
-      const hookSuffix = name.slice(5); // strip 'hook_'
+      const hookSuffix = name.slice(5); // 去除 'hook_'
       const candidates = context.getNodesByKind('function').filter(
         (n) => n.name.endsWith(`_${hookSuffix}`) && isDrupalHookFile(n.filePath)
       );

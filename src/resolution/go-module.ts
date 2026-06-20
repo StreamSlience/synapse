@@ -1,31 +1,31 @@
 /**
- * Go module path detection.
+ * Go 模块路径检测。
  *
- * A Go monorepo's cross-package calls (`pkga.FuncX(...)`) only resolve when
- * the resolver knows the project's module path (the `module ...` directive
- * in `go.mod`). Without it, `isExternalImport` treats every in-module import
- * — `github.com/example/myproject/pkga` — as a third-party package, so
- * resolution falls through to name-matching with path proximity and returns
- * a tiny fraction of the real call sites. See issue #388.
+ * Go monorepo 的跨包调用（`pkga.FuncX(...)`）只有在解析器知道项目的模块路径
+ * （`go.mod` 中的 `module ...` 指令）时才能正确解析。若没有该信息，
+ * `isExternalImport` 会将每一个模块内的导入——如
+ * `github.com/example/myproject/pkga`——都视为第三方包，
+ * 导致解析回退到名称匹配加路径邻近度，最终只能返回真实调用点中极小的一部分。
+ * 参见 issue #388。
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
 
 export interface GoModule {
-  /** The module path declared in `go.mod`, e.g. `github.com/example/myproject` */
+  /** `go.mod` 中声明的模块路径，例如 `github.com/example/myproject` */
   modulePath: string;
-  /** Absolute path to the directory containing the `go.mod` file. */
+  /** 包含 `go.mod` 文件的目录的绝对路径。 */
   rootDir: string;
 }
 
 /**
- * Read the `go.mod` file at the project root and extract the module path.
- * Returns `null` if no `go.mod` exists or it has no `module` directive.
+ * 读取项目根目录下的 `go.mod` 文件并提取模块路径。
+ * 若不存在 `go.mod` 或其中没有 `module` 指令，则返回 `null`。
  *
- * Limitation: only the project-root `go.mod` is read. Nested `go.mod` files
- * (Go workspaces, monorepos with multiple modules) are not yet resolved —
- * a follow-up if a real repro shows up.
+ * 限制：仅读取项目根目录下的 `go.mod`。嵌套的 `go.mod` 文件
+ * （Go workspaces、包含多个模块的 monorepo）目前不支持——
+ * 若有真实复现案例，可在后续跟进处理。
  */
 export function loadGoModule(projectRoot: string): GoModule | null {
   const goModPath = path.join(projectRoot, 'go.mod');
@@ -35,12 +35,12 @@ export function loadGoModule(projectRoot: string): GoModule | null {
   } catch {
     return null;
   }
-  // `module <path>` is the first non-comment directive in any valid go.mod.
-  // Strip line comments so a `// module foo` doesn't false-match.
+  // `module <path>` 是任何合法 go.mod 中第一个非注释指令。
+  // 先去掉行注释，避免 `// module foo` 造成误匹配。
   const stripped = content.replace(/\/\/[^\n]*/g, '');
   const match = stripped.match(/^\s*module\s+(\S+)\s*$/m);
   if (!match) return null;
-  // Strip optional quoting around the module path.
+  // 去掉模块路径周围的可选引号。
   const modulePath = match[1]!.replace(/^["']|["']$/g, '');
   if (!modulePath) return null;
   return { modulePath, rootDir: projectRoot };

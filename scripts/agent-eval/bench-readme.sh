@@ -1,9 +1,9 @@
 ﻿#!/usr/bin/env bash
-# Re-run the README "Benchmark Results" A/B (with vs without synapse) on the
-# current build: the 7 README repos, same queries, RUNS per arm (default 4).
-# Output → /tmp/ab-readme/<repo>/run<n>/run-headless-{with,without}.jsonl
-# Aggregate with parse-bench-readme.mjs. Repos must be cloned + indexed under
-# $CORPUS (default /tmp/synapse-corpus) by the build under test.
+# 在当前构建上重跑 README「Benchmark Results」A/B（有/无 synapse）：
+# 7 个 README 代码库，相同查询，每组 RUNS 次运行（默认 4）。
+# 输出 → /tmp/ab-readme/<repo>/run<n>/run-headless-{with,without}.jsonl
+# 聚合结果使用 parse-bench-readme.mjs。代码库必须由待测构建
+# 在 $CORPUS（默认 /tmp/synapse-corpus）下克隆并已索引。
 set -uo pipefail
 H="$(cd "$(dirname "$0")" && pwd)"
 C="${CORPUS:-/tmp/synapse-corpus}"

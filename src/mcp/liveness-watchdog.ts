@@ -1,53 +1,44 @@
 ﻿/**
- * Main-thread liveness watchdog — belt-and-suspenders for #850.
+ * 主线程活跃性看门狗 — #850 的双重保险。
  *
- * The #850 fix removes the one *known* trigger (the uncaught-exception handler
- * no longer formats a raw Error's `.stack`). But ANY synchronous, non-yielding
- * loop on the main thread — a future V8 stack-format pathology, a runaway
- * regex, an accidental `while (true)` — wedges the event loop, and from JS you
- * cannot interrupt it: timers, signal handlers, and the PPID watchdog all run
- * *on* that blocked loop, so the process pins a core forever with no
- * self-recovery (the exact unrecoverable state #850 reported).
+ * #850 的修复移除了唯一*已知*的触发条件（未捕获异常处理器不再格式化原始 Error 的 `.stack`）。
+ * 但主线程上任何同步、不让步的循环 — 未来的 V8 栈格式异常、失控的正则、意外的 `while (true)` —
+ * 都会卡住事件循环，而在 JS 中无法中断它：定时器、信号处理器和 PPID 看门狗都运行*在*
+ * 那个被阻塞的循环上，进程会永久占用一个 CPU 核心且无法自我恢复
+ * （正是 #850 报告的那种不可恢复状态）。
  *
- * **Why a separate PROCESS, not a worker thread.** A worker thread was the
- * obvious first choice and it works in a toy process — but it was validated to
- * FAIL in the real daemon (#850 live test). V8 isolates in one process
- * coordinate on global safepoints, so when one thread requests a GC every other
- * thread must reach a safepoint before it can proceed. A main thread wedged in
- * a tight, non-allocating loop never reaches one, which strands the watchdog
- * worker on its very next allocation/safepoint check — and the #850 hot loop
- * (`SourcePositionTableIterator::Advance`, a non-allocating C++ table walk) is
- * exactly that shape. A child process shares no isolate and no heap with the
- * parent, so the wedge cannot touch it; it kills via the kernel, which honours
- * SIGKILL regardless of what the parent's threads are doing.
+ * **为什么用独立进程而非 worker 线程。** Worker 线程是最初的明显选择，在玩具进程中也能工作 —
+ * 但已在真实守护进程上验证其会*失败*（#850 实测）。同一进程中的 V8 隔离区在全局安全点上协调，
+ * 因此当一个线程请求 GC 时，所有其他线程必须到达安全点才能继续。卡在紧密、无内存分配循环中的
+ * 主线程永远到不了安全点，这会让看门狗 worker 在其下一次内存分配/安全点检查时卡死 —
+ * 而 #850 的热循环（`SourcePositionTableIterator::Advance`，一个无内存分配的 C++ 表遍历）
+ * 正是这种形态。子进程与父进程不共享隔离区和堆，因此卡死无法影响它；
+ * 它通过内核发送 SIGKILL，内核会无视父进程线程的状态来执行。
  *
- * **How.** The parent writes a heartbeat byte to the child's stdin every
- * `checkMs` from a timer — firing at all means the event loop is turning. The
- * child resets a kill-timer on each byte; if none arrives for `timeoutMs` it
- * `SIGKILL`s the parent so a fresh daemon starts on the next connection. When
- * the parent exits normally the pipe closes and the child exits too (no
- * orphan).
+ * **机制。** 父进程每隔 `checkMs` 通过定时器向子进程的 stdin 写入一个心跳字节 —
+ * 能触发就说明事件循环在运转。子进程在每次收到字节时重置一个终止定时器；
+ * 如果在 `timeoutMs` 内没有收到任何字节，则 `SIGKILL` 父进程，以便下次连接时启动新的守护进程。
+ * 父进程正常退出时管道关闭，子进程也随之退出（无孤儿进程）。
  *
- * **Won't fire on real work.** Heavy parsing runs in the parse worker
- * (off-thread) and indexing shells out to a child process, so the daemon's main
- * thread only ever does fast, bounded work. The default timeout is ~300× the
- * 5h #850 wedge shorter, yet far longer than any legitimate main-thread block.
- * Opt out with `SYNAPSE_NO_WATCHDOG=1`; tune with `SYNAPSE_WATCHDOG_TIMEOUT_MS`.
+ * **不会在正常工作时触发。** 繁重的解析在解析 worker（非主线程）中运行，
+ * 索引则调用子进程，因此守护进程主线程只做快速、有界的工作。
+ * 默认超时约为 #850 那次 5 小时卡死的 300 分之一，但远长于任何合理的主线程阻塞时间。
+ * 用 `SYNAPSE_NO_WATCHDOG=1` 禁用；用 `SYNAPSE_WATCHDOG_TIMEOUT_MS` 调整。
  */
 import * as fs from 'fs';
 import * as os from 'os';
 import { spawn, ChildProcess } from 'child_process';
 
-/** Default: 60s — ~300× shorter than the 5h #850 wedge, far longer than any real main-thread block. */
+/** 默认值：60s — 约为 #850 那次 5 小时卡死的 300 分之一，远长于任何真实的主线程阻塞。 */
 export const DEFAULT_WATCHDOG_TIMEOUT_MS = 60_000;
 
-/** `true` for `1/true/yes/on` (case-insensitive); `false` otherwise. */
+/** `1/true/yes/on`（不区分大小写）时为 `true`；否则为 `false`。 */
 function isEnvTruthy(raw: string | undefined): boolean {
   if (!raw) return false;
   return ['1', 'true', 'yes', 'on'].includes(raw.trim().toLowerCase());
 }
 
-/** Parse the timeout env, falling back to the default for missing/invalid values. */
+/** 解析超时环境变量，对缺失/无效值回退到默认值。 */
 export function parseWatchdogTimeoutMs(
   raw: string | undefined,
   fallback: number = DEFAULT_WATCHDOG_TIMEOUT_MS
@@ -57,12 +48,12 @@ export function parseWatchdogTimeoutMs(
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
-/** Derive a heartbeat cadence that emits several beats inside the timeout window. */
+/** 推导一个在超时窗口内能发出若干次心跳的心跳间隔。 */
 export function deriveCheckIntervalMs(timeoutMs: number): number {
   return Math.min(2000, Math.max(50, Math.round(timeoutMs / 5)));
 }
 
-/** Arming/teardown diagnostics, gated on the existing MCP debug switch. */
+/** 启动/拆解诊断信息，受现有 MCP 调试开关控制。 */
 function debug(msg: string): void {
   if (process.env.SYNAPSE_MCP_DEBUG) {
     try { fs.writeSync(2, `[Synapse watchdog] ${msg}\n`); } catch { /* ignore */ }
@@ -70,16 +61,15 @@ function debug(msg: string): void {
 }
 
 export interface WatchdogHandle {
-  /** Stop heartbeating and shut the watchdog child down. Idempotent. */
+  /** 停止心跳并关闭看门狗子进程。幂等。 */
   stop(): void;
 }
 
 /**
- * The watchdog child body, run via `node -e`. Inlined as a string (not a
- * shipped `.js`) so there is no dist-vs-src path to resolve — it runs
- * identically under `tsx` in tests and under the bundle in production. Reads its
- * target pid + timeout from argv; an MSG built once at startup (the child is
- * never wedged, so allocation here is fine).
+ * 看门狗子进程体，通过 `node -e` 运行。以字符串内联（而非打包的 `.js`），
+ * 以避免需要解析 dist 与 src 的路径 — 在测试中的 `tsx` 和生产中的 bundle 下
+ * 行为完全相同。从 argv 读取目标 pid 和超时；MSG 在启动时构建一次
+ * （子进程不会卡死，所以此处的内存分配没问题）。
  */
 const CHILD_SOURCE = `
 const fs = require('fs');
@@ -100,10 +90,9 @@ process.stdin.resume();
 `;
 
 /**
- * Install the main-thread liveness watchdog for a long-lived process. Returns a
- * handle to stop it, or `null` when disabled or when the child can't be spawned
- * (degraded, never throws — a missing watchdog must never keep a process from
- * starting).
+ * 为长期运行的进程安装主线程活跃性看门狗。返回一个用于停止它的句柄，
+ * 或在已禁用或子进程无法派生时返回 `null`
+ * （降级运行，永不抛出异常 — 缺少看门狗绝不能阻止进程启动）。
  */
 export function installMainThreadWatchdog(): WatchdogHandle | null {
   if (isEnvTruthy(process.env.SYNAPSE_NO_WATCHDOG)) return null;
@@ -113,18 +102,18 @@ export function installMainThreadWatchdog(): WatchdogHandle | null {
 
   let child: ChildProcess;
   try {
-    // No execArgv inheritance (unlike Worker), so the child carries none of our
-    // V8 flags — it runs no WASM and needs none. stderr inherits the parent's
-    // fd 2 so the kill notice lands wherever the parent logs (daemon.log).
+    // 不继承 execArgv（不同于 Worker），所以子进程不携带我们的 V8 标志 —
+    // 它不运行 WASM 也不需要。stderr 继承父进程的 fd 2，
+    // 使终止通知输出到父进程记录日志的地方（daemon.log）。
     child = spawn(
       process.execPath,
       ['-e', CHILD_SOURCE, String(process.pid), String(timeoutMs)],
       {
         stdio: ['pipe', 'ignore', 'inherit'],
         windowsHide: true,
-        // The watchdog touches no files; keep its cwd off the project/temp dir
-        // so it can't hold one open (Windows EPERM-on-cleanup, mirrors the
-        // parse-worker quirk).
+        // 看门狗不触碰任何文件；将其 cwd 设在项目/临时目录之外，
+        // 以防它持有目录句柄（Windows EPERM-on-cleanup，与
+        // parse-worker 的问题类似）。
         cwd: os.tmpdir(),
       }
     );
@@ -139,19 +128,19 @@ export function installMainThreadWatchdog(): WatchdogHandle | null {
     try { child.kill(); } catch { /* ignore */ }
     return null;
   }
-  // Writing after the child exits surfaces EPIPE on the stream — swallow it so
-  // it can't escalate to the global handler (which now exits, #850).
+  // 子进程退出后向其写入会在流上触发 EPIPE — 吞掉它，
+  // 以防升级到全局处理器（现在会退出，#850）。
   stdin.on('error', () => { /* child gone; heartbeat writes are best-effort */ });
   child.on('error', (err) => debug(`child error: ${err.message}`));
 
-  // Heartbeat: a byte per tick. When the main thread wedges, these stop and the
-  // child's timeout fires. unref'd so it never keeps the process alive itself.
+  // 心跳：每个滴答写入一个字节。当主线程卡死时，这些心跳停止，
+  // 子进程的超时触发。unref 使其不会让进程在工作结束后继续存活。
   const heartbeat = setInterval(() => {
     try { stdin.write('\n'); } catch { /* child gone */ }
   }, checkMs);
   heartbeat.unref();
 
-  // Neither the child nor its pipe should keep the parent alive past its work.
+  // 子进程及其管道都不应让父进程在工作结束后继续存活。
   child.unref();
   try { (stdin as unknown as { unref?: () => void }).unref?.(); } catch { /* ignore */ }
 

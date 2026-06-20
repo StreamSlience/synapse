@@ -1,7 +1,7 @@
-﻿/**
- * Java Framework Resolver
+/**
+ * Java 框架解析器
  *
- * Handles Spring Boot and general Java patterns.
+ * 处理 Spring Boot 及通用 Java 模式。
  */
 
 import { Node } from '../../types';
@@ -13,21 +13,20 @@ export const springResolver: FrameworkResolver = {
   languages: ['java', 'kotlin', 'yaml', 'properties'],
 
   claimsReference(name: string): boolean {
-    // `@ConfigurationProperties(prefix="app.cache")` emits a reference whose
-    // name carries the `:prefix` sentinel — there's no declared symbol with
-    // that exact spelling, so the resolver's name-existence pre-filter would
-    // drop it. Opt those through.
+    // `@ConfigurationProperties(prefix="app.cache")` 会生成一个引用，其名称携带
+    // `:prefix` 哨兵——不存在拼写完全相同的已声明符号，因此解析器的名称预过滤
+    // 会将其丢弃。在此选择让这些引用通过。
     return name.endsWith(':prefix');
   },
 
   detect(context: ResolutionContext): boolean {
-    // Check for pom.xml with Spring
+    // 检查包含 Spring 的 pom.xml
     const pomXml = context.readFile('pom.xml');
     if (pomXml && (pomXml.includes('spring-boot') || pomXml.includes('springframework'))) {
       return true;
     }
 
-    // Check for build.gradle with Spring
+    // 检查包含 Spring 的 build.gradle
     const buildGradle = context.readFile('build.gradle');
     if (buildGradle && (buildGradle.includes('spring-boot') || buildGradle.includes('springframework'))) {
       return true;
@@ -38,7 +37,7 @@ export const springResolver: FrameworkResolver = {
       return true;
     }
 
-    // Check for Spring annotations in Java files
+    // 检查 Java 文件中的 Spring 注解
     const allFiles = context.getAllFiles();
     for (const file of allFiles) {
       if (file.endsWith('.java')) {
@@ -58,39 +57,38 @@ export const springResolver: FrameworkResolver = {
   },
 
   resolve(ref: UnresolvedRef, context: ResolutionContext): ResolvedRef | null {
-    // Spring config-key references — `@Value("${key}")` (single leaf) and
-    // `@ConfigurationProperties(prefix="X")` (entire subtree, marked with the
-    // `:prefix` suffix in extractSpringValueBindings). Lookup goes through
-    // Spring's relaxed binding (kebab/camel/snake → canonical lowercase).
+    // Spring 配置键引用——`@Value("${key}")` （单个叶节点）和
+    // `@ConfigurationProperties(prefix="X")`（整个子树，在 extractSpringValueBindings
+    // 中用 `:prefix` 后缀标记）。查找通过 Spring 的宽松绑定进行
+    // （kebab/camel/snake → 规范小写）。
     if (ref.referenceName.endsWith(':prefix')) {
       const prefix = ref.referenceName.slice(0, -':prefix'.length);
       const canonPrefix = canonicalConfigKey(prefix);
-      // Prefer an exact prefix match (one node = the prefix subtree). Without
-      // node-level subtree representation we map to the closest matching key.
+      // 优先精确前缀匹配（一个节点 = 前缀子树）。由于没有节点级子树表示，
+      // 映射到最近匹配的键。
       const candidates = context.getNodesByKind('constant').filter(
         (n) => (n.language === 'yaml' || n.language === 'properties')
           && canonicalConfigKey(n.qualifiedName).startsWith(canonPrefix),
       );
       if (candidates.length === 0) return null;
-      // Pick the SHORTEST canonical name — it's the closest binding point
-      // (`app.cache` over `app.cache.name.user-token` for prefix=`app.cache`).
+      // 选取规范名称最短的——它是最近的绑定点
+      // （对于 prefix=`app.cache`，`app.cache` 优先于 `app.cache.name.user-token`）。
       const best = candidates.reduce((a, b) =>
         canonicalConfigKey(a.qualifiedName).length <= canonicalConfigKey(b.qualifiedName).length ? a : b,
       );
       return { original: ref, targetNodeId: best.id, confidence: 0.85, resolvedBy: 'framework' };
     }
     if (ref.referenceName.includes('.') && ref.language !== 'java' && ref.language !== 'kotlin') {
-      // Spring config dotted key — only when the source language is Java/Kotlin
-      // (the bindings come from `@Value`). Skip non-Spring refs that happen to
-      // have dots in them.
+      // Spring 配置点分键——仅当源语言为 Java/Kotlin 时
+      // （绑定来自 `@Value`）。跳过碰巧含有点号的非 Spring 引用。
     }
     if (
       (ref.language === 'java' || ref.language === 'kotlin') &&
       ref.referenceName.includes('.') &&
       !ref.referenceName.includes('::') &&
-      // Exclude method-call style (single-dot, both sides lower-camel). Spring
-      // config keys are typically 3+ segments and contain kebabs/dashes; we
-      // can't filter perfectly but skipping single-dot keeps the lookup tight.
+      // 排除方法调用风格（单点，两侧均为小驼峰）。Spring 配置键
+      // 通常有 3 个以上分段并含有连字符/短划线；无法完美过滤，
+      // 但跳过单点可使查找更精准。
       ref.referenceName.split('.').length >= 2
     ) {
       const canonRef = canonicalConfigKey(ref.referenceName);
@@ -103,11 +101,10 @@ export const springResolver: FrameworkResolver = {
         return { original: ref, targetNodeId: candidates[0]!.id, confidence: 0.9, resolvedBy: 'framework' };
       }
       if (candidates.length > 1) {
-        // Multiple profile-specific files (application-dev.yml +
-        // application-prod.yml) can define the same key. Prefer the one with
-        // the shortest profile suffix (the base `application.yml` wins over
-        // profile variants when both exist), then by alphabetical path so the
-        // pick is deterministic across reindexes.
+        // 多个特定 profile 的文件（application-dev.yml +
+        // application-prod.yml）可以定义相同的键。优先选取 profile 后缀
+        // 最短的（当基础 `application.yml` 与 profile 变体同时存在时，
+        // 基础文件优先），然后按字母顺序排序以确保跨重建时的结果一致。
         const score = (n: Node) => {
           const base = n.filePath.split('/').pop() ?? '';
           const isBase = /^(application|bootstrap)\.(yml|yaml|properties)$/i.test(base);
@@ -118,7 +115,7 @@ export const springResolver: FrameworkResolver = {
       }
     }
 
-    // Pattern 1: Service references (dependency injection)
+    // 模式 1：Service 引用（依赖注入）
     if (ref.referenceName.endsWith('Service')) {
       const result = resolveByNameAndKind(ref.referenceName, SERVICE_KINDS, SERVICE_DIRS, context);
       if (result) {
@@ -131,7 +128,7 @@ export const springResolver: FrameworkResolver = {
       }
     }
 
-    // Pattern 2: Repository references
+    // 模式 2：Repository 引用
     if (ref.referenceName.endsWith('Repository')) {
       const result = resolveByNameAndKind(ref.referenceName, SERVICE_KINDS, REPO_DIRS, context);
       if (result) {
@@ -144,7 +141,7 @@ export const springResolver: FrameworkResolver = {
       }
     }
 
-    // Pattern 3: Controller references
+    // 模式 3：Controller 引用
     if (ref.referenceName.endsWith('Controller')) {
       const result = resolveByNameAndKind(ref.referenceName, CLASS_KINDS, CONTROLLER_DIRS, context);
       if (result) {
@@ -157,7 +154,7 @@ export const springResolver: FrameworkResolver = {
       }
     }
 
-    // Pattern 4: Entity/Model references
+    // 模式 4：Entity/Model 引用
     if (/^[A-Z][a-zA-Z]+$/.test(ref.referenceName)) {
       const result = resolveByNameAndKind(ref.referenceName, CLASS_KINDS, ENTITY_DIRS, context);
       if (result) {
@@ -170,7 +167,7 @@ export const springResolver: FrameworkResolver = {
       }
     }
 
-    // Pattern 5: Component references
+    // 模式 5：Component 引用
     if (ref.referenceName.endsWith('Component') || ref.referenceName.endsWith('Config')) {
       const result = resolveByNameAndKind(ref.referenceName, CLASS_KINDS, COMPONENT_DIRS, context);
       if (result) {
@@ -187,16 +184,15 @@ export const springResolver: FrameworkResolver = {
   },
 
   extract(filePath, content) {
-    // Spring config files (application.yml / application.properties /
-    // bootstrap.yml + per-profile variants) are extracted on the framework
-    // path, not in the language extractor, so the keys become first-class
-    // nodes a `@Value("${k}")` reference can resolve to.
+    // Spring 配置文件（application.yml / application.properties /
+    // bootstrap.yml + 各 profile 变体）在框架路径上提取，而非在语言提取器中，
+    // 这样键就成为 `@Value("${k}")` 引用可以解析到的一等节点。
     if (isSpringConfigFile(filePath)) {
       return extractSpringConfig(filePath, content);
     }
-    // Spring Boot is used from both Java and Kotlin (identical @GetMapping etc.
-    // annotations); the difference is method syntax — Kotlin `fun name(...)` vs
-    // Java `public X name(...)` — handled in the method regex below.
+    // Spring Boot 同时用于 Java 和 Kotlin（相同的 @GetMapping 等注解）；
+    // 区别在于方法语法——Kotlin `fun name(...)` vs Java `public X name(...)`
+    // ——在下方的方法 regex 中处理。
     if (!filePath.endsWith('.java') && !filePath.endsWith('.kt')) return { nodes: [], references: [] };
     const nodes: Node[] = [];
     const references: UnresolvedRef[] = [];
@@ -204,10 +200,10 @@ export const springResolver: FrameworkResolver = {
     const lang: 'java' | 'kotlin' = filePath.endsWith('.kt') ? 'kotlin' : 'java';
     const safe = stripCommentsForRegex(content, 'java');
 
-    // Class-level @RequestMapping prefix (an @RequestMapping whose tail leads to a
-    // `class`). Joined onto each method's path — and, crucially, NOT treated as a
-    // route itself (the old regex did, creating one bogus class route and missing
-    // every BARE method mapping like `@PostMapping` with the path on the class).
+    // 类级别的 @RequestMapping 前缀（尾部指向 `class` 的 @RequestMapping）。
+    // 拼接到每个方法的路径上——关键是不将其本身视为一个路由
+    // （旧 regex 会这样做，创建一个虚假的类路由，并遗漏每个
+    // BARE 方法映射，如路径在类上的 `@PostMapping`）。
     let classPrefix = '';
     const cls = /@RequestMapping\s*\(([^)]*)\)\s*(?:@[\w.]+(?:\([^)]*\))?\s*)*(?:public\s+|final\s+|abstract\s+|open\s+|data\s+|sealed\s+)*class\b/.exec(safe);
     if (cls) classPrefix = parseMappingPath(cls[1]!);
@@ -215,7 +211,7 @@ export const springResolver: FrameworkResolver = {
     const VERB: Record<string, string> = {
       GetMapping: 'GET', PostMapping: 'POST', PutMapping: 'PUT', PatchMapping: 'PATCH', DeleteMapping: 'DELETE',
     };
-    // Verb-specific method mappings — always method-level, BARE or with a path.
+    // 动词专属方法映射——始终位于方法级别，BARE 或带路径。
     const mappingRegex = /@(GetMapping|PostMapping|PutMapping|PatchMapping|DeleteMapping)\b\s*(\([^)]*\))?/g;
     let match: RegExpExecArray | null;
     while ((match = mappingRegex.exec(safe)) !== null) {
@@ -238,8 +234,8 @@ export const springResolver: FrameworkResolver = {
       };
       nodes.push(routeNode);
 
-      // Method it decorates: first declared method after (skip stacked annotations;
-      // Java puts the return type before the name). Bounded so we don't grab a far one.
+      // 它所装饰的方法：之后第一个声明的方法（跳过堆叠的注解；
+      // Java 在名称前放返回类型）。有界以避免抓取过远的方法。
       const tail = safe.slice(match.index + match[0].length, match.index + match[0].length + 600);
       const methodMatch = tail.match(/\bfun\s+(\w+)\s*\(|\b(?:public|private|protected)\s+[^;{=]*?\s+(\w+)\s*\(/);
       if (methodMatch) {
@@ -255,14 +251,14 @@ export const springResolver: FrameworkResolver = {
       }
     }
 
-    // Method-level @RequestMapping (older style: `@RequestMapping(value="/x",
-    // method=RequestMethod.GET)` on a method). The class-level @RequestMapping is
-    // the prefix (handled above) — skip it here so it isn't double-counted.
+    // 方法级别的 @RequestMapping（旧风格：方法上的
+    // `@RequestMapping(value="/x", method=RequestMethod.GET)`）。
+    // 类级别的 @RequestMapping 是前缀（上方已处理）——此处跳过以避免重复计数。
     const reqRe = /@RequestMapping\b\s*(\([^)]*\))?/g;
     while ((match = reqRe.exec(safe)) !== null) {
       const args = (match[1] || '').replace(/^\(|\)$/g, '');
       const after = safe.slice(match.index + match[0].length, match.index + match[0].length + 600);
-      if (/^\s*(?:@[\w.]+(?:\([^)]*\))?\s*)*(?:public\s+|final\s+|abstract\s+|open\s+|data\s+|sealed\s+)*class\b/.test(after)) continue; // class-level prefix
+      if (/^\s*(?:@[\w.]+(?:\([^)]*\))?\s*)*(?:public\s+|final\s+|abstract\s+|open\s+|data\s+|sealed\s+)*class\b/.test(after)) continue; // 类级别前缀
       const methodMatch = after.match(/\bfun\s+(\w+)\s*\(|\b(?:public|private|protected)\s+[^;{=]*?\s+(\w+)\s*\(/);
       if (!methodMatch) continue;
       const verbM = args.match(/method\s*=\s*(?:RequestMethod\.)?(\w+)/);
@@ -285,32 +281,29 @@ export const springResolver: FrameworkResolver = {
       });
     }
 
-    // @Value("${key}") and @ConfigurationProperties(prefix="...") — bind
-    // Spring config-key references in Java/Kotlin source. The reference target
-    // is the corresponding YAML/properties leaf-key node emitted by
-    // extractSpringConfig; springResolver.resolve looks it up with relaxed
-    // binding (kebab/camel/snake collapse).
+    // `@Value("${key}")` 和 `@ConfigurationProperties(prefix="...")`——
+    // 绑定 Java/Kotlin 源码中的 Spring 配置键引用。引用目标是
+    // extractSpringConfig 生成的对应 YAML/properties 叶键节点；
+    // springResolver.resolve 通过宽松绑定（kebab/camel/snake 折叠）查找它。
     extractSpringValueBindings(filePath, safe, lang, now, nodes, references);
 
     return { nodes, references };
   },
 };
 
-/** Spring config file patterns: application(-profile)?.{yml,yaml,properties} +
- * bootstrap variants. Matches the basename, not the path, so a project that
- * vendors `application.yml` under `src/main/resources` and one under `src/test/
- * resources` are both picked up. */
+/** Spring 配置文件模式：application(-profile)?.{yml,yaml,properties} +
+ * bootstrap 变体。匹配文件名而非路径，因此将 `application.yml`
+ * 放在 `src/main/resources` 和 `src/test/resources` 下的项目都能被识别。 */
 function isSpringConfigFile(filePath: string): boolean {
   const base = filePath.split('/').pop() ?? '';
   return /^(application|bootstrap)(-[\w.-]+)?\.(yml|yaml|properties)$/i.test(base);
 }
 
 /**
- * Parse a Spring config file (YAML or .properties) and emit one `constant`
- * node per LEAF key, with `qualifiedName` = the dotted path. Leaf keys are
- * what `@Value("${k}")` references hit; intermediate keys aren't bound by
- * Spring's `@Value` (a `@ConfigurationProperties` class binds a SUBTREE, and
- * those references are resolved at lookup time by prefix-suffix matching).
+ * 解析 Spring 配置文件（YAML 或 .properties），为每个叶键生成一个 `constant`
+ * 节点，`qualifiedName` 为点分路径。叶键是 `@Value("${k}")` 引用命中的目标；
+ * Spring 的 `@Value` 不绑定中间键（`@ConfigurationProperties` 类绑定子树，
+ * 这些引用在查找时通过前缀后缀匹配解析）。
  */
 function extractSpringConfig(
   filePath: string,
@@ -335,21 +328,20 @@ function extractSpringConfig(
       endColumn: valueText.length,
       language: lang,
       signature: dottedKey,
-      // SECURITY (#383): store the KEY only, never the value. Config files
-      // routinely hold secrets (DB passwords, API keys, JDBC URLs with embedded
-      // credentials), and surfacing the value here pushes it into agent context
-      // unbidden (it lands in synapse_node/explore output via the docstring).
-      // The key is all `@Value`/`@ConfigurationProperties` resolution needs; an
-      // agent that genuinely needs a value can read the file directly.
+      // 安全（#383）：只存储键，绝不存储值。配置文件中
+      // 经常包含密钥（数据库密码、API 密钥、带凭据的 JDBC URL），
+      // 将值暴露在此会将其推入智能体上下文
+      // （通过 synapse_node/explore 输出的 docstring 呈现）。
+      // `@Value`/`@ConfigurationProperties` 解析只需要键；
+      // 真正需要值的智能体可以直接读取文件。
       updatedAt: now,
     });
   };
 
   if (isProperties) {
-    // Properties format: `k1.k2.k3 = value` (or `:` separator, or no value).
-    // Lines starting with `#`/`!` are comments. Backslash continuations are
-    // valid but rare; we don't try to join them (a continued value is still
-    // a value of the same key).
+    // Properties 格式：`k1.k2.k3 = value`（或 `:` 分隔符，或无值）。
+    // 以 `#`/`!` 开头的行是注释。反斜杠续行合法但少见；
+    // 我们不尝试拼接它们（续行的值仍属于同一键）。
     const lines = content.split(/\r?\n/);
     for (let i = 0; i < lines.length; i++) {
       const raw = lines[i] ?? '';
@@ -371,10 +363,9 @@ function extractSpringConfig(
     return { nodes, references: [] };
   }
 
-  // YAML: indent-based. We track a stack of (indent, key) so the dotted path
-  // is built by joining ancestor keys with `.`. A leaf is a line with a value
-  // on the same line (after `:`). List items, flow-style scalars, and `---`
-  // separators are ignored — they don't bind to `@Value` anyway.
+  // YAML：基于缩进。我们维护一个 (indent, key) 栈，通过将祖先键用 `.` 连接
+  // 来构建点分路径。叶节点是同行有值的行（在 `:` 之后）。列表项、
+  // 流式标量和 `---` 分隔符被忽略——它们无法绑定到 `@Value`。
   const stack: Array<{ indent: number; key: string }> = [];
   const yamlLines = content.split(/\r?\n/);
   for (let i = 0; i < yamlLines.length; i++) {
@@ -401,8 +392,8 @@ function extractSpringConfig(
     if (after === '' || after.startsWith('#')) {
       stack.push({ indent, key });
     } else {
-      // A leaf with an inline value (or a flow-mapping like `{ a: 1 }` — we
-      // emit it as a leaf, not as a subtree; precision is fine for `@Value`).
+      // 带内联值的叶节点（或流式映射如 `{ a: 1 }`——
+      // 我们将其作为叶节点而非子树处理；对于 `@Value` 来说精度足够）。
       const valStripped = after.replace(/^["']|["']$/g, '');
       emitLeaf(dotted, i + 1, valStripped);
     }
@@ -410,9 +401,9 @@ function extractSpringConfig(
   return { nodes, references: [] };
 }
 
-/** Append `@Value("${k}")` and `@ConfigurationProperties(prefix=...)`
- * references discovered in `safe` (comments stripped) into the caller's
- * `nodes`/`references` arrays. */
+/** 将 `safe`（已去除注释）中发现的 `@Value("${k}")` 和
+ * `@ConfigurationProperties(prefix=...)` 引用追加到调用方的
+ * `nodes`/`references` 数组中。 */
 function extractSpringValueBindings(
   filePath: string,
   safe: string,
@@ -475,8 +466,8 @@ function extractSpringValueBindings(
     nodes.push(bindNode);
     references.push({
       fromNodeId: bindNode.id,
-      // Mark the reference with a `:prefix` suffix so springResolver.resolve
-      // knows to expand it into the SUBTREE rather than a single key.
+      // 用 `:prefix` 后缀标记引用，使 springResolver.resolve
+      // 知道要将其展开为子树而非单个键。
       referenceName: `${prefix}:prefix`,
       referenceKind: 'references',
       line,
@@ -487,14 +478,14 @@ function extractSpringValueBindings(
   }
 }
 
-/** Spring's relaxed binding (`cache-list` ↔ `cacheList` ↔ `cache_list` ↔
- * `CACHE_LIST`) collapses on lowercase + dash/underscore removal. We compare
- * candidate keys to a reference in this canonical form. */
+/** Spring 的宽松绑定（`cache-list` ↔ `cacheList` ↔ `cache_list` ↔
+ * `CACHE_LIST`）折叠为小写并去除连字符/下划线。我们以此规范形式
+ * 比较候选键与引用键。 */
 function canonicalConfigKey(key: string): string {
   return key.toLowerCase().replace(/[-_]/g, '');
 }
 
-// Directory patterns
+// 目录模式
 const SERVICE_DIRS = ['/service/', '/services/'];
 const REPO_DIRS = ['/repository/', '/repositories/'];
 const CONTROLLER_DIRS = ['/controller/', '/controllers/'];
@@ -504,20 +495,20 @@ const COMPONENT_DIRS = ['/component/', '/components/', '/config/'];
 const CLASS_KINDS = new Set(['class']);
 const SERVICE_KINDS = new Set(['class', 'interface']);
 
-/** Path string from a mapping's args (`"/x"`, `value = "/x"`, `path = "/x"`); '' if bare. */
+/** 从映射参数中提取路径字符串（`"/x"`、`value = "/x"`、`path = "/x"`）；若为 BARE 则返回 ''。 */
 function parseMappingPath(args: string): string {
   const m = args.match(/["']([^"']*)["']/);
   return m ? m[1]! : '';
 }
 
-/** Join a class-level prefix and a method sub-path into one normalized `/path`. */
+/** 将类级别前缀和方法子路径拼接为一个规范化的 `/path`。 */
 function joinPath(prefix: string, sub: string): string {
   const parts = [prefix, sub].map((p) => p.replace(/^\/+|\/+$/g, '')).filter(Boolean);
   return '/' + parts.join('/');
 }
 
 /**
- * Resolve a symbol by name using indexed queries instead of scanning all files.
+ * 通过索引查询按名称解析符号，而非扫描所有文件。
  */
 function resolveByNameAndKind(
   name: string,
@@ -531,13 +522,13 @@ function resolveByNameAndKind(
   const kindFiltered = candidates.filter((n) => kinds.has(n.kind));
   if (kindFiltered.length === 0) return null;
 
-  // Prefer candidates in framework-conventional directories
+  // 优先选取框架惯用目录中的候选项
   const preferred = kindFiltered.filter((n) =>
     preferredDirPatterns.some((d) => n.filePath.includes(d))
   );
 
   if (preferred.length > 0) return preferred[0]!.id;
 
-  // Fall back to any match
+  // 回退到任意匹配项
   return kindFiltered[0]!.id;
 }

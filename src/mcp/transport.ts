@@ -1,24 +1,24 @@
 ﻿/**
- * MCP JSON-RPC Transports
+ * MCP JSON-RPC 传输层
  *
- * Two flavors share the same wire format (newline-delimited JSON-RPC 2.0):
+ * 两种传输方式共享相同的线路格式（换行符分隔的 JSON-RPC 2.0）：
  *
- * - `StdioTransport` — original transport; reads/writes the process's
- *   stdin/stdout. Used by direct-mode MCP servers.
- * - `SocketTransport` — wraps a single `net.Socket`. Used by the shared-daemon
- *   architecture (see {@link ./daemon}) to multiplex multiple MCP clients onto
- *   one Synapse instance via per-connection sessions.
+ * - `StdioTransport` — 原始传输方式；读写进程的 stdin/stdout。
+ *   用于直连模式的 MCP 服务器。
+ * - `SocketTransport` — 封装单个 `net.Socket`。用于共享守护进程
+ *   架构（参见 {@link ./daemon}），通过每连接会话将多个 MCP 客户端
+ *   多路复用到同一个 Synapse 实例上。
  *
- * Both implement {@link JsonRpcTransport} so the session-level protocol logic
- * (initialize / tools/list / tools/call, plus server-initiated `roots/list`)
- * is identical regardless of where the bytes come from.
+ * 两者均实现 {@link JsonRpcTransport}，因此会话层协议逻辑
+ *（initialize / tools/list / tools/call，以及服务器发起的 `roots/list`）
+ * 与字节来源无关，完全一致。
  */
 
 import * as readline from 'readline';
 import type { Socket } from 'net';
 
 /**
- * JSON-RPC 2.0 Request
+ * JSON-RPC 2.0 请求
  */
 export interface JsonRpcRequest {
   jsonrpc: '2.0';
@@ -28,7 +28,7 @@ export interface JsonRpcRequest {
 }
 
 /**
- * JSON-RPC 2.0 Response
+ * JSON-RPC 2.0 响应
  */
 export interface JsonRpcResponse {
   jsonrpc: '2.0';
@@ -38,7 +38,7 @@ export interface JsonRpcResponse {
 }
 
 /**
- * JSON-RPC 2.0 Error
+ * JSON-RPC 2.0 错误
  */
 export interface JsonRpcError {
   code: number;
@@ -47,7 +47,7 @@ export interface JsonRpcError {
 }
 
 /**
- * JSON-RPC 2.0 Notification (no id, no response expected)
+ * JSON-RPC 2.0 通知（无 id，不期望响应）
  */
 export interface JsonRpcNotification {
   jsonrpc: '2.0';
@@ -55,7 +55,7 @@ export interface JsonRpcNotification {
   params?: unknown;
 }
 
-// Standard JSON-RPC error codes
+// 标准 JSON-RPC 错误码
 export const ErrorCodes = {
   ParseError: -32700,
   InvalidRequest: -32600,
@@ -67,9 +67,9 @@ export const ErrorCodes = {
 export type MessageHandler = (message: JsonRpcRequest | JsonRpcNotification) => Promise<void>;
 
 /**
- * Generic JSON-RPC transport interface — common surface for stdio and socket
- * carriers. Anything below the session layer (initialize, tool dispatch, etc.)
- * talks to this, not to a concrete transport class.
+ * 通用 JSON-RPC 传输接口——stdio 和 socket 载体的公共接口。
+ * 会话层以下（initialize、工具分发等）的代码与此接口交互，
+ * 而非与具体的传输类耦合。
  */
 export interface JsonRpcTransport {
   start(handler: MessageHandler): void;
@@ -82,15 +82,14 @@ export interface JsonRpcTransport {
 }
 
 /**
- * Shared implementation of newline-delimited JSON-RPC 2.0 over any
- * `Readable`/`Writable` stream pair. Stdio and socket transports both wrap
- * this — the only difference between them is which streams get plugged in
- * and how a "close" propagates back to the owning code.
+ * 基于换行符分隔 JSON-RPC 2.0 的共享实现，支持任意 `Readable`/`Writable`
+ * 流对。stdio 和 socket 传输均继承此类——两者的唯一区别在于
+ * 接入哪对流，以及"关闭"事件如何传播回上层代码。
  */
 abstract class LineBasedJsonRpcTransport implements JsonRpcTransport {
   protected messageHandler: MessageHandler | null = null;
-  // Outstanding server-initiated requests (e.g. roots/list), keyed by the id
-  // we sent. Responses from the client are matched back here.
+  // 待处理的服务器主动发起的请求（例如 roots/list），以我们发送的 id 为键。
+  // 客户端的响应会在此处匹配回来。
   protected pending = new Map<string | number, {
     resolve: (value: unknown) => void;
     reject: (error: Error) => void;
@@ -104,12 +103,12 @@ abstract class LineBasedJsonRpcTransport implements JsonRpcTransport {
   abstract stop(): void;
 
   /**
-   * Send a server-initiated request to the client and await its response.
+   * 向客户端发送服务器主动请求并等待其响应。
    *
-   * MCP is bidirectional: the server can ask the client questions too. We use
-   * this for `roots/list` — the spec-blessed way to learn the workspace root
-   * when the client didn't pass one in `initialize` (see issue #196). Rejects
-   * on timeout so callers can fall back rather than hang forever.
+   * MCP 是双向的：服务器也可以向客户端发问。我们用此方法处理
+   * `roots/list`——这是在客户端未在 `initialize` 中传递工作区根目录时，
+   * 规范推荐的获取方式（参见 issue #196）。超时后拒绝，
+   * 使调用方可以降级处理而非永久挂起。
    */
   request(method: string, params?: unknown, timeoutMs = 5000): Promise<unknown> {
     const id = `${this.idPrefix()}-${this.nextRequestId++}`;
@@ -118,7 +117,7 @@ abstract class LineBasedJsonRpcTransport implements JsonRpcTransport {
         this.pending.delete(id);
         reject(new Error(`Timed out after ${timeoutMs}ms waiting for "${method}" response`));
       }, timeoutMs);
-      // Don't let a pending request keep the process alive on shutdown.
+      // 不要让待处理的请求在关闭时阻止进程退出。
       timer.unref?.();
       this.pending.set(id, {
         resolve: (value) => { clearTimeout(timer); resolve(value); },
@@ -146,8 +145,8 @@ abstract class LineBasedJsonRpcTransport implements JsonRpcTransport {
   }
 
   /**
-   * Fail any in-flight server-initiated requests so their awaiters don't hang.
-   * Called from `stop()` in subclasses.
+   * 拒绝所有正在飞行中的服务器主动请求，使其等待方不会挂起。
+   * 在子类的 `stop()` 中调用。
    */
   protected rejectPending(reason: string): void {
     for (const { reject } of this.pending.values()) {
@@ -157,7 +156,7 @@ abstract class LineBasedJsonRpcTransport implements JsonRpcTransport {
   }
 
   /**
-   * Handle an incoming line of JSON. Both transports feed lines here.
+   * 处理一行传入的 JSON。两种传输均将行内容传至此处。
    */
   protected async handleLine(line: string): Promise<void> {
     const trimmed = line.trim();
@@ -171,9 +170,9 @@ abstract class LineBasedJsonRpcTransport implements JsonRpcTransport {
       return;
     }
 
-    // Response to a server-initiated request (has id + result/error, no method).
-    // Route it to the awaiting requester instead of the message handler — these
-    // used to be dropped as "Invalid Request" because they carry no method.
+    // 服务器主动请求的响应（有 id + result/error，无 method）。
+    // 将其路由到等待中的请求方，而非消息处理器——
+    // 此前这类消息因不含 method 字段而被当作"无效请求"丢弃。
     const obj = parsed as Record<string, unknown>;
     if (
       obj?.jsonrpc === '2.0' &&
@@ -185,7 +184,7 @@ abstract class LineBasedJsonRpcTransport implements JsonRpcTransport {
       return;
     }
 
-    // Validate basic JSON-RPC structure
+    // 校验基本 JSON-RPC 结构
     if (!this.isValidMessage(parsed)) {
       this.sendError(null, ErrorCodes.InvalidRequest, 'Invalid Request: not a valid JSON-RPC 2.0 message');
       return;
@@ -208,9 +207,9 @@ abstract class LineBasedJsonRpcTransport implements JsonRpcTransport {
   }
 
   /**
-   * Resolve (or reject) the pending server-initiated request matching this
-   * response's id. Unknown ids are ignored — the client may echo something we
-   * never sent, or a request may have already timed out.
+   * 解析（或拒绝）与此响应 id 匹配的待处理服务器主动请求。
+   * 未知 id 将被忽略——客户端可能回传我们从未发送的内容，
+   * 或请求可能已超时。
    */
   private handleResponse(msg: Record<string, unknown>): void {
     const id = msg.id as string | number;
@@ -226,7 +225,7 @@ abstract class LineBasedJsonRpcTransport implements JsonRpcTransport {
   }
 
   /**
-   * Check if message is a valid JSON-RPC 2.0 message
+   * 检查消息是否为有效的 JSON-RPC 2.0 消息
    */
   private isValidMessage(msg: unknown): boolean {
     if (typeof msg !== 'object' || msg === null) return false;
@@ -239,27 +238,25 @@ abstract class LineBasedJsonRpcTransport implements JsonRpcTransport {
 
 export interface StdioTransportOptions {
   /**
-   * If true, the transport calls `process.exit(0)` when stdin closes. Set to
-   * `false` in shared-daemon mode where the stdio "session" is just *one* of
-   * many clients — losing it shouldn't drag the daemon down. The default
-   * (true) matches the original single-process behavior callers rely on.
+   * 若为 true，当 stdin 关闭时传输层调用 `process.exit(0)`。在共享守护进程
+   * 模式下设为 `false`，此时 stdio "会话"只是多个客户端之一——
+   * 断开它不应拖垮整个守护进程。默认值（true）与调用方所依赖的
+   * 原始单进程行为一致。
    */
   exitOnClose?: boolean;
   /**
-   * Optional callback fired when the stdin stream closes. The daemon uses
-   * this to decrement its connected-clients refcount.
+   * stdin 流关闭时触发的可选回调。守护进程用此来递减已连接客户端的引用计数。
    */
   onClose?: () => void;
 }
 
 /**
- * Stdio Transport for MCP
+ * MCP 的 Stdio 传输
  *
- * Reads JSON-RPC messages from stdin and writes responses to stdout. Used by
- * the direct (single-process) MCP server path, where the MCP host launches
- * one server per session and talks to it over the child's stdio. Also used by
- * shared-daemon mode for the launcher's session (with `exitOnClose: false`)
- * so the daemon outlives its launcher.
+ * 从 stdin 读取 JSON-RPC 消息并将响应写入 stdout。用于直连（单进程）
+ * MCP 服务器路径，此时 MCP 宿主为每个会话启动一个服务器并通过
+ * 子进程的 stdio 与其通信。在共享守护进程模式下也用于启动器的会话
+ *（设置 `exitOnClose: false`），使守护进程存活于其启动器之外。
  */
 export class StdioTransport extends LineBasedJsonRpcTransport {
   private rl: readline.Interface | null = null;
@@ -286,12 +283,12 @@ export class StdioTransport extends LineBasedJsonRpcTransport {
       await this.handleLine(line);
     });
 
-    // readline 'close' fires on a clean stdin EOF. But a socket-backed stdin
-    // (the VS Code stdio shape) can fail with an 'error' (ECONNRESET/hangup)
-    // that readline doesn't surface as 'close' — unhandled, it escalated to
-    // the global uncaughtException handler (which keeps running), orphaning
-    // the server and, on Linux, busy-spinning a POLLHUP fd at 100% CPU. Treat
-    // 'error' as terminal too, and destroy stdin so the fd leaves epoll (#799).
+    // readline 的 'close' 事件在 stdin 正常 EOF 时触发。但 socket 支撑的 stdin
+    // （VS Code 的 stdio 形态）可能以 'error' 的形式失败（ECONNRESET/挂断），
+    // readline 不会将其作为 'close' 暴露出来——不处理的话，它会上升至
+    // 全局 uncaughtException 处理器（进程继续运行），使服务器成为孤儿进程，
+    // 并在 Linux 上以 100% CPU 忙轮询 POLLHUP 的 fd（参见 #799）。
+    // 将 'error' 也视为终止信号，并销毁 stdin，使 fd 脱离 epoll。
     let closed = false;
     const onStreamEnd = (): void => {
       if (closed) return;
@@ -326,12 +323,12 @@ export class StdioTransport extends LineBasedJsonRpcTransport {
 }
 
 /**
- * Socket Transport for MCP daemon sessions.
+ * MCP 守护进程会话的 Socket 传输。
  *
- * Wraps a single `net.Socket` (Unix domain socket on POSIX, named pipe on
- * Windows). One instance per connected MCP client. Unlike {@link StdioTransport},
- * `stop()` and stream-close *don't* call `process.exit` — a daemon-side session
- * ending must not bring down the whole daemon.
+ * 封装单个 `net.Socket`（POSIX 上为 Unix 域 socket，Windows 上为命名管道）。
+ * 每个已连接的 MCP 客户端对应一个实例。与 {@link StdioTransport} 不同，
+ * `stop()` 和流关闭*不会*调用 `process.exit`——守护进程侧的会话结束
+ * 不得拖垮整个守护进程。
  */
 export class SocketTransport extends LineBasedJsonRpcTransport {
   private buffer = '';
@@ -342,8 +339,8 @@ export class SocketTransport extends LineBasedJsonRpcTransport {
   }
 
   /**
-   * Register a callback fired exactly once when the socket closes (from either
-   * side). Used by the daemon to decrement its connected-clients refcount.
+   * 注册一个回调，当 socket 从任意一侧关闭时恰好触发一次。
+   * 守护进程用此来递减已连接客户端的引用计数。
    */
   onClose(handler: () => void): void {
     this.closeHandlers.push(handler);
@@ -356,11 +353,10 @@ export class SocketTransport extends LineBasedJsonRpcTransport {
     this.socket.on('data', (chunk: string) => {
       this.buffer += chunk;
       let idx;
-      // Drain every complete line; tail-fragment stays in the buffer for the
-      // next chunk. The handler is async but we don't await it here — JSON-RPC
-      // permits out-of-order responses, and serializing here would deadlock if
-      // a handler issued a server-initiated request that needed a *later* line
-      // to arrive (e.g. roots/list mid-tools-call).
+      // 清空每一行完整内容；尾部片段留在缓冲区等待下一个数据块。
+      // 处理器是异步的，但此处不使用 await——JSON-RPC 允许乱序响应，
+      // 若在此处序列化会造成死锁：如果处理器发起了一个服务器主动请求，
+      // 而响应需要*后续*行才能到达（例如 roots/list 处于 tools/call 中途）。
       while ((idx = this.buffer.indexOf('\n')) !== -1) {
         const line = this.buffer.slice(0, idx);
         this.buffer = this.buffer.slice(idx + 1);
@@ -370,7 +366,7 @@ export class SocketTransport extends LineBasedJsonRpcTransport {
 
     this.socket.on('close', () => this.handleSocketClose());
     this.socket.on('error', (err) => {
-      // Don't crash the daemon over a broken pipe; just shut this connection.
+      // 不因一个损坏的管道而使守护进程崩溃；只关闭此连接。
       process.stderr.write(`[Synapse daemon] socket error: ${err.message}\n`);
       this.handleSocketClose();
     });
@@ -387,9 +383,9 @@ export class SocketTransport extends LineBasedJsonRpcTransport {
   }
 
   /**
-   * Write a one-shot line directly to the socket (no JSON-RPC framing applied
-   * by this class — caller produces the line). The daemon uses this for the
-   * hello/handshake line that precedes the JSON-RPC stream.
+   * 直接向 socket 写入一行原始数据（此类不进行 JSON-RPC 组帧——
+   * 由调用方生成行内容）。守护进程用此发送 JSON-RPC 流前的
+   * hello/握手行。
    */
   writeRaw(line: string): void {
     if (!this.socket.destroyed) {
@@ -412,7 +408,7 @@ export class SocketTransport extends LineBasedJsonRpcTransport {
     this.stopped = true;
     this.rejectPending('Socket closed');
     for (const h of this.closeHandlers) {
-      try { h(); } catch { /* never let a close-handler take the daemon down */ }
+      try { h(); } catch { /* 绝不让关闭处理器拖垮守护进程 */ }
     }
     this.closeHandlers = [];
   }

@@ -1,66 +1,62 @@
 /**
- * Project-level import-path alias loading.
+ * 项目级导入路径别名加载。
  *
- * Reads `compilerOptions.paths` from `tsconfig.json` / `jsconfig.json`
- * at the project root and converts the patterns into a form the
- * import-resolver can consult.
+ * 从项目根目录的 `tsconfig.json` / `jsconfig.json` 中读取
+ * `compilerOptions.paths`，并将其模式转换为导入解析器可以查询的形式。
  *
- * This is the single biggest blocker to accurate resolution on modern
- * JS/TS codebases: aliases like `@/components/Foo` (Next, Nuxt, Nest,
- * Vite scaffolds) point into a `paths` map the resolver previously
- * ignored — every import through an alias was treated as unresolvable
- * unless it happened to match the small hard-coded fallback list.
+ * 这是在现代 JS/TypeScript 代码库上实现精确解析的最大障碍：
+ * 类似 `@/components/Foo`（Next、Nuxt、Nest、Vite 脚手架）这样的别名
+ * 指向 `paths` 映射，而解析器此前会忽略该映射——所有通过别名的导入
+ * 都被视为无法解析，除非恰好命中小范围的硬编码回退列表。
  *
- * Scope deliberately small for v1:
- *   - reads tsconfig.json, then jsconfig.json
- *   - honours top-level `compilerOptions.baseUrl` and `compilerOptions.paths`
- *   - supports `*` wildcard (the only TS-supported wildcard)
- *   - does NOT follow `extends` chains yet (most projects don't need it)
- *   - does NOT read Vite/webpack/Rollup configs (separate follow-up)
+ * v1 范围刻意保持精简：
+ *   - 依次读取 tsconfig.json，再读 jsconfig.json
+ *   - 遵循顶层的 `compilerOptions.baseUrl` 与 `compilerOptions.paths`
+ *   - 支持 `*` 通配符（TypeScript 唯一支持的通配符）
+ *   - 暂不跟随 `extends` 链（大多数项目不需要）
+ *   - 暂不读取 Vite/webpack/Rollup 配置（后续单独跟进）
  *
- * The file is parsed as JSON-with-comments-tolerant — tsconfigs in the
- * wild routinely contain `//` and `/* *\/` comments and trailing
- * commas, which JSON.parse rejects. We strip those before parsing.
+ * 文件以容忍 JSON-with-comments 的方式解析——现实中的 tsconfig
+ * 经常包含 `//` 和 `/* *\/` 注释以及尾随逗号，这些会导致 JSON.parse 报错。
+ * 我们在解析前先将其剥离。
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
 import { logDebug } from '../errors';
 
-/** A single alias pattern from `compilerOptions.paths`. */
+/** 来自 `compilerOptions.paths` 的单个别名模式。 */
 export interface AliasPattern {
-  /** The literal prefix before `*` (or the whole pattern if no `*`). */
+  /** `*` 之前的字面前缀（若无 `*` 则为完整模式）。 */
   prefix: string;
-  /** The literal suffix after `*` (almost always empty). */
+  /** `*` 之后的字面后缀（几乎总是空字符串）。 */
   suffix: string;
-  /** Whether the pattern contains a `*` wildcard. */
+  /** 该模式是否包含 `*` 通配符。 */
   hasWildcard: boolean;
   /**
-   * Replacement templates. When `hasWildcard` is true, `*` in the
-   * replacement is filled with the captured wildcard portion of the
-   * import path. Stored relative to {@link AliasMap.baseUrl}.
-   * tsconfig allows multiple targets per alias (priority order).
+   * 替换模板。当 `hasWildcard` 为 true 时，替换中的 `*` 会被
+   * 导入路径中捕获的通配符部分填充。
+   * 存储为相对于 {@link AliasMap.baseUrl} 的路径。
+   * tsconfig 允许每个别名有多个目标（按优先级排序）。
    */
   replacements: string[];
 }
 
 export interface AliasMap {
-  /** Absolute path. The directory `compilerOptions.paths` is rooted at. */
+  /** 绝对路径。`compilerOptions.paths` 的根目录。 */
   baseUrl: string;
   /**
-   * Patterns ordered by specificity: longer prefix first, then literal-
-   * before-wildcard, so the resolver tries the most-specific match.
+   * 按特异性排序的模式：前缀越长越优先，同等前缀长度时字面模式优先于
+   * 通配符模式，以确保解析器优先尝试最精确的匹配。
    */
   patterns: AliasPattern[];
 }
 
 /**
- * Strip JSONC comments + trailing commas so a tsconfig with the usual
- * VS Code-style annotations parses cleanly. Walks the source as a
- * tiny state machine that tracks string context — the previous
- * regex-only version corrupted any URL inside a string value
- * (`"baseUrl": "https://cdn.example.com"` had everything after `//`
- * truncated).
+ * 剥离 JSONC 注释与尾随逗号，使带有常见 VS Code 风格注解的 tsconfig
+ * 能够干净地解析。以微型状态机遍历源码，追踪字符串上下文——
+ * 此前仅用 regex 的版本会破坏字符串值中的 URL
+ * （`"baseUrl": "https://cdn.example.com"` 中 `//` 之后的内容会被截断）。
  */
 function stripJsonc(src: string): string {
   let out = '';
@@ -98,8 +94,8 @@ function stripJsonc(src: string): string {
     out += ch;
     i++;
   }
-  // Trailing commas before } or ] — outside strings, so safe to
-  // run on the comment-stripped output.
+  // `}` 或 `]` 前的尾随逗号——在字符串之外，可安全地
+  // 对剥离注释后的输出执行替换。
   return out.replace(/,(\s*[}\]])/g, '$1');
 }
 
@@ -136,11 +132,11 @@ function splitWildcard(pattern: string): {
 }
 
 /**
- * Load aliases for `projectRoot`. Returns `null` when no tsconfig /
- * jsconfig is present or when the file has no usable `paths`.
+ * 加载 `projectRoot` 的别名。当不存在 tsconfig / jsconfig，
+ * 或文件中没有可用的 `paths` 时返回 `null`。
  *
- * Cheap to call repeatedly — caching is the caller's job (the
- * resolver does it via {@link aliasCache}).
+ * 可频繁调用，开销极低——缓存由调用方负责
+ * （解析器通过 {@link aliasCache} 实现缓存）。
  */
 export function loadProjectAliases(projectRoot: string): AliasMap | null {
   const candidates = ['tsconfig.json', 'jsconfig.json'];
@@ -164,9 +160,8 @@ export function loadProjectAliases(projectRoot: string): AliasMap | null {
 
   const paths = co.paths;
   if (!paths || typeof paths !== 'object') {
-    // baseUrl alone isn't an "alias" per se; with no paths we'd just
-    // be redirecting the whole tree. Skip — the existing resolver
-    // already handles relative imports.
+    // 单独的 baseUrl 本身算不上"别名"；没有 paths 时我们只是在
+    // 重定向整个目录树。跳过——现有解析器已能处理相对导入。
     return null;
   }
 
@@ -181,9 +176,8 @@ export function loadProjectAliases(projectRoot: string): AliasMap | null {
 
   if (patterns.length === 0) return null;
 
-  // Specificity sort: longer prefix first; literal patterns before
-  // wildcard patterns of the same prefix length. TypeScript itself
-  // uses a similar "most specific match wins" rule.
+  // 特异性排序：前缀越长越靠前；相同前缀长度时字面模式优先于
+  // 通配符模式。TypeScript 本身采用类似的"最精确匹配优先"规则。
   patterns.sort((a, b) => {
     if (a.prefix.length !== b.prefix.length) return b.prefix.length - a.prefix.length;
     if (a.hasWildcard !== b.hasWildcard) return a.hasWildcard ? 1 : -1;
@@ -200,13 +194,13 @@ export function loadProjectAliases(projectRoot: string): AliasMap | null {
 }
 
 /**
- * Resolve an import path through an {@link AliasMap}. Returns the list
- * of candidate filesystem paths (relative to `projectRoot`), in the
- * priority order defined by tsconfig (multiple replacements per alias
- * are tried in order). Returns `[]` when no alias matches.
+ * 通过 {@link AliasMap} 解析导入路径。返回候选文件系统路径列表
+ * （相对于 `projectRoot`），顺序遵循 tsconfig 定义的优先级
+ * （每个别名的多个替换目标按顺序逐一尝试）。
+ * 无别名匹配时返回 `[]`。
  *
- * Callers still need to try each candidate with the language's
- * extension list — this function only does the alias rewrite.
+ * 调用方仍需用语言的扩展名列表逐一尝试每个候选路径——
+ * 本函数仅执行别名改写。
  */
 export function applyAliases(
   importPath: string,
@@ -221,18 +215,17 @@ export function applyAliases(
     if (pat.hasWildcard) {
       captured = importPath.slice(pat.prefix.length, importPath.length - pat.suffix.length);
     } else if (importPath !== pat.prefix) {
-      // Literal pattern must match exactly.
+      // 字面模式必须精确匹配。
       continue;
     }
 
     const out: string[] = [];
     for (const target of pat.replacements) {
       const filled = pat.hasWildcard ? target.replace('*', captured) : target;
-      // baseUrl is absolute; produce a path relative to projectRoot
+      // baseUrl 为绝对路径；生成相对于 projectRoot 的路径
       const absolute = path.resolve(aliases.baseUrl, filled);
       const relative = path.relative(projectRoot, absolute);
-      // Skip if the rewrite escapes the project root (unsafe + can't
-      // be looked up via the file index anyway).
+      // 若改写结果逃逸出项目根目录则跳过（不安全，且无法通过文件索引查找）。
       if (relative.startsWith('..')) continue;
       out.push(relative.replace(/\\/g, '/'));
     }

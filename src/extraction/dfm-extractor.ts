@@ -2,16 +2,16 @@ import { Node, Edge, ExtractionResult, ExtractionError, UnresolvedReference } fr
 import { generateNodeId } from './tree-sitter-helpers';
 
 /**
- * Custom extractor for Delphi DFM/FMX form files.
+ * Delphi DFM/FMX 表单文件的自定义提取器。
  *
- * DFM/FMX files describe the visual component hierarchy and event handler
- * bindings. They use a simple text format (object/end blocks) that we parse
- * with regex — no tree-sitter grammar exists for this format.
+ * DFM/FMX 文件描述可视化组件层级与事件处理器绑定，
+ * 使用简单的文本格式（object/end 块），通过正则解析——
+ * 该格式目前没有对应的 tree-sitter 语法。
  *
- * Extracted information:
- * - Components as NodeKind `component`
- * - Nesting as EdgeKind `contains`
- * - Event handlers (OnClick = MethodName) as UnresolvedReference → EdgeKind `references`
+ * 提取的信息：
+ * - 组件，NodeKind 为 `component`
+ * - 嵌套关系，EdgeKind 为 `contains`
+ * - 事件处理器（OnClick = MethodName），UnresolvedReference → EdgeKind `references`
  */
 export class DfmExtractor {
   private filePath: string;
@@ -27,7 +27,7 @@ export class DfmExtractor {
   }
 
   /**
-   * Extract components and event handler references from DFM/FMX source
+   * 从 DFM/FMX 源码中提取组件和事件处理器引用
    */
   extract(): ExtractionResult {
     const startTime = Date.now();
@@ -52,7 +52,7 @@ export class DfmExtractor {
     };
   }
 
-  /** Create a file node for the DFM form file */
+  /** 为 DFM 表单文件创建文件节点 */
   private createFileNode(): Node {
     const lines = this.source.split('\n');
     const id = generateNodeId(this.filePath, 'file', this.filePath, 1);
@@ -75,7 +75,7 @@ export class DfmExtractor {
     return fileNode;
   }
 
-  /** Parse object/end blocks and extract components + event handlers */
+  /** 解析 object/end 块，提取组件及事件处理器 */
   private parseComponents(fileNodeId: string): void {
     const lines = this.source.split('\n');
     const stack: string[] = [fileNodeId];
@@ -92,7 +92,7 @@ export class DfmExtractor {
       const line = lines[i]!;
       const lineNum = i + 1;
 
-      // Skip multi-line properties
+      // 跳过多行属性
       if (inMultiLine) {
         if (line.trimEnd().endsWith(multiLineEndChar)) inMultiLine = false;
         continue;
@@ -108,7 +108,7 @@ export class DfmExtractor {
         continue;
       }
 
-      // Component declaration
+      // 组件声明
       const objMatch = line.match(objectPattern);
       if (objMatch) {
         const [, , name, typeName] = objMatch;
@@ -136,7 +136,7 @@ export class DfmExtractor {
         continue;
       }
 
-      // Event handler
+      // 事件处理器
       const eventMatch = line.match(eventPattern);
       if (eventMatch) {
         const [, , methodName] = eventMatch;
@@ -150,7 +150,7 @@ export class DfmExtractor {
         continue;
       }
 
-      // Block end
+      // 块结束
       if (endPattern.test(line)) {
         if (stack.length > 1) stack.pop();
       }

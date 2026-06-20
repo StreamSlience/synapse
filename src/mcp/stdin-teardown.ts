@@ -1,27 +1,25 @@
 /**
- * Treat a stdin failure as a shutdown signal — issue #799.
+ * 将 stdin 失败视为关闭信号 — issue #799。
  *
- * An MCP stdio server's lifeline is its stdin: when the host/client goes away,
- * stdin should end and the server should exit. The server paths listened for
- * `'end'` and `'close'` — but NOT `'error'`.
+ * MCP stdio 服务器的生命线是其 stdin：当宿主/客户端消失时，
+ * stdin 应该结束，服务器应该退出。服务器路径监听了 `'end'` 和 `'close'` —
+ * 但没有监听 `'error'`。
  *
- * That gap bites with a socket-backed stdin, which is the shape VS Code /
- * Claude Code use (a socketpair, not a pipe). When the client dies, the socket
- * can surface as an `'error'` (ECONNRESET / hangup) rather than a clean
- * `'close'`. With no `'error'` listener, Node escalates it to the process-wide
- * `uncaughtException` handler, which logs and keeps running — so the server
- * orphans instead of exiting. Worse, on Linux a `POLLHUP` socket fd left
- * registered in epoll wakes the event loop continuously, pinning a core at
- * 100% CPU (the spin reported in #799); once the main thread spins, the
- * `setInterval` PPID watchdog can't even fire, so the orphan runs forever.
+ * 这个漏洞在 socket 后端的 stdin 上会产生问题，这正是 VS Code /
+ * Claude Code 的形式（socketpair，不是 pipe）。当客户端死亡时，socket
+ * 可能以 `'error'`（ECONNRESET / hangup）而非干净的 `'close'` 结束。
+ * 没有 `'error'` 监听器时，Node 将其升级为进程级 `uncaughtException` 处理器，
+ * 后者记录日志后继续运行 — 服务器因此变成孤儿而不是退出。更糟的是，
+ * 在 Linux 上，注册在 epoll 中的 `POLLHUP` socket fd 会持续唤醒事件循环，
+ * 将一个 CPU 核心固定在 100%（#799 中报告的自旋）；一旦主线程自旋，
+ * `setInterval` PPID 看门狗甚至无法触发，孤儿进程就会永远运行。
  *
- * Fix: listen for `'error'` as well, and DESTROY the stdin stream on any
- * terminal event so the fd leaves epoll and can't keep churning, then run the
- * caller's shutdown. Fires `onTerminal` at most once — callers' shutdowns are
- * already re-entry-guarded, but the single-shot guard also keeps `destroy()`'s
- * follow-on `'close'` from re-invoking it.
+ * 修复：同样监听 `'error'`，并在任何终止事件时*销毁* stdin 流，
+ * 使 fd 离开 epoll 不再持续扰动，然后执行调用方的关闭逻辑。
+ * `onTerminal` 最多触发一次 — 调用方的关闭已有重入保护，
+ * 但一次性门控也防止 `destroy()` 的后续 `'close'` 重复调用它。
  *
- * `stream` is injectable for tests; it defaults to `process.stdin`.
+ * `stream` 可注入以供测试；默认为 `process.stdin`。
  */
 export function treatStdinFailureAsShutdown(
   onTerminal: () => void,
@@ -31,8 +29,8 @@ export function treatStdinFailureAsShutdown(
   const fire = (): void => {
     if (fired) return;
     fired = true;
-    // Drop the fd from epoll so a hung/half-closed socket can't keep waking
-    // the loop. Best-effort: the stream may already be torn down.
+    // 将 fd 从 epoll 中移除，防止挂起/半关闭的 socket 持续唤醒事件循环。
+    // 尽力而为：流可能已经被拆除。
     try {
       (stream as Partial<{ destroy(): void }>).destroy?.();
     } catch {

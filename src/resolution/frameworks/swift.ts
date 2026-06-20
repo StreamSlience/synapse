@@ -1,7 +1,7 @@
 /**
- * Swift Framework Resolver
+ * Swift 框架解析器
  *
- * Handles SwiftUI, UIKit, and Vapor (server-side Swift) patterns.
+ * 处理 SwiftUI、UIKit 及 Vapor（服务端 Swift）模式。
  */
 
 import { Node } from '../../types';
@@ -13,7 +13,7 @@ export const swiftUIResolver: FrameworkResolver = {
   languages: ['swift'],
 
   detect(context: ResolutionContext): boolean {
-    // Check for SwiftUI imports in Swift files
+    // 检查 Swift 文件中是否有 SwiftUI 导入
     const allFiles = context.getAllFiles();
     for (const file of allFiles) {
       if (file.endsWith('.swift')) {
@@ -24,7 +24,7 @@ export const swiftUIResolver: FrameworkResolver = {
       }
     }
 
-    // Check for Xcode project with SwiftUI
+    // 检查是否有包含 SwiftUI 的 Xcode 项目
     for (const file of allFiles) {
       if (file.endsWith('.xcodeproj') || file.endsWith('.xcworkspace')) {
         return true;
@@ -35,7 +35,7 @@ export const swiftUIResolver: FrameworkResolver = {
   },
 
   resolve(ref: UnresolvedRef, context: ResolutionContext): ResolvedRef | null {
-    // Pattern 1: View references (SwiftUI views are PascalCase ending in View)
+    // 模式 1：View 引用（SwiftUI View 为 PascalCase 且以 View 结尾）
     if (ref.referenceName.endsWith('View') && /^[A-Z]/.test(ref.referenceName)) {
       const result = resolveByNameAndKind(ref.referenceName, VIEW_KINDS, VIEW_DIRS, context);
       if (result) {
@@ -48,7 +48,7 @@ export const swiftUIResolver: FrameworkResolver = {
       }
     }
 
-    // Pattern 2: ViewModel/ObservableObject references
+    // 模式 2：ViewModel/ObservableObject 引用
     if (ref.referenceName.endsWith('ViewModel') || ref.referenceName.endsWith('Store') || ref.referenceName.endsWith('Manager')) {
       const result = resolveByNameAndKind(ref.referenceName, CLASS_KINDS, VIEWMODEL_DIRS, context);
       if (result) {
@@ -61,7 +61,7 @@ export const swiftUIResolver: FrameworkResolver = {
       }
     }
 
-    // Pattern 3: Model references
+    // 模式 3：Model 引用
     if (/^[A-Z][a-zA-Z]+$/.test(ref.referenceName)) {
       const result = resolveByNameAndKind(ref.referenceName, MODEL_KINDS, MODEL_DIRS, context);
       if (result) {
@@ -83,7 +83,7 @@ export const swiftUIResolver: FrameworkResolver = {
     const now = Date.now();
     const safe = stripCommentsForRegex(content, 'swift');
 
-    // Extract SwiftUI View structs
+    // 提取 SwiftUI View struct
     // struct ContentView: View { ... }
     const viewPattern = /struct\s+(\w+)\s*:\s*(?:\w+\s*,\s*)*View/g;
 
@@ -107,7 +107,7 @@ export const swiftUIResolver: FrameworkResolver = {
       });
     }
 
-    // Extract @main App entry point
+    // 提取 @main App 入口点
     const appPattern = /@main\s+struct\s+(\w+)\s*:\s*App/g;
 
     while ((match = appPattern.exec(safe)) !== null) {
@@ -156,7 +156,7 @@ export const uikitResolver: FrameworkResolver = {
   },
 
   resolve(ref: UnresolvedRef, context: ResolutionContext): ResolvedRef | null {
-    // Pattern 1: ViewController references
+    // 模式 1：ViewController 引用
     if (ref.referenceName.endsWith('ViewController')) {
       const result = resolveByNameAndKind(ref.referenceName, CLASS_KINDS, VC_DIRS, context);
       if (result) {
@@ -169,7 +169,7 @@ export const uikitResolver: FrameworkResolver = {
       }
     }
 
-    // Pattern 2: UIView subclass references
+    // 模式 2：UIView 子类引用
     if (ref.referenceName.endsWith('View') && !ref.referenceName.endsWith('ViewController')) {
       const result = resolveByNameAndKind(ref.referenceName, CLASS_KINDS, UIVIEW_DIRS, context);
       if (result) {
@@ -182,7 +182,7 @@ export const uikitResolver: FrameworkResolver = {
       }
     }
 
-    // Pattern 3: Cell references
+    // 模式 3：Cell 引用
     if (ref.referenceName.endsWith('Cell')) {
       const result = resolveByNameAndKind(ref.referenceName, CLASS_KINDS, CELL_DIRS, context);
       if (result) {
@@ -195,7 +195,7 @@ export const uikitResolver: FrameworkResolver = {
       }
     }
 
-    // Pattern 4: Delegate/DataSource references
+    // 模式 4：Delegate/DataSource 引用
     if (ref.referenceName.endsWith('Delegate') || ref.referenceName.endsWith('DataSource')) {
       const result = resolveByNameAndKind(ref.referenceName, PROTOCOL_KINDS, [], context);
       if (result) {
@@ -217,7 +217,7 @@ export const uikitResolver: FrameworkResolver = {
     const now = Date.now();
     const safe = stripCommentsForRegex(content, 'swift');
 
-    // Extract UIViewController subclasses
+    // 提取 UIViewController 子类
     const vcPattern = /class\s+(\w+)\s*:\s*(?:\w+\s*,\s*)*UIViewController/g;
 
     let match: RegExpExecArray | null;
@@ -240,7 +240,7 @@ export const uikitResolver: FrameworkResolver = {
       });
     }
 
-    // Extract UIView subclasses
+    // 提取 UIView 子类
     const viewPattern = /class\s+(\w+)\s*:\s*(?:\w+\s*,\s*)*UIView[^C]/g;
 
     while ((match = viewPattern.exec(safe)) !== null) {
@@ -271,13 +271,13 @@ export const vaporResolver: FrameworkResolver = {
   languages: ['swift'],
 
   detect(context: ResolutionContext): boolean {
-    // Check for Package.swift with Vapor dependency
+    // 检查 Package.swift 中是否有 Vapor 依赖
     const packageSwift = context.readFile('Package.swift');
     if (packageSwift && packageSwift.includes('vapor')) {
       return true;
     }
 
-    // Check for Vapor imports
+    // 检查是否有 Vapor 导入
     const allFiles = context.getAllFiles();
     for (const file of allFiles) {
       if (file.endsWith('.swift')) {
@@ -292,7 +292,7 @@ export const vaporResolver: FrameworkResolver = {
   },
 
   resolve(ref: UnresolvedRef, context: ResolutionContext): ResolvedRef | null {
-    // Pattern 1: Controller references
+    // 模式 1：Controller 引用
     if (ref.referenceName.endsWith('Controller')) {
       const result = resolveByNameAndKind(ref.referenceName, VAPOR_CONTROLLER_KINDS, VAPOR_CONTROLLER_DIRS, context);
       if (result) {
@@ -305,7 +305,7 @@ export const vaporResolver: FrameworkResolver = {
       }
     }
 
-    // Pattern 2: Model references (Fluent)
+    // 模式 2：Model 引用（Fluent）
     if (/^[A-Z][a-zA-Z]+$/.test(ref.referenceName)) {
       const result = resolveByNameAndKind(ref.referenceName, CLASS_KINDS, FLUENT_MODEL_DIRS, context);
       if (result) {
@@ -318,7 +318,7 @@ export const vaporResolver: FrameworkResolver = {
       }
     }
 
-    // Pattern 3: Middleware references
+    // 模式 3：Middleware 引用
     if (ref.referenceName.endsWith('Middleware')) {
       const result = resolveByNameAndKind(ref.referenceName, VAPOR_CONTROLLER_KINDS, VAPOR_MIDDLEWARE_DIRS, context);
       if (result) {
@@ -341,10 +341,10 @@ export const vaporResolver: FrameworkResolver = {
     const now = Date.now();
     const safe = stripCommentsForRegex(content, 'swift');
 
-    // Build a group-var → path-prefix map first. Modern Vapor routes live on a
-    // grouped builder (`let todos = routes.grouped("todos"); todos.get(use: index)`
-    // or `routes.group("todos") { todos in todos.get(use: index) }`), so the path
-    // comes from the group, not the call. Roots (app/routes/router) have no prefix.
+    // 先构建 group 变量 → 路径前缀映射。现代 Vapor 路由位于分组构建器上
+    // （`let todos = routes.grouped("todos"); todos.get(use: index)`
+    // 或 `routes.group("todos") { todos in todos.get(use: index) }`），
+    // 因此路径来自 group，而非调用本身。根节点（app/routes/router）无前缀。
     const groupPrefix = new Map<string, string>();
     const segJoin = (existing: string, segsStr: string): string => {
       const segs = (segsStr.match(/"([^"]*)"/g) || []).map((s) => s.slice(1, -1));
@@ -362,11 +362,11 @@ export const vaporResolver: FrameworkResolver = {
       groupPrefix.set(gm[3]!, segJoin(groupPrefix.get(gm[1]!) ?? '', gm[2]!));
     }
 
-    // Vapor: <builder>.METHOD([path segs,] use: handler). Any receiver (app,
-    // routes, or a grouped var); path segments optional and may be non-string
-    // (`BlogUser.parameter`, `:id`, a path constant) so accept any comma-separated
-    // args before `use:` — the label keeps only the string parts. `use:`
-    // discriminates a real route from Environment.get("X")/req.parameters.get("X").
+    // Vapor：<builder>.METHOD([路径段,] use: handler)。任意接收者（app、
+    // routes 或分组变量）；路径段可选且可能为非字符串
+    // （`BlogUser.parameter`、`:id`、路径常量），因此接受 `use:` 之前的
+    // 任意逗号分隔参数——标签只保留字符串部分。`use:` 将真实路由与
+    // Environment.get("X")/req.parameters.get("X") 区分开来。
     const routeRegex = /\b(\w+)\.(get|post|put|patch|delete|head|options)\s*\(\s*((?:[^,()]+,\s*)*)use:\s*([A-Za-z_][\w.]*)/g;
     let match: RegExpExecArray | null;
     while ((match = routeRegex.exec(safe)) !== null) {
@@ -390,7 +390,7 @@ export const vaporResolver: FrameworkResolver = {
       };
       nodes.push(routeNode);
 
-      // Last segment of a dotted handler (self.list / UserController.list -> list)
+      // 点分 handler 的最后一段（self.list / UserController.list -> list）
       const handlerName = handlerExpr!.split('.').pop();
       if (handlerName) {
         references.push({
@@ -409,7 +409,7 @@ export const vaporResolver: FrameworkResolver = {
   },
 };
 
-// Directory patterns
+// 目录模式
 const VIEW_DIRS = ['/Views/', '/View/', '/Screens/', '/Components/', '/UI/'];
 const VIEWMODEL_DIRS = ['/ViewModels/', '/ViewModel/', '/Stores/', '/Managers/', '/Services/'];
 const MODEL_DIRS = ['/Models/', '/Model/', '/Entities/', '/Domain/'];
@@ -427,7 +427,7 @@ const PROTOCOL_KINDS = new Set(['protocol']);
 const VAPOR_CONTROLLER_KINDS = new Set(['class', 'struct']);
 
 /**
- * Resolve a symbol by name using indexed queries instead of scanning all files.
+ * 通过索引查询按名称解析符号，而非扫描所有文件。
  */
 function resolveByNameAndKind(
   name: string,
@@ -441,7 +441,7 @@ function resolveByNameAndKind(
   const kindFiltered = candidates.filter((n) => kinds.has(n.kind));
   if (kindFiltered.length === 0) return null;
 
-  // Prefer candidates in framework-conventional directories
+  // 优先选取框架惯用目录中的候选项
   if (preferredDirPatterns.length > 0) {
     const preferred = kindFiltered.filter((n) =>
       preferredDirPatterns.some((d) => n.filePath.includes(d))
@@ -449,6 +449,6 @@ function resolveByNameAndKind(
     if (preferred.length > 0) return preferred[0]!.id;
   }
 
-  // Fall back to any match
+  // 回退到任意匹配项
   return kindFiltered[0]!.id;
 }

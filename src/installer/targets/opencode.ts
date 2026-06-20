@@ -1,37 +1,35 @@
 ﻿/**
- * opencode target.
+ * opencode target。
  *
- *   - MCP server entry to `~/.config/opencode/opencode.jsonc` (global,
- *     XDG-style on EVERY platform, Windows included — see below) or
- *     `./opencode.jsonc` (local). Falls back to `opencode.json` when a
- *     `.json` file already exists; defaults new installs to `.jsonc`
- *     because that's what opencode itself creates on first run.
+ *   - MCP 服务器条目写入 `~/.config/opencode/opencode.jsonc`（全局，
+ *     所有平台包括 Windows 均采用 XDG 风格——见下文）或
+ *     `./opencode.jsonc`（本地）。若已存在 `.json` 文件则回退到
+ *     `opencode.json`；全新安装默认使用 `.jsonc`，因为 opencode 自身
+ *     在首次运行时也会创建 `.jsonc`。
  *
- *     opencode resolves its config dir with the `xdg-basedir` package
- *     (sst/opencode `packages/core/src/global.ts`): `XDG_CONFIG_HOME`
- *     if set, else `~/.config` — unconditionally, on all platforms. It
- *     never reads `%APPDATA%`; that layout belonged to the discontinued
- *     Go fork. We previously wrote there on Windows, so opencode never
- *     saw the entry (#535) — install/uninstall now also sweep a stale
- *     synapse entry out of the legacy `%APPDATA%/opencode` location.
- *   - Instructions to `~/.config/opencode/AGENTS.md` (global) or
- *     `./AGENTS.md` (local). opencode reads AGENTS.md for agent
- *     instructions — same convention Codex CLI uses.
- *   - No permissions concept.
+ *     opencode 使用 `xdg-basedir` 包解析其配置目录
+ *     （sst/opencode `packages/core/src/global.ts`）：若设置了
+ *     `XDG_CONFIG_HOME` 则使用该值，否则使用 `~/.config`——在所有平台上
+ *     无条件如此。它从不读取 `%APPDATA%`；那个布局属于已停止维护的 Go 分支。
+ *     我们之前在 Windows 上写入该位置，导致 opencode 从未看到该条目（#535）——
+ *     现在 install/uninstall 同时会清除遗留 `%APPDATA%/opencode` 位置中过时的
+ *     synapse 条目。
+ *   - Instructions 写入 `~/.config/opencode/AGENTS.md`（全局）或
+ *     `./AGENTS.md`（本地）。opencode 读取 AGENTS.md 获取智能体指令——
+ *     与 Codex CLI 使用相同约定。
+ *   - 无权限概念。
  *
- * Config shape uses opencode's wrapper:
+ * 配置格式使用 opencode 的包装器：
  *   {
  *     "$schema": "https://opencode.ai/config.json",
  *     "mcp": { "synapse": { "type": "local", "command": [...], "enabled": true } }
  *   }
  *
- * The shape differs from Claude/Cursor — opencode uses `mcp.<name>`
- * (not `mcpServers`), takes `command` as a string array combining
- * binary + args, and includes an explicit `enabled` flag.
+ * 格式与 Claude/Cursor 不同——opencode 使用 `mcp.<name>`（而非 `mcpServers`），
+ * 将 `command` 作为合并了二进制名和参数的字符串数组，并包含显式的 `enabled` 标志。
  *
- * Reads + writes go through `jsonc-parser` so any `//` and `/* *\/`
- * comments the user has added to their `.jsonc` survive idempotent
- * re-runs.
+ * 读写均通过 `jsonc-parser` 进行，这样用户在 `.jsonc` 中添加的 `//` 和
+ * `/* *\/` 注释可在幂等重复运行中得以保留。
  */
 
 import * as fs from 'fs';
@@ -57,8 +55,8 @@ import {
 } from '../instructions-template';
 
 function globalConfigDir(): string {
-  // XDG_CONFIG_HOME if set, else ~/.config — on every platform, matching
-  // opencode's own `xdg-basedir` resolution (no Windows special case; #535).
+  // XDG_CONFIG_HOME 若已设置则使用，否则使用 ~/.config——在所有平台上，
+  // 与 opencode 自身的 `xdg-basedir` 解析一致（无 Windows 特殊处理；#535）。
   const xdg = process.env.XDG_CONFIG_HOME && process.env.XDG_CONFIG_HOME.trim().length > 0
     ? process.env.XDG_CONFIG_HOME
     : path.join(os.homedir(), '.config');
@@ -66,12 +64,11 @@ function globalConfigDir(): string {
 }
 
 /**
- * Pre-#535 installs wrote the global entry to `%APPDATA%/opencode` — a dir
- * today's opencode never reads. Returns that legacy dir when it could hold
- * stale state (APPDATA set and resolving somewhere other than the real config
- * dir). Gated on the env var rather than `process.platform` so the cleanup
- * logic runs under the cross-platform test suite; on POSIX, APPDATA is unset
- * in real life and this is a no-op.
+ * #535 之前的安装将全局条目写入 `%APPDATA%/opencode`——一个当今 opencode
+ * 从不读取的目录。当该目录可能存有过时状态时（APPDATA 已设置且解析位置
+ * 不同于真实配置目录），返回该遗留目录。以环境变量而非 `process.platform`
+ * 为条件，使清理逻辑可在跨平台测试套件下运行；在 POSIX 上，实际环境中
+ * APPDATA 未设置，因此此处为空操作。
  */
 function legacyWindowsConfigDir(): string | null {
   const appData = process.env.APPDATA;
@@ -84,9 +81,9 @@ function configBaseDir(loc: Location): string {
   return loc === 'global' ? globalConfigDir() : process.cwd();
 }
 
-// Pick existing .jsonc, then .json, default to .jsonc for new files.
-// opencode auto-creates .jsonc on first run, so that's the dominant
-// real-world case and the sensible default for greenfield installs.
+// 优先使用已存在的 .jsonc，其次 .json，新文件默认为 .jsonc。
+// opencode 首次运行时自动创建 .jsonc，因此这是现实中最常见的情况，
+// 也是全新安装的合理默认值。
 function configPath(loc: Location): string {
   const dir = configBaseDir(loc);
   const jsonc = path.join(dir, 'opencode.jsonc');
@@ -138,9 +135,9 @@ class OpencodeTarget implements AgentTarget {
     const file = configPath(loc);
     const config = parseConfig(readConfigText(file));
     const alreadyConfigured = !!config.mcp?.synapse;
-    // Global: the XDG dir is what current opencode creates on first run; the
-    // legacy %APPDATA% dir still counts as "opencode present" so a re-install
-    // can sweep the stale pre-#535 entry out of it.
+    // 全局：XDG 目录是当前 opencode 首次运行时创建的目录；
+    // 遗留的 %APPDATA% 目录仍算作"opencode 已存在"，
+    // 这样重新安装时可以将过时的 #535 前条目从中清除。
     const legacy = legacyWindowsConfigDir();
     const installed = loc === 'global'
       ? fs.existsSync(globalConfigDir()) || (!!legacy && fs.existsSync(legacy))
@@ -152,13 +149,13 @@ class OpencodeTarget implements AgentTarget {
     const files: WriteResult['files'] = [];
     files.push(writeMcpEntry(loc));
 
-    // AGENTS.md gets the short marker-fenced Synapse block (#704):
-    // subagents and non-MCP harnesses read AGENTS.md but never the MCP
-    // initialize instructions. Upsert self-heals a stale pre-#529 block.
+    // AGENTS.md 写入简短的标记围栏式 Synapse 块（#704）：
+    // 子智能体和非 MCP 运行环境会读取 AGENTS.md，但不接收 MCP
+    // initialize 指令。Upsert 可自动修复过时的 #529 前块。
     files.push(upsertInstructionsEntry(instructionsPath(loc)));
 
-    // Self-heal a pre-#535 install that wrote to %APPDATA%/opencode —
-    // opencode never reads it, so anything of ours there is stale.
+    // 自愈 #535 之前写入 %APPDATA%/opencode 的安装——
+    // opencode 从不读取该位置，因此其中我们的任何内容均已过时。
     if (loc === 'global') files.push(...cleanupLegacyWindowsState());
 
     return { files };
@@ -191,9 +188,8 @@ function writeMcpEntry(loc: Location): WriteResult['files'][number] {
   const existed = fs.existsSync(file);
   let text = readConfigText(file);
 
-  // Seed a minimal opencode config when the file is brand-new so
-  // the result is a complete, schema-tagged file (not just a bare
-  // `{ "mcp": {...} }`).
+  // 当文件全新时，植入一个最小化的 opencode 配置，
+  // 使结果成为完整的、带 schema 标签的文件（而非仅 `{ "mcp": {...} }`）。
   if (!text.trim()) {
     text = '{\n  "$schema": "https://opencode.ai/config.json"\n}\n';
   }
@@ -206,7 +202,7 @@ function writeMcpEntry(loc: Location): WriteResult['files'][number] {
     return { path: file, action: 'unchanged' };
   }
 
-  // Add $schema if the user's existing file is missing it.
+  // 若用户现有文件缺少 $schema，则补充添加。
   if (!config.$schema) {
     const schemaEdits = modify(text, ['$schema'], 'https://opencode.ai/config.json', {
       formattingOptions: FORMATTING,
@@ -214,8 +210,7 @@ function writeMcpEntry(loc: Location): WriteResult['files'][number] {
     text = applyEdits(text, schemaEdits);
   }
 
-  // Surgical edit — preserves comments, formatting, and order of
-  // every key we don't touch.
+  // 精确编辑——保留注释、格式以及所有未触及键的顺序。
   const edits = modify(text, ['mcp', 'synapse'], after, {
     formattingOptions: FORMATTING,
   });
@@ -226,9 +221,8 @@ function writeMcpEntry(loc: Location): WriteResult['files'][number] {
 }
 
 /**
- * Surgically drop `mcp.synapse` from one config file. Leaves sibling
- * servers, comments, and formatting untouched; drops an emptied `mcp`
- * wrapper too. Shared by uninstall and the legacy-%APPDATA% sweep.
+ * 精确删除一个配置文件中的 `mcp.synapse`。保留同级服务器、注释和格式不变；
+ * 若 `mcp` 包装器被清空也一并删除。由 uninstall 和遗留 %APPDATA% 清理共用。
  */
 function removeMcpEntryAt(file: string): WriteResult['files'][number] {
   if (!fs.existsSync(file)) return { path: file, action: 'not-found' };
@@ -241,7 +235,7 @@ function removeMcpEntryAt(file: string): WriteResult['files'][number] {
   });
   let updated = applyEdits(text, edits);
 
-  // If `mcp` is now an empty object, drop the wrapper too.
+  // 若 `mcp` 现在是空对象，也删除包装器。
   const afterParsed = parseConfig(updated);
   if (afterParsed.mcp && typeof afterParsed.mcp === 'object' &&
       Object.keys(afterParsed.mcp).length === 0) {
@@ -254,11 +248,10 @@ function removeMcpEntryAt(file: string): WriteResult['files'][number] {
 }
 
 /**
- * Remove whatever a pre-#535 install left in `%APPDATA%/opencode` — an MCP
- * entry opencode never reads, plus our marker-fenced AGENTS.md block. Returns
- * only files actually changed, so install output stays quiet when there is
- * nothing to heal. Never touches anything else in the legacy dir: a user may
- * genuinely keep other tools' state under %APPDATA%.
+ * 删除 #535 之前的安装在 `%APPDATA%/opencode` 中遗留的内容——一条 opencode
+ * 从不读取的 MCP 条目，以及我们标记围栏的 AGENTS.md 块。仅返回实际变更的
+ * 文件，使安装输出在无需修复时保持静默。不触碰遗留目录中的任何其他内容：
+ * 用户可能在 %APPDATA% 下确实保存了其他工具的状态。
  */
 function cleanupLegacyWindowsState(): WriteResult['files'] {
   const dir = legacyWindowsConfigDir();
@@ -275,9 +268,8 @@ function cleanupLegacyWindowsState(): WriteResult['files'] {
 }
 
 /**
- * Strip the marker-delimited Synapse block from AGENTS.md if a prior
- * install wrote one. Used by both install (self-heal on upgrade) and
- * uninstall — see issue #529.
+ * 若之前的安装写入了标记分隔的 Synapse 块，则从 AGENTS.md 中将其清除。
+ * install（升级时自愈）和 uninstall 均会使用——见 issue #529。
  */
 function removeInstructionsEntry(loc: Location): WriteResult['files'][number] {
   const file = instructionsPath(loc);

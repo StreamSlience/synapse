@@ -2,17 +2,16 @@ import type { Node as SyntaxNode } from 'web-tree-sitter';
 import { getNodeText, getChildByField } from '../tree-sitter-helpers';
 import type { LanguageExtractor } from '../tree-sitter-types';
 
-/** Kotlin return types that can't be a chained-call receiver (no class to chain on). */
+/** 不能作为链式调用接收者的 Kotlin 返回类型（没有可链式调用的类）。 */
 const KOTLIN_NON_CLASS_RETURN = new Set(['Unit', 'Nothing']);
 
 /**
- * A Kotlin function's declared return type, normalized to the bare class name a
- * chained `Foo.getInstance().bar()` could be called on (the #645/#608 mechanism).
- * tree-sitter-kotlin exposes no field names, so the return type is found
- * positionally: the first `user_type` / `nullable_type` that FOLLOWS
- * `function_value_parameters` (an extension receiver's type sits before the
- * params, so it's never mistaken for the return). An inferred return (expression
- * body with no `: Type`), a lambda return type, or `Unit` / `Nothing` → undefined.
+ * Kotlin 函数的声明返回类型，规范化为可用于链式调用 `Foo.getInstance().bar()`
+ * 的裸类名（#645/#608 机制）。tree-sitter-kotlin 不暴露字段名，
+ * 因此返回类型通过位置确定：`function_value_parameters` 之后的第一个
+ * `user_type` / `nullable_type`（扩展接收者的类型位于参数之前，
+ * 永远不会被误认为是返回值）。推断返回值（表达式体，无 `: Type`）、
+ * lambda 返回类型，或 `Unit` / `Nothing` → undefined。
  */
 function extractKotlinReturnType(node: SyntaxNode, source: string): string | undefined {
   let seenParams = false;
@@ -24,8 +23,8 @@ function extractKotlinReturnType(node: SyntaxNode, source: string): string | und
       continue;
     }
     if (!seenParams) continue;
-    // The return type is the type node right after the params. If we reach the
-    // body or a `where`-clause first, there's no declared return type.
+    // 返回类型是紧跟参数之后的类型节点。如果先遇到
+    // 函数体或 `where` 子句，则没有声明的返回类型。
     if (child.type === 'function_body' || child.type === 'type_constraints') return undefined;
     if (child.type === 'user_type' || child.type === 'nullable_type') {
       const ut =
@@ -42,7 +41,7 @@ function extractKotlinReturnType(node: SyntaxNode, source: string): string | und
   return undefined;
 }
 
-/** Check if a node matches the `fun interface` misparse pattern */
+/** 检查节点是否匹配 `fun interface` 误解析模式 */
 function isFunInterfaceNode(node: SyntaxNode): boolean {
   let hasFun = false;
   let hasInterfaceType = false;
@@ -54,7 +53,7 @@ function isFunInterfaceNode(node: SyntaxNode): boolean {
       const typeId = child.namedChildren.find((c: SyntaxNode) => c.type === 'type_identifier');
       if (typeId && typeId.text === 'interface') hasInterfaceType = true;
     }
-    // Pattern 2b: user_type("interface") is inside an ERROR child
+    // 模式 2b：user_type("interface") 在 ERROR 子节点内
     if (child.type === 'ERROR') {
       for (let j = 0; j < child.childCount; j++) {
         const gc = child.child(j);
@@ -71,10 +70,10 @@ function isFunInterfaceNode(node: SyntaxNode): boolean {
 export const kotlinExtractor: LanguageExtractor = {
   functionTypes: ['function_declaration'],
   classTypes: ['class_declaration'],
-  methodTypes: ['function_declaration'], // Methods are functions inside classes
-  interfaceTypes: [], // Handled via classifyClassNode
-  structTypes: [], // Kotlin uses data classes
-  enumTypes: [], // Handled via classifyClassNode
+  methodTypes: ['function_declaration'], // 方法是类内部的函数
+  interfaceTypes: [], // 通过 classifyClassNode 处理
+  structTypes: [], // Kotlin 使用数据类
+  enumTypes: [], // 通过 classifyClassNode 处理
   enumMemberTypes: ['enum_entry'],
   typeAliasTypes: ['type_alias'],
   importTypes: ['import_header'],
@@ -85,16 +84,14 @@ export const kotlinExtractor: LanguageExtractor = {
   nameField: 'simple_identifier',
   bodyField: 'function_body',
   visitNode: (node, ctx) => {
-    // Kotlin properties (`val` / `var` / `const val`). The name nests as
-    // property_declaration → variable_declaration → simple_identifier, which the
-    // generic variable/field path can't read — so nothing was extracted before.
-    // Kind by enclosing scope: a singleton `object` / `companion object` (and a
-    // top-level property) holds *shared* values — `val`→`constant`,
-    // `var`→`variable` (the Scala-object rule; a `const val` is a `val`). A
-    // `class`/`interface`/`enum` instance `val`/`var` is per-instance state →
-    // `field` (never a value-ref target, like a Java instance `final`). A
-    // property inside a function body / `init` block / lambda is a local and is
-    // skipped entirely.
+    // Kotlin 属性（`val` / `var` / `const val`）。名称嵌套为
+    // property_declaration → variable_declaration → simple_identifier，
+    // 通用 variable/field 路径无法读取——因此之前什么都没有提取。
+    // 按外层作用域分类：单例 `object` / `companion object`（以及顶层属性）
+    // 持有*共享*值——`val`→`constant`，`var`→`variable`（Scala object 规则；
+    // `const val` 也是 `val`）。`class`/`interface`/`enum` 的实例 `val`/`var`
+    // 是每实例状态 → `field`（永远不是值引用目标，类似 Java 实例 `final`）。
+    // 函数体 / `init` 块 / lambda 内的属性是局部变量，完全跳过。
     if (node.type === 'property_declaration') {
       const varDecl = node.namedChildren.find((c) => c.type === 'variable_declaration');
       const nameNode = varDecl?.namedChildren.find((c) => c.type === 'simple_identifier');
@@ -102,9 +99,9 @@ export const kotlinExtractor: LanguageExtractor = {
       const name = getNodeText(nameNode, ctx.source);
       if (!name) return false;
 
-      // Walk to the nearest enclosing definition: a function body / init / lambda
-      // means it's a local; `object`/`companion object` is a constant scope; a
-      // `class_declaration` (covers class/interface/enum) is an instance scope.
+      // 走到最近的外层定义：函数体 / init / lambda
+      // 表示这是局部变量；`object`/`companion object` 是常量作用域；
+      // `class_declaration`（涵盖 class/interface/enum）是实例作用域。
       let scope: 'local' | 'const' | 'instance' = 'const';
       for (let p = node.parent; p; p = p.parent) {
         const pt = p.type;
@@ -130,12 +127,12 @@ export const kotlinExtractor: LanguageExtractor = {
       return true;
     }
 
-    // Handle Kotlin `fun interface` declarations.
-    // Tree-sitter-kotlin doesn't support `fun interface` syntax (Kotlin 1.4+).
-    // It produces two different misparse patterns:
-    //   Pattern 1 (simple): ERROR node + sibling lambda_literal for body
-    //   Pattern 2 (complex): function_declaration misparse with ERROR child
-    // Skip lambda_literal bodies that were already consumed by a fun interface ERROR node
+    // 处理 Kotlin `fun interface` 声明。
+    // tree-sitter-kotlin 不支持 `fun interface` 语法（Kotlin 1.4+）。
+    // 它产生两种不同的误解析模式：
+    //   模式 1（简单）：ERROR 节点 + 兄弟 lambda_literal 作为函数体
+    //   模式 2（复杂）：function_declaration 误解析，含 ERROR 子节点
+    // 跳过已被 fun interface ERROR 节点消费的 lambda_literal 函数体
     if (node.type === 'lambda_literal') {
       const prev = node.previousSibling;
       if (prev && prev.type === 'ERROR' && isFunInterfaceNode(prev)) return true;
@@ -144,9 +141,9 @@ export const kotlinExtractor: LanguageExtractor = {
 
     if (node.type !== 'ERROR' && node.type !== 'function_declaration') return false;
 
-    // Skip ERROR nodes that are class bodies (start with `{`). These contain parent
-    // methods + trailing `fun interface` tokens. The methods are extracted via
-    // resolveBody; handling the ERROR here would consume the whole body.
+    // 跳过类体的 ERROR 节点（以 `{` 开头）。这些节点包含父类
+    // 的方法 + 尾部 `fun interface` token。方法通过 resolveBody 提取；
+    // 在此处理 ERROR 会消费整个函数体。
     if (node.type === 'ERROR') {
       const firstChild = node.child(0);
       if (firstChild && firstChild.type === '{') return false;
@@ -154,9 +151,9 @@ export const kotlinExtractor: LanguageExtractor = {
 
     if (!isFunInterfaceNode(node)) return false;
 
-    // Extract the interface name.
-    // For function_declaration misparses (patterns 2a/2b), the real name is inside
-    // an ERROR child — direct simple_identifier children are the misparsed method name.
+    // 提取接口名称。
+    // 对于 function_declaration 误解析（模式 2a/2b），真实名称在
+    // ERROR 子节点内——直接的 simple_identifier 子节点是被误解析的方法名。
     let nameText: string | null = null;
     if (node.type === 'function_declaration') {
       for (let i = 0; i < node.childCount; i++) {
@@ -173,7 +170,7 @@ export const kotlinExtractor: LanguageExtractor = {
         }
       }
     }
-    // Fallback: direct simple_identifier child (Pattern 1: ERROR node at top level)
+    // 回退：直接的 simple_identifier 子节点（模式 1：顶层 ERROR 节点）
     if (!nameText) {
       for (let i = 0; i < node.childCount; i++) {
         const child = node.child(i);
@@ -185,14 +182,14 @@ export const kotlinExtractor: LanguageExtractor = {
     }
     if (!nameText) return false;
 
-    // Create the interface node
+    // 创建接口节点
     const ifaceNode = ctx.createNode('interface', nameText, node);
     if (!ifaceNode) return false;
 
     ctx.pushScope(ifaceNode.id);
 
     if (node.type === 'ERROR') {
-      // Pattern 1: body is in the next sibling lambda_literal
+      // 模式 1：函数体在下一个兄弟 lambda_literal 中
       const nextSibling = node.nextSibling;
       if (nextSibling && nextSibling.type === 'lambda_literal') {
         for (let i = 0; i < nextSibling.namedChildCount; i++) {
@@ -206,9 +203,9 @@ export const kotlinExtractor: LanguageExtractor = {
         }
       }
     }
-    // Pattern 2 (function_declaration): nested classes are siblings at source_file level,
-    // already visited by the normal traversal. The single abstract method is misparsed
-    // and cannot be reliably recovered, but the interface node itself is the key value.
+    // 模式 2（function_declaration）：嵌套类是 source_file 级别的兄弟节点，
+    // 已由正常遍历访问。单个抽象方法被误解析，无法可靠恢复，
+    // 但接口节点本身是关键值。
 
     ctx.popScope();
     return true;
@@ -217,14 +214,14 @@ export const kotlinExtractor: LanguageExtractor = {
   returnField: 'type',
   getReturnType: extractKotlinReturnType,
   resolveBody: (node, _bodyField) => {
-    // Kotlin's tree-sitter grammar doesn't use field names, so getChildByField fails.
-    // Find body by type: function_body for functions/methods, class_body for classes,
-    // enum_class_body for enums.
+    // Kotlin tree-sitter 语法不使用字段名，因此 getChildByField 会失败。
+    // 按类型查找函数体：函数/方法用 function_body，类用 class_body，
+    // 枚举用 enum_class_body。
     //
-    // Special case: when a class/interface contains a nested `fun interface`, tree-sitter
-    // misparsed the parent's body as an ERROR node (starting with `{`) and creates
-    // a class_body sibling for the nested interface's body. Prefer the ERROR body
-    // so the parent's methods are extracted.
+    // 特殊情况：当 class/interface 包含嵌套的 `fun interface` 时，tree-sitter
+    // 将父类的函数体误解析为 ERROR 节点（以 `{` 开头），并为嵌套接口的函数体
+    // 创建一个 class_body 兄弟节点。优先使用 ERROR 函数体，
+    // 以便父类的方法能被正确提取。
     for (let i = 0; i < node.namedChildCount; i++) {
       const child = node.namedChild(i);
       if (child && child.type === 'ERROR') {
@@ -240,11 +237,11 @@ export const kotlinExtractor: LanguageExtractor = {
     return null;
   },
   classifyClassNode: (node) => {
-    // Kotlin reuses class_declaration for classes, interfaces, and enums.
-    // Detect by checking for keyword children:
-    //   interface Foo { }       → has 'interface' keyword child
-    //   enum class Level { }    → has 'enum' keyword child
-    //   class / data class / abstract class → default 'class'
+    // Kotlin 对 class、interface 和 enum 复用 class_declaration。
+    // 通过检查关键字子节点来区分：
+    //   interface Foo { }       → 含 'interface' 关键字子节点
+    //   enum class Level { }    → 含 'enum' 关键字子节点
+    //   class / data class / abstract class → 默认 'class'
     for (let i = 0; i < node.childCount; i++) {
       const child = node.child(i);
       if (!child) continue;
@@ -254,9 +251,9 @@ export const kotlinExtractor: LanguageExtractor = {
     return 'class';
   },
   getReceiverType: (node, source) => {
-    // Kotlin extension functions: fun Type.method() { }
-    // AST: function_declaration > user_type, ".", simple_identifier
-    // The user_type before the dot is the receiver type.
+    // Kotlin 扩展函数：fun Type.method() { }
+    // AST：function_declaration > user_type, ".", simple_identifier
+    // 点前的 user_type 是接收者类型。
     let foundUserType: SyntaxNode | null = null;
     for (let i = 0; i < node.childCount; i++) {
       const child = node.child(i);
@@ -264,18 +261,18 @@ export const kotlinExtractor: LanguageExtractor = {
       if (child.type === 'user_type') {
         foundUserType = child;
       } else if (child.type === '.' && foundUserType) {
-        // The user_type before the dot is the receiver type
+        // 点前的 user_type 是接收者类型
         const typeId = foundUserType.namedChildren.find((c: SyntaxNode) => c.type === 'type_identifier');
         return typeId ? getNodeText(typeId, source) : getNodeText(foundUserType, source);
       } else if (child.type === 'simple_identifier' || child.type === 'function_value_parameters') {
-        // Past the function name — no receiver
+        // 已过函数名——无接收者
         break;
       }
     }
     return undefined;
   },
   getSignature: (node, source) => {
-    // Kotlin function signature: fun name(params): ReturnType
+    // Kotlin 函数签名：fun name(params): ReturnType
     const params = getChildByField(node, 'function_value_parameters');
     const returnType = getChildByField(node, 'type');
     if (!params) return undefined;
@@ -286,7 +283,7 @@ export const kotlinExtractor: LanguageExtractor = {
     return sig;
   },
   getVisibility: (node) => {
-    // Check for visibility modifiers in Kotlin
+    // 检查 Kotlin 中的可见性修饰符
     for (let i = 0; i < node.childCount; i++) {
       const child = node.child(i);
       if (child?.type === 'modifiers') {
@@ -297,14 +294,14 @@ export const kotlinExtractor: LanguageExtractor = {
         if (text.includes('internal')) return 'internal';
       }
     }
-    return 'public'; // Kotlin defaults to public
+    return 'public'; // Kotlin 默认为 public
   },
   isStatic: (_node) => {
-    // Kotlin doesn't have static, uses companion objects
+    // Kotlin 没有 static，使用 companion object
     return false;
   },
   isAsync: (node) => {
-    // Kotlin uses suspend keyword for coroutines
+    // Kotlin 使用 suspend 关键字实现协程
     for (let i = 0; i < node.childCount; i++) {
       const child = node.child(i);
       if (child?.type === 'modifiers' && child.text.includes('suspend')) {
@@ -314,13 +311,12 @@ export const kotlinExtractor: LanguageExtractor = {
     return false;
   },
   extractModifiers: (node) => {
-    // Kotlin Multiplatform `expect`/`actual` markers live in
+    // Kotlin Multiplatform 的 `expect`/`actual` 标记位于
     //   modifiers > platform_modifier > (expect | actual)
-    // Capturing them lets the resolver link an `expect` declaration in a
-    // common source set to its `actual` implementations in platform source
-    // sets (those impls otherwise have zero dependents — the caller resolves
-    // to the `expect`). Match the AST node, not raw text, so an annotation
-    // argument or identifier named "actual" can't false-positive.
+    // 捕获它们可以让解析器将公共源集中的 `expect` 声明
+    // 链接到平台源集中的 `actual` 实现（否则这些实现没有依赖方——
+    // 调用方会解析到 `expect`）。匹配 AST 节点而非原始文本，
+    // 防止注解参数或名为 "actual" 的标识符产生误报。
     const mods: string[] = [];
     for (let i = 0; i < node.childCount; i++) {
       const child = node.child(i);
@@ -346,7 +342,7 @@ export const kotlinExtractor: LanguageExtractor = {
   },
   packageTypes: ['package_header'],
   extractPackage: (node, source) => {
-    // package_header → identifier (dotted: `com.example.foo`)
+    // package_header → identifier（带点：`com.example.foo`）
     const id = node.namedChildren.find((c: SyntaxNode) => c.type === 'identifier');
     return id ? source.substring(id.startIndex, id.endIndex).trim() : null;
   },

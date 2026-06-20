@@ -1,9 +1,9 @@
 ﻿#!/usr/bin/env bash
-# One README repo, WITH-synapse only, N runs. Each run appends a why-Read
-# diagnostic so the agent explains any Read/Grep. (The WITHOUT baseline is
-# synapse-independent and already in the README — no point re-running it.)
-# Output -> /tmp/ab-why/<repo>/with<n>.jsonl
-# Usage: bench-why-repo.sh <repo-path> "<query>" [N]
+# 单个 README 代码库，仅开启 synapse，N 次运行。每次运行追加一条 why-Read
+# 诊断提示，让 agent 解释任何 Read/Grep 的原因。（无 synapse 基线独立于
+# synapse 且已记录在 README 中——无需重跑。）
+# 输出 -> /tmp/ab-why/<repo>/with<n>.jsonl
+# 用法：bench-why-repo.sh <repo-path> "<query>" [N]
 set -uo pipefail
 REPO="$1"; Q="$2"; N="${3:-4}"
 NAME="$(basename "$REPO")"

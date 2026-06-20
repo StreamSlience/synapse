@@ -1,9 +1,9 @@
 ﻿/**
- * Grammar Loading and Caching
+ * grammar 加载与缓存
  *
- * Uses web-tree-sitter (WASM) for universal cross-platform support.
- * Grammars are loaded lazily — only languages actually present in the project
- * are compiled, keeping V8 WASM memory pressure low on large codebases.
+ * 使用 web-tree-sitter（WASM）实现通用跨平台支持。
+ * grammar 按需懒加载——仅编译项目中实际出现的语言，
+ * 从而降低大型代码库中 V8 WASM 的内存压力。
  */
 
 import * as path from 'path';
@@ -13,8 +13,7 @@ import { Language } from '../types';
 export type GrammarLanguage = Exclude<Language, 'svelte' | 'vue' | 'astro' | 'liquid' | 'razor' | 'yaml' | 'twig' | 'xml' | 'properties' | 'unknown'>;
 
 /**
- * WASM filename map — maps each language to its .wasm grammar file
- * in the tree-sitter-wasms package.
+ * WASM 文件名映射——将每种语言映射到 tree-sitter-wasms 包中对应的 .wasm grammar 文件。
  */
 const WASM_GRAMMAR_FILES: Record<GrammarLanguage, string> = {
   typescript: 'tree-sitter-typescript.wasm',
@@ -42,18 +41,18 @@ const WASM_GRAMMAR_FILES: Record<GrammarLanguage, string> = {
 };
 
 /**
- * File extension to Language mapping
+ * 文件扩展名到语言的映射
  */
 export const EXTENSION_MAP: Record<string, Language> = {
   '.ts': 'typescript',
   '.tsx': 'tsx',
-  // ESM/CJS TypeScript module extensions — parsed as TS (no JSX). (#366)
+  // ESM/CJS TypeScript 模块扩展名——按 TS 解析（无 JSX）。(#366)
   '.mts': 'typescript',
   '.cts': 'typescript',
   '.js': 'javascript',
   '.mjs': 'javascript',
   '.cjs': 'javascript',
-  // SAP HANA XS Classic server-side JavaScript. (#556)
+  // SAP HANA XS Classic 服务端 JavaScript。(#556)
   '.xsjs': 'javascript',
   '.xsjslib': 'javascript',
   '.jsx': 'jsx',
@@ -63,27 +62,27 @@ export const EXTENSION_MAP: Record<string, Language> = {
   '.rs': 'rust',
   '.java': 'java',
   '.c': 'c',
-  '.h': 'c', // Could also be C++, defaulting to C
+  '.h': 'c', // 也可能是 C++，默认按 C 处理
   '.cpp': 'cpp',
   '.cc': 'cpp',
   '.cxx': 'cpp',
   '.hpp': 'cpp',
   '.hxx': 'cpp',
   '.cs': 'csharp',
-  // ASP.NET Razor / Blazor markup — custom RazorExtractor (links @model/@inject/
-  // component tags to their C# types; markup isn't a tree-sitter grammar).
+  // ASP.NET Razor / Blazor 标记——使用自定义 RazorExtractor（将 @model/@inject/
+  // 组件标签链接到对应的 C# 类型；标记本身没有 tree-sitter grammar）。
   '.cshtml': 'razor',
   '.razor': 'razor',
   '.php': 'php',
-  // Drupal-specific PHP file extensions
+  // Drupal 专用 PHP 文件扩展名
   '.module': 'php',
   '.install': 'php',
   '.theme': 'php',
   '.inc': 'php',
-  // YAML (used for Drupal routing files; no symbol extraction, file-level tracking only)
+  // YAML（用于 Drupal 路由文件；不提取符号，仅做文件级追踪）
   '.yml': 'yaml',
   '.yaml': 'yaml',
-  // Twig templates (file-level tracking only, no symbol extraction)
+  // Twig 模板（仅做文件级追踪，不提取符号）
   '.twig': 'twig',
   '.rb': 'ruby',
   '.rake': 'ruby',
@@ -108,19 +107,19 @@ export const EXTENSION_MAP: Record<string, Language> = {
   '.luau': 'luau',
   '.m': 'objc',
   '.mm': 'objc',
-  // XML: file-level tracking; the MyBatis extractor matches `<mapper namespace="...">`
-  // shape and emits SQL-statement nodes (other XML returns empty).
+  // XML：文件级追踪；MyBatis 提取器匹配 `<mapper namespace="...">` 结构
+  // 并生成 SQL 语句节点（其他 XML 返回空结果）。
   '.xml': 'xml',
-  // Spring config: `application.properties` / `application-*.properties`. Same
-  // shape as the `.yml` variants — the YAML/properties extractor emits one node
-  // per leaf key, and the Spring resolver links `@Value("${k}")` references.
+  // Spring 配置：`application.properties` / `application-*.properties`。与
+  // `.yml` 变体结构相同——YAML/properties 提取器为每个叶键生成一个节点，
+  // Spring 解析器将 `@Value("${k}")` 引用与之关联。
   '.properties': 'properties',
 };
 
 /**
- * Whether a file is one Synapse can parse, based purely on its extension.
- * This is the single source of truth for "should we index this file" — derived
- * from EXTENSION_MAP so parser support and indexing selection never drift.
+ * 根据文件扩展名判断 Synapse 是否能解析该文件。
+ * 这是"是否应索引此文件"的唯一真实来源——派生自 EXTENSION_MAP，
+ * 确保解析器支持与索引选择永不偏离。
  */
 export function isSourceFile(filePath: string): boolean {
   if (isPlayRoutesFile(filePath)) return true; // Play `conf/routes` is extensionless
@@ -131,20 +130,20 @@ export function isSourceFile(filePath: string): boolean {
 }
 
 /**
- * Shopify OS 2.0 JSON template (`templates/*.json`) or section group
- * (`sections/*.json`) — these reference sections by `"type"`, so the Liquid
- * extractor links them. (config/ + locales/ JSON have no section refs.)
+ * Shopify OS 2.0 JSON 模板（`templates/*.json`）或节（section）组
+ * （`sections/*.json`）——这些文件通过 `"type"` 引用节，因此 Liquid
+ * 提取器会将它们关联起来。（config/ + locales/ 下的 JSON 不包含节引用。）
  */
 export function isShopifyLiquidJson(filePath: string): boolean {
-  // Allow nested template dirs (`templates/customers/login.json`), not just
-  // top-level (`templates/product.json`).
+  // 允许嵌套的模板目录（`templates/customers/login.json`），而不仅仅是
+  // 顶层目录（`templates/product.json`）。
   return /(^|\/)(templates|sections)\/.+\.json$/i.test(filePath);
 }
 
 /**
- * Play Framework routes file: the extensionless `conf/routes` (and included
- * `conf/*.routes`). No grammar — route extraction is done by the Play framework
- * resolver, so it's processed through the no-grammar (`yaml`-style) path.
+ * Play Framework 路由文件：无扩展名的 `conf/routes`（以及包含的
+ * `conf/*.routes`）。没有 grammar——路由提取由 Play 框架解析器完成，
+ * 因此通过无 grammar（`yaml` 风格）路径处理。
  */
 export function isPlayRoutesFile(filePath: string): boolean {
   return (
@@ -155,7 +154,7 @@ export function isPlayRoutesFile(filePath: string): boolean {
 }
 
 /**
- * Caches for loaded grammars and parsers
+ * 已加载 grammar 和 parser 的缓存
  */
 const parserCache = new Map<Language, Parser>();
 const languageCache = new Map<Language, WasmLanguage>();
@@ -164,9 +163,9 @@ const unavailableGrammarErrors = new Map<Language, string>();
 let parserInitialized = false;
 
 /**
- * Initialize the tree-sitter WASM runtime. Must be called before loading grammars.
- * Does NOT load any grammar WASM files — use loadGrammarsForLanguages() for that.
- * Idempotent — safe to call multiple times.
+ * 初始化 tree-sitter WASM 运行时。必须在加载 grammar 之前调用。
+ * 不加载任何 grammar WASM 文件——请使用 loadGrammarsForLanguages() 完成该步骤。
+ * 幂等——可安全多次调用。
  */
 export async function initGrammars(): Promise<void> {
   if (parserInitialized) return;
@@ -177,24 +176,23 @@ export async function initGrammars(): Promise<void> {
 }
 
 /**
- * Load grammar WASM files for specific languages only.
- * Skips languages that are already loaded or have no WASM grammar.
- * Must be called after initGrammars().
+ * 仅为指定语言加载 grammar WASM 文件。
+ * 跳过已加载或没有 WASM grammar 的语言。
+ * 必须在 initGrammars() 之后调用。
  */
 export async function loadGrammarsForLanguages(languages: Language[]): Promise<void> {
   if (!parserInitialized) {
     await initGrammars();
   }
 
-  // SFC languages (svelte/vue/astro) have no grammar of their own — their
-  // extractors delegate <script>/frontmatter content to the TS/JS extractor,
-  // so those grammars must be loaded even when no plain .ts/.js file is in
-  // the index set (e.g. a pure-.astro content site).
+  // SFC 语言（svelte/vue/astro）没有自己的 grammar——它们的提取器
+  // 将 <script>/frontmatter 内容委托给 TS/JS 提取器，因此即使索引集中
+  // 没有普通的 .ts/.js 文件（例如纯 .astro 内容站），也必须加载这些 grammar。
   if (languages.some((l) => l === 'svelte' || l === 'vue' || l === 'astro')) {
     languages = [...languages, 'typescript', 'javascript'];
   }
 
-  // Deduplicate and filter to languages that have WASM grammars and aren't already loaded
+  // 去重并过滤：保留有 WASM grammar 且尚未加载的语言
   const toLoad = [...new Set(languages)].filter(
     (lang): lang is GrammarLanguage =>
       lang in WASM_GRAMMAR_FILES &&
@@ -202,20 +200,18 @@ export async function loadGrammarsForLanguages(languages: Language[]): Promise<v
       !unavailableGrammarErrors.has(lang)
   );
 
-  // Load grammars sequentially to avoid web-tree-sitter WASM race condition on Node 20+
-  // See: https://github.com/tree-sitter/tree-sitter/issues/2338
+  // 顺序加载 grammar，避免 Node 20+ 上 web-tree-sitter WASM 的竞争条件
+  // 参见：https://github.com/tree-sitter/tree-sitter/issues/2338
   for (const lang of toLoad) {
     const wasmFile = WASM_GRAMMAR_FILES[lang];
     try {
-      // Some grammars ship their own WASMs (not in tree-sitter-wasms, or the
-      // tree-sitter-wasms build is too old). Lua: tree-sitter-wasms ships an
-      // ABI-13 build that corrupts the shared WASM heap under web-tree-sitter
-      // 0.25 (drops nested calls/imports on every file after the first); we
-      // vendor the upstream ABI-15 wasm instead. C#: the tree-sitter-wasms
-      // build (ABI 13) has no primary-constructor support and parses
-      // `class Foo(...)` as an ERROR that swallows the whole class (#237); we
-      // vendor the upstream ABI-15 tree-sitter-c-sharp 0.23.5 wasm, which parses
-      // primary constructors natively.
+      // 部分 grammar 附带自己的 WASM（不在 tree-sitter-wasms 中，或
+      // tree-sitter-wasms 的构建版本过旧）。Lua：tree-sitter-wasms 附带的
+      // ABI-13 构建在 web-tree-sitter 0.25 下会损坏共享 WASM 堆（在第一个
+      // 文件之后每个文件都丢失嵌套调用/导入）；我们改用上游 ABI-15 wasm。
+      // C#：tree-sitter-wasms 的构建（ABI 13）不支持主构造函数，会将
+      // `class Foo(...)` 解析为吞掉整个类的 ERROR（#237）；我们改用上游
+      // ABI-15 的 tree-sitter-c-sharp 0.23.5 wasm，它原生支持主构造函数。
       const wasmPath = (lang === 'pascal' || lang === 'scala' || lang === 'lua' || lang === 'luau' || lang === 'csharp' || lang === 'r')
         ? path.join(__dirname, 'wasm', wasmFile)
         : require.resolve(`tree-sitter-wasms/out/${wasmFile}`);
@@ -230,8 +226,8 @@ export async function loadGrammarsForLanguages(languages: Language[]): Promise<v
 }
 
 /**
- * Load ALL grammar WASM files. Convenience function for tests and
- * backward compatibility. Prefer loadGrammarsForLanguages() in production.
+ * 加载所有 grammar WASM 文件。供测试和向后兼容使用的便捷函数。
+ * 生产环境中推荐使用 loadGrammarsForLanguages()。
  */
 export async function loadAllGrammars(): Promise<void> {
   const allLanguages = Object.keys(WASM_GRAMMAR_FILES) as GrammarLanguage[];
@@ -239,15 +235,15 @@ export async function loadAllGrammars(): Promise<void> {
 }
 
 /**
- * Check if grammars have been initialized
+ * 检查 grammar 是否已初始化
  */
 export function isGrammarsInitialized(): boolean {
   return parserInitialized;
 }
 
 /**
- * Get a parser for the specified language.
- * Returns synchronously from pre-loaded cache.
+ * 获取指定语言的 parser。
+ * 从预加载缓存中同步返回。
  */
 export function getParser(language: Language): Parser | null {
   if (parserCache.has(language)) {
@@ -266,19 +262,18 @@ export function getParser(language: Language): Parser | null {
 }
 
 /**
- * Detect language from file extension
+ * 从文件扩展名检测语言
  */
 export function detectLanguage(filePath: string, source?: string): Language {
-  // Play `conf/routes` has no grammar — route through the no-symbol path; the
-  // Play framework resolver extracts route nodes from it.
+  // Play 的 `conf/routes` 没有 grammar——走无符号路径；
+  // Play 框架解析器从中提取路由节点。
   if (isPlayRoutesFile(filePath)) return 'yaml';
   const ext = filePath.substring(filePath.lastIndexOf('.')).toLowerCase();
-  // Shopify OS 2.0 JSON templates / section groups → the Liquid extractor (it
-  // links each section `"type"` to its `sections/<type>.liquid`).
+  // Shopify OS 2.0 JSON 模板 / 节组 → Liquid 提取器（将每个节的 `"type"` 关联到对应的 `sections/<type>.liquid`）。
   if (isShopifyLiquidJson(filePath)) return 'liquid';
   const lang = EXTENSION_MAP[ext] || 'unknown';
 
-  // .h files could be C, C++, or Objective-C — check source content
+  // .h 文件可能是 C、C++ 或 Objective-C——检查源码内容
   if (lang === 'c' && ext === '.h' && source) {
     if (looksLikeCpp(source)) return 'cpp';
     if (looksLikeObjc(source)) return 'objc';
@@ -288,8 +283,8 @@ export function detectLanguage(filePath: string, source?: string): Language {
 }
 
 /**
- * Heuristic: does a .h file contain C++ constructs?
- * Checks the first ~8KB for patterns that are unique to C++ and never valid C.
+ * 启发式判断：.h 文件是否包含 C++ 构造？
+ * 检查前约 8KB，寻找仅在 C++ 中合法而在 C 中从不合法的模式。
  */
 function looksLikeCpp(source: string): boolean {
   const sample = source.substring(0, 8192);
@@ -297,7 +292,7 @@ function looksLikeCpp(source: string): boolean {
 }
 
 /**
- * Heuristic: does a .h file contain Objective-C constructs?
+ * 启发式判断：.h 文件是否包含 Objective-C 构造？
  */
 function looksLikeObjc(source: string): boolean {
   const sample = source.substring(0, 8192);
@@ -305,59 +300,56 @@ function looksLikeObjc(source: string): boolean {
 }
 
 /**
- * Check if a language is supported (has a grammar defined).
- * Returns true if the grammar exists, even if not yet loaded.
+ * 检查某语言是否受支持（已定义对应 grammar）。
+ * 即使尚未加载，只要 grammar 存在也返回 true。
  */
 export function isLanguageSupported(language: Language): boolean {
-  if (language === 'svelte') return true; // custom extractor (script block delegation)
-  if (language === 'vue') return true; // custom extractor (script block delegation)
-  if (language === 'astro') return true; // custom extractor (frontmatter/script block delegation)
-  if (language === 'liquid') return true; // custom regex extractor
-  if (language === 'razor') return true; // custom RazorExtractor (.cshtml/.razor markup)
-  if (language === 'yaml') return true; // file-level tracking only; Drupal routing extraction via framework resolver
-  if (language === 'twig') return true; // file-level tracking only
-  if (language === 'xml') return true; // MyBatis mapper extractor
-  if (language === 'properties') return true; // Spring config keys
+  if (language === 'svelte') return true; // 自定义提取器（script 块委托）
+  if (language === 'vue') return true; // 自定义提取器（script 块委托）
+  if (language === 'astro') return true; // 自定义提取器（frontmatter/script 块委托）
+  if (language === 'liquid') return true; // 自定义正则提取器
+  if (language === 'razor') return true; // 自定义 RazorExtractor（.cshtml/.razor 标记）
+  if (language === 'yaml') return true; // 仅文件级追踪；通过框架解析器进行 Drupal 路由提取
+  if (language === 'twig') return true; // 仅文件级追踪
+  if (language === 'xml') return true; // MyBatis mapper 提取器
+  if (language === 'properties') return true; // Spring 配置键
   if (language === 'unknown') return false;
   return language in WASM_GRAMMAR_FILES;
 }
 
 /**
- * Check if a grammar has been loaded and is ready for parsing.
+ * 检查某语言的 grammar 是否已加载并可用于解析。
  */
 export function isGrammarLoaded(language: Language): boolean {
   if (language === 'svelte' || language === 'vue' || language === 'astro' || language === 'liquid' || language === 'razor') return true;
-  if (language === 'yaml' || language === 'twig') return true; // no WASM grammar needed
-  if (language === 'xml' || language === 'properties') return true; // no WASM grammar needed
+  if (language === 'yaml' || language === 'twig') return true; // 无需 WASM grammar
+  if (language === 'xml' || language === 'properties') return true; // 无需 WASM grammar
   return languageCache.has(language);
 }
 
 /**
- * Languages tracked at the file-record level only: parsing emits zero symbol
- * nodes, but the file is still stored (and framework resolvers may add per-file
- * references later, e.g. Drupal routing yml, Spring `@Value` against
- * application.properties). This is the canonical set behind the no-symbol
- * branch in `tree-sitter.ts`; `xml` is intentionally excluded because its
- * MyBatis extractor emits a file node. Callers use this to count such files as
- * indexed rather than skipped, so it must stay in sync with that branch.
+ * 仅在文件记录级别追踪的语言：解析不生成任何符号节点，但文件仍会被存储
+ * （框架解析器之后可能添加文件级引用，例如 Drupal 路由 yml、Spring
+ * `@Value` 对应 application.properties）。这是 `tree-sitter.ts` 中无符号
+ * 分支的权威集合；`xml` 故意排除在外，因为其 MyBatis 提取器会生成文件节点。
+ * 调用方使用此函数将这类文件计为"已索引"而非"已跳过"，因此必须与该分支保持同步。
  */
 export function isFileLevelOnlyLanguage(language: Language): boolean {
   return language === 'yaml' || language === 'twig' || language === 'properties';
 }
 
 /**
- * Get all supported languages (those with grammar definitions).
+ * 获取所有受支持的语言（已定义 grammar 的语言）。
  */
 export function getSupportedLanguages(): Language[] {
   return [...(Object.keys(WASM_GRAMMAR_FILES) as GrammarLanguage[]), 'svelte', 'vue', 'astro', 'liquid'];
 }
 
 /**
- * Reset the cached parser for a language to reclaim WASM heap memory.
- * The tree-sitter WASM runtime accumulates fragmented memory over thousands
- * of parses. Deleting and recreating the Parser instance forces the WASM
- * heap to reset, preventing "memory access out of bounds" crashes in
- * large repos.
+ * 重置某语言的缓存 parser 以回收 WASM 堆内存。
+ * tree-sitter WASM 运行时在数千次解析后会积累碎片内存。删除并重新创建
+ * Parser 实例会强制重置 WASM 堆，防止大型代码库中出现
+ * "memory access out of bounds" 崩溃。
  */
 export function resetParser(language: Language): void {
   const old = parserCache.get(language);
@@ -368,20 +360,20 @@ export function resetParser(language: Language): void {
 }
 
 /**
- * Clear parser/grammar caches (useful for testing)
+ * 清除 parser/grammar 缓存（供测试使用）
  */
 export function clearParserCache(): void {
   for (const parser of parserCache.values()) {
     parser.delete();
   }
   parserCache.clear();
-  // Note: languageCache is NOT cleared — WASM languages persist.
-  // To fully re-init, set parserInitialized = false and call initGrammars() again.
+  // 注意：languageCache 不会被清除——WASM 语言会持久存在。
+  // 若需完全重新初始化，将 parserInitialized 设为 false 并重新调用 initGrammars()。
   unavailableGrammarErrors.clear();
 }
 
 /**
- * Report grammars that failed to load.
+ * 报告加载失败的 grammar。
  */
 export function getUnavailableGrammarErrors(): Partial<Record<Language, string>> {
   const out: Partial<Record<Language, string>> = {};
@@ -392,7 +384,7 @@ export function getUnavailableGrammarErrors(): Partial<Record<Language, string>>
 }
 
 /**
- * Get language display name
+ * 获取语言的显示名称
  */
 export function getLanguageDisplayName(language: Language): string {
   const names: Record<Language, string> = {

@@ -1,30 +1,28 @@
 ﻿#!/usr/bin/env node
 'use strict';
 //
-// npm thin-installer launcher for Synapse.
+// Synapse 的 npm 精简安装器启动器。
 //
-// The heavy artifact (a vendored Node runtime + the app) ships as a per-platform
-// optionalDependency: @colbymchenry/synapse-<platform>-<arch>. npm installs
-// only the one matching the host, via each package's `os`/`cpu` fields (the
-// esbuild pattern). This shim — run by the user's OWN Node — locates that bundle
-// and execs its launcher, so the real work always runs on the bundled Node 24
-// (with node:sqlite), regardless of the user's Node version. The user's Node is
-// only ever a launcher; even an ancient version can run this file.
+// 重量级产物（内置 Node 运行时 + 应用）以各平台 optionalDependency 发布：
+// @colbymchenry/synapse-<platform>-<arch>。npm 通过每个包的 `os`/`cpu` 字段
+// 仅安装与宿主匹配的那一个（esbuild 模式）。本 shim——由用户自己的 Node 运行——
+// 定位该 bundle 并执行其启动器，使真正的工作始终在打包的 Node 24（含 node:sqlite）
+// 上运行，与用户的 Node 版本无关。用户的 Node 仅作为启动器；即使是极旧的版本
+// 也能运行本文件。
 //
-// Self-heal (issue #303): some registries — notably the npmmirror/cnpm mirrors,
-// and some corporate proxies — don't reliably mirror the per-platform
-// optionalDependencies. npm treats an unfetchable optional dep as success and
-// silently skips it, so the bundle goes missing and every command fails. When
-// the installed bundle can't be resolved, this shim falls back to downloading
-// the matching bundle straight from GitHub Releases — the very archive
-// install.sh uses — into a cache dir, then runs that. Knobs:
-//   SYNAPSE_NO_DOWNLOAD=1     disable the network fallback (print guidance)
-//   SYNAPSE_INSTALL_DIR=DIR   cache location (default: ~/.synapse)
-//   SYNAPSE_DOWNLOAD_BASE=URL release-download base (for mirrors/air-gapped)
+// 自愈（issue #303）：某些注册表——尤其是 npmmirror/cnpm 镜像
+// 和一些企业代理——不能可靠地镜像各平台 optionalDependencies。
+// npm 将无法拉取的可选依赖视为成功并静默跳过，导致 bundle 缺失、每条命令失败。
+// 当已安装 bundle 无法解析时，本 shim 回退到从 GitHub Releases 直接下载
+// 匹配的 bundle——与 install.sh 使用的完全相同的归档——到缓存目录，然后运行。
+// 调节旋钮：
+//   SYNAPSE_NO_DOWNLOAD=1     禁用网络回退（打印指引）
+//   SYNAPSE_INSTALL_DIR=DIR   缓存位置（默认：~/.synapse）
+//   SYNAPSE_DOWNLOAD_BASE=URL 发布下载基础 URL（用于镜像/离线环境）
 //
-// Wired up at release time as the main package's `bin`:
+// 发布时作为主包的 `bin` 接入：
 //   "bin": { "synapse": "npm-shim.js" }
-// with the platform packages listed in `optionalDependencies`.
+// 平台包列于 `optionalDependencies` 中。
 
 var childProcess = require('child_process');
 var fs = require('fs');
@@ -42,8 +40,7 @@ main().catch(function (e) {
 });
 
 async function main() {
-  // Happy path: the npm-installed optional dependency. Fall back to a download
-  // when the registry didn't deliver it.
+  // 正常路径：npm 已安装的可选依赖。当注册表未能提供时回退到下载。
   var resolved = resolveInstalledBundle() || (await selfHealBundle());
   var res = childProcess.spawnSync(resolved.command, resolved.args, { stdio: 'inherit' });
   if (res.error) {
@@ -53,14 +50,14 @@ async function main() {
   process.exit(res.status === null ? 1 : res.status);
 }
 
-// Resolve the launcher from the installed per-platform optionalDependency.
-// Returns {command, args} or null if the package isn't installed.
+// 从已安装的各平台 optionalDependency 中解析启动器。
+// 返回 {command, args}，若包未安装则返回 null。
 function resolveInstalledBundle() {
   try {
     if (isWindows) {
-      // Modern Node refuses to spawn the bundle's .cmd directly (EINVAL, the
-      // CVE-2024-27980 hardening on Node 24), so invoke the bundled node.exe
-      // against the app entry point and pass --liftoff-only here.
+      // 现代 Node 拒绝直接 spawn bundle 的 .cmd（EINVAL，Node 24 的
+      // CVE-2024-27980 加固），因此直接调用打包的 node.exe 指向应用
+      // 入口点，并在此处传递 --liftoff-only。
       var nodeExe = require.resolve(pkg + '/node.exe');
       var entry = require.resolve(pkg + '/lib/dist/bin/synapse.js');
       return { command: nodeExe, args: liftoff(entry) };
@@ -71,9 +68,9 @@ function resolveInstalledBundle() {
   }
 }
 
-// Locate the launcher inside an extracted GitHub bundle directory (same
-// node/lib/bin layout as the npm platform package). Returns {command, args} or
-// null when the directory doesn't hold a usable bundle yet.
+// 在解压的 GitHub bundle 目录中定位启动器（与 npm 平台包相同的
+// node/lib/bin 布局）。返回 {command, args}，
+// 若目录中尚无可用 bundle 则返回 null。
 function launcherIn(dir) {
   if (isWindows) {
     var nodeExe = path.join(dir, 'node.exe');
@@ -88,22 +85,23 @@ function launcherIn(dir) {
   return null;
 }
 
-// --liftoff-only keeps tree-sitter's WASM grammars off V8's turboshaft tier to
-// avoid the Zone OOM on Node >= 22 (issues #293/#298). The unix bin/synapse
-// launcher already passes it; on Windows we invoke node.exe directly so add it.
+// --liftoff-only 使 tree-sitter 的 WASM 语法远离 V8 turboshaft 层，
+// 以避免 Node >= 22 上的 Zone OOM（issues #293/#298）。
+// Unix 的 bin/synapse 启动器已传递此标志；Windows 上直接调用 node.exe，
+// 因此在此处添加。
 function liftoff(entry) {
   return ['--liftoff-only', entry].concat(process.argv.slice(2));
 }
 
-// Download + cache the platform bundle from GitHub Releases. Returns
-// {command, args}; exits the process with guidance if it can't.
+// 从 GitHub Releases 下载并缓存平台 bundle。返回 {command, args}；
+// 无法下载时以指引信息退出进程。
 async function selfHealBundle() {
   var version = readVersion();
   var bundlesDir = path.join(process.env.SYNAPSE_INSTALL_DIR || path.join(os.homedir(), '.synapse'), 'bundles');
   var dest = path.join(bundlesDir, target + '-' + version);
 
-  // Already downloaded by a previous run? Use it even when downloads are
-  // disabled — SYNAPSE_NO_DOWNLOAD blocks fetching, not a cached bundle.
+  // 上次运行已下载？即使禁用下载也使用它——
+  // SYNAPSE_NO_DOWNLOAD 阻止拉取，不阻止已缓存的 bundle。
   var cached = launcherIn(dest);
   if (cached) return cached;
 
@@ -120,8 +118,8 @@ async function selfHealBundle() {
     'synapse: downloading ' + asset + ' from GitHub Releases (' + version + ')...\n'
   );
 
-  // Stage inside bundlesDir so the final rename is on the same filesystem (atomic,
-  // no EXDEV across tmpfs). Strip the archive's top-level synapse-<target>/ dir.
+  // 暂存在 bundlesDir 内，使最终重命名在同一文件系统上（原子操作，
+  // 不跨 tmpfs 产生 EXDEV）。去除归档顶层的 synapse-<target>/ 目录。
   fs.mkdirSync(bundlesDir, { recursive: true });
   var stage = fs.mkdtempSync(path.join(bundlesDir, '.dl-'));
   try {
@@ -132,12 +130,12 @@ async function selfHealBundle() {
     fs.mkdirSync(extracted);
     extract(archivePath, extracted);
 
-    var raced = launcherIn(dest); // another process may have finished meanwhile
+    var raced = launcherIn(dest); // 另一进程可能已在此期间完成
     if (raced) { rmrf(stage); return raced; }
     try {
       fs.renameSync(extracted, dest);
     } catch (e) {
-      var other = launcherIn(dest); // lost the race but theirs is valid
+      var other = launcherIn(dest); // 竞争失败但对方的 bundle 有效
       if (other) { rmrf(stage); return other; }
       throw e;
     }
@@ -161,13 +159,13 @@ function readVersion() {
   }
 }
 
-// GET with manual redirect following (GitHub release URLs redirect to a CDN).
+// 手动跟随重定向的 GET（GitHub release URL 会重定向到 CDN）。
 function download(url, dest, redirectsLeft) {
   return new Promise(function (resolve, reject) {
     var https = require('https');
-    // timeout is an idle/inactivity timeout — it won't kill a slow-but-progressing
-    // download, only a stalled connection (so a blocked mirror fails fast with
-    // guidance instead of hanging the user's command forever).
+    // timeout 是空闲/不活动超时——不会终止缓慢但有进展的下载，
+    // 只会终止停滞的连接（使被封锁的镜像快速失败并给出指引，
+    // 而非永远挂起用户的命令）。
     var req = https.get(url, { headers: { 'User-Agent': 'synapse-npm-shim' }, timeout: 30000 }, function (res) {
       var status = res.statusCode;
       if (status >= 300 && status < 400 && res.headers.location) {
@@ -188,17 +186,16 @@ function download(url, dest, redirectsLeft) {
   });
 }
 
-// Best-effort integrity check. When the release publishes a SHA256SUMS file, the
-// downloaded archive MUST match its listed hash or we abort. When that file is
-// absent (older releases) or simply unreachable, we proceed — the archive still
-// arrived from GitHub over TLS. So tampering/corruption is caught, while a
-// missing checksum never breaks an install.
+// 尽力而为的完整性检查。当发布附有 SHA256SUMS 文件时，下载的归档必须
+// 与列出的哈希匹配，否则中止。当该文件不存在（旧版本）或无法访问时，
+// 继续执行——归档仍然通过 TLS 从 GitHub 到达。
+// 因此篡改/损坏能被捕获，而缺少校验和永远不会破坏安装。
 async function verifyChecksum(archivePath, asset, base, version) {
   var sumsPath = archivePath + '.SHA256SUMS';
   try {
     await download(base + '/v' + version + '/SHA256SUMS', sumsPath, 6);
   } catch (e) {
-    return; // not published / unreachable → skip
+    return; // 未发布 / 无法访问 → 跳过
   }
   var expected = null;
   var lines = fs.readFileSync(sumsPath, 'utf8').split('\n');
@@ -206,7 +203,7 @@ async function verifyChecksum(archivePath, asset, base, version) {
     var m = lines[i].trim().match(/^([0-9a-fA-F]{64})\s+\*?(.+)$/);
     if (m && path.basename(m[2].trim()) === asset) { expected = m[1].toLowerCase(); break; }
   }
-  if (!expected) return; // asset not listed → nothing to check
+  if (!expected) return; // asset 未列出 → 无需检查
   var actual = require('crypto').createHash('sha256').update(fs.readFileSync(archivePath)).digest('hex');
   if (actual !== expected) {
     throw new Error('checksum mismatch for ' + asset +
@@ -215,8 +212,8 @@ async function verifyChecksum(archivePath, asset, base, version) {
   process.stderr.write('synapse: checksum verified.\n');
 }
 
-// Extract via the system tar — present on macOS, Linux, and Windows 10+
-// (bsdtar reads .zip too). No third-party dependency in the shim.
+// 通过系统 tar 解压——在 macOS、Linux 和 Windows 10+ 上均可用
+//（bsdtar 也能读取 .zip）。shim 中无第三方依赖。
 function extract(archive, destDir) {
   var args = isWindows
     ? ['-xf', archive, '-C', destDir, '--strip-components=1']
@@ -227,7 +224,7 @@ function extract(archive, destDir) {
 }
 
 function rmrf(p) {
-  try { fs.rmSync(p, { recursive: true, force: true }); } catch (e) { /* best effort */ }
+  try { fs.rmSync(p, { recursive: true, force: true }); } catch (e) { /* 尽力而为 */ }
 }
 
 function fail(reason) {

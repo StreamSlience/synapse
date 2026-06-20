@@ -2,9 +2,9 @@ import type { Node as SyntaxNode } from 'web-tree-sitter';
 import { getNodeText, getChildByField } from '../tree-sitter-helpers';
 import type { LanguageExtractor } from '../tree-sitter-types';
 
-// include / require (+ _once) expression node types. These carry the
-// file→file dependency in procedural PHP, where `include`/`require` — not
-// namespace `use` — is how a file pulls in another (issue #660).
+// include / require（及 _once）表达式节点类型。这些节点携带过程式 PHP 中
+// 的文件→文件依赖关系，其中 `include`/`require`——而非命名空间 `use`——
+// 是文件引入其他文件的方式（issue #660）。
 const PHP_INCLUDE_TYPES = new Set([
   'include_expression',
   'include_once_expression',
@@ -13,27 +13,27 @@ const PHP_INCLUDE_TYPES = new Set([
 ]);
 
 /**
- * Extract a static string-literal path from a PHP include/require expression.
+ * 从 PHP include/require 表达式中提取静态字符串字面量路径。
  *
- * Returns null for dynamic forms (`include $var`, `require __DIR__ . '/x'`,
- * interpolated strings) — they have no resolvable compile-time path, which
- * matches the issue's "static string literals (the common case)" scope.
+ * 动态形式（`include $var`、`require __DIR__ . '/x'`、插值字符串）
+ * 返回 null——它们没有可解析的编译期路径，这与
+ * issue 中"静态字符串字面量（常见情况）"的范围一致。
  */
 function phpStaticIncludePath(node: SyntaxNode, source: string): string | null {
-  // The path argument is the expression's first named child; the call-style
-  // form `require("x")` wraps it in a parenthesized_expression.
+  // 路径参数是表达式的第一个命名子节点；调用形式
+  // `require("x")` 将其包装在 parenthesized_expression 中。
   let arg: SyntaxNode | null = node.namedChild(0);
   if (arg?.type === 'parenthesized_expression') arg = arg.namedChild(0);
   if (!arg || (arg.type !== 'string' && arg.type !== 'encapsed_string')) return null;
-  // Pure literal only: any non-`string_content` child (interpolated variable,
-  // escape sequence, …) means the value isn't a static path.
+  // 仅纯字面量：任何非 `string_content` 子节点（插值变量、
+  // 转义序列等）都意味着该值不是静态路径。
   const parts = arg.namedChildren;
   if (parts.some((c: SyntaxNode) => c.type !== 'string_content')) return null;
   const content = parts.find((c: SyntaxNode) => c.type === 'string_content');
   return content ? getNodeText(content, source) : null;
 }
 
-/** PHP built-in return types that can't be a method receiver (so no class to chain on). */
+/** PHP 内置返回类型，不能作为方法接收者（没有可链式调用的类）。 */
 const PHP_NON_CLASS_RETURN = new Set([
   'array', 'string', 'int', 'integer', 'float', 'double', 'bool', 'boolean',
   'void', 'mixed', 'never', 'null', 'false', 'true', 'object', 'callable',
@@ -41,16 +41,15 @@ const PHP_NON_CLASS_RETURN = new Set([
 ]);
 
 /**
- * A method/function's declared return type, normalized to the class a chained
- * `->method()` could be called on (issue #608). `self` / `static` / `$this` are
- * kept as the marker `self` and resolved to the declaring class at resolution
- * time; a concrete type returns its short name; primitives / unions / nullable
- * non-class types return undefined.
+ * 方法/函数的声明返回类型，规范化为可用于链式 `->method()` 调用的类
+ *（issue #608）。`self` / `static` / `$this` 保留为标记 `self`，
+ * 在解析时解析为声明类；具体类型返回其短名称；
+ * 基本类型 / 联合类型 / 可空非类类型返回 undefined。
  */
 function extractPhpReturnType(node: SyntaxNode, source: string): string | undefined {
   let rt = getChildByField(node, 'return_type');
   if (!rt) return undefined;
-  // Unwrap `?Type`. Union / intersection types are ambiguous — skip them.
+  // 解包 `?Type`。联合类型 / 交叉类型有歧义——跳过。
   if (rt.type === 'optional_type') rt = rt.namedChild(0) ?? rt;
   if (!rt || rt.type === 'primitive_type') return undefined;
 
@@ -96,7 +95,7 @@ export const phpExtractor: LanguageExtractor = {
         if (text === 'protected') return 'protected';
       }
     }
-    return 'public'; // PHP defaults to public
+    return 'public'; // PHP 默认为 public
   },
   isStatic: (node) => {
     for (let i = 0; i < node.childCount; i++) {
@@ -106,8 +105,8 @@ export const phpExtractor: LanguageExtractor = {
     return false;
   },
   visitNode: (node, ctx) => {
-    // Handle class constants: const_declaration inside classes
-    // These are skipped by the main visitor because variableTypes check excludes class-like contexts
+    // 处理类常量：类内的 const_declaration
+    // 主访问器因 variableTypes 检查排除了类似类的上下文，所以这些被跳过
     if (node.type === 'const_declaration') {
       const constElements = node.namedChildren.filter((c: SyntaxNode) => c.type === 'const_element');
       for (const elem of constElements) {
@@ -119,8 +118,8 @@ export const phpExtractor: LanguageExtractor = {
       return true; // handled
     }
 
-    // Handle trait usage: use TraitName, OtherTrait; inside classes
-    // Creates unresolved references that will be resolved to 'implements' edges
+    // 处理 trait 使用：类内的 use TraitName, OtherTrait;
+    // 创建将解析为 'implements' 边的未解析引用
     if (node.type === 'use_declaration') {
       const names = node.namedChildren.filter((c: SyntaxNode) => c.type === 'name' || c.type === 'qualified_name');
       const parentId = ctx.nodeStack.length > 0 ? ctx.nodeStack[ctx.nodeStack.length - 1] : undefined;
@@ -142,14 +141,14 @@ export const phpExtractor: LanguageExtractor = {
 
     return false;
   },
-  // PHP `namespace Foo\Bar;` is file-level (like a Java/Kotlin package). Capturing
-  // it scopes every class under an `Foo\Bar::` qualified name, which is what makes
-  // `use` imports and same-named types (Laravel has 7+ `Factory` interfaces across
-  // namespaces) resolvable to the RIGHT definition instead of an arbitrary match.
+  // PHP `namespace Foo\Bar;` 是文件级的（类似 Java/Kotlin 包）。捕获它
+  // 将每个类限定在 `Foo\Bar::` 限定名下，使 `use` 导入和同名类型
+  //（Laravel 在不同命名空间下有 7 个以上的 `Factory` 接口）能够解析到
+  // 正确的定义，而不是任意匹配。
   packageTypes: ['namespace_definition'],
   extractPackage: (node, source) => {
     const nsName = node.namedChildren.find((c: SyntaxNode) => c.type === 'namespace_name');
-    // Skip braced `namespace Foo { … }` (has a body) — file-level only.
+    // 跳过花括号形式 `namespace Foo { … }`（有函数体）——仅处理文件级形式。
     const hasBody = node.namedChildren.some((c: SyntaxNode) => c.type === 'compound_statement' || c.type === 'declaration_list');
     if (!nsName || hasBody) return null;
     return getNodeText(nsName, source);
@@ -157,22 +156,21 @@ export const phpExtractor: LanguageExtractor = {
   extractImport: (node, source) => {
     const importText = source.substring(node.startIndex, node.endIndex).trim();
 
-    // include / require (+ _once): emit a file→file dependency. The path is a
-    // static string literal in the common case; dynamic forms resolve to null
-    // and are skipped (no import node, no edge).
+    // include / require（及 _once）：触发文件→文件依赖。路径在常见情况下
+    // 是静态字符串字面量；动态形式解析为 null 并被跳过（无 import 节点，无边）。
     if (PHP_INCLUDE_TYPES.has(node.type)) {
       const includePath = phpStaticIncludePath(node, source);
       return includePath ? { moduleName: includePath, signature: importText } : null;
     }
 
-    // Check for grouped imports: use X\{A, B} - return null for core fallback
+    // 检查分组导入：use X\{A, B}——返回 null 交由核心处理
     const namespacePrefix = node.namedChildren.find((c: SyntaxNode) => c.type === 'namespace_name');
     const useGroup = node.namedChildren.find((c: SyntaxNode) => c.type === 'namespace_use_group');
     if (namespacePrefix && useGroup) {
       return null; // Grouped imports create multiple nodes - let core handle
     }
 
-    // Single import - find namespace_use_clause
+    // 单一导入——查找 namespace_use_clause
     const useClause = node.namedChildren.find((c: SyntaxNode) => c.type === 'namespace_use_clause');
     if (useClause) {
       const qualifiedName = useClause.namedChildren.find((c: SyntaxNode) => c.type === 'qualified_name');

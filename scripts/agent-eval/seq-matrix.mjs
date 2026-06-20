@@ -1,21 +1,21 @@
 ﻿#!/usr/bin/env node
-// Mine the surviving A/B stream-json logs (/tmp/ab-matrix/<Cell>/run-headless-*.jsonl)
-// for what the aggregate matrix can't see: the call SEQUENCE and per-call output SIZE.
+// 从留存的 A/B stream-json 日志（/tmp/ab-matrix/<Cell>/run-headless-*.jsonl）中挖掘
+// 聚合矩阵无法呈现的信息：调用顺序（SEQUENCE）和单次调用的输出大小（SIZE）。
 //
-// Answers three questions:
-//   1. Trace adoption — on a flow question, does the with-arm actually call synapse_trace?
-//   2. Payload size vs repo size — is trace path-scoped (tiny, size-independent) while
-//      explore is breadth-scoped (grows with the repo / over-returns on small repos)?
-//   3. Round-trips — num_turns with vs without (the real wall-clock driver).
+// 回答三个问题：
+//   1. trace 采用率——在流程类问题上，with 组是否真的调用了 synapse_trace？
+//   2. payload 大小 vs 代码库规模——trace 是路径范围（小，与规模无关），
+//      而 explore 是广度范围（随代码库增长 / 在小代码库上过度返回）？
+//   3. 轮次数——有 vs 无 synapse 的 num_turns 对比（真正的挂钟耗时驱动因素）。
 //
-// Usage: node scripts/agent-eval/seq-matrix.mjs [/tmp/ab-matrix]
+// 用法：node scripts/agent-eval/seq-matrix.mjs [/tmp/ab-matrix]
 import { readFileSync, readdirSync, existsSync } from 'fs';
 import { join } from 'path';
 
 const AB = process.argv[2] || '/tmp/ab-matrix';
 const MD = new URL('../../docs/benchmarks/synapse-ab-matrix.md', import.meta.url).pathname;
 
-// repo -> {lang,size,files} from the published matrix table
+// repo -> {lang,size,files} 来自已发布矩阵表格
 const repoMeta = {};
 if (existsSync(MD)) for (const line of readFileSync(MD, 'utf8').split('\n')) {
   const m = line.match(/^\|\s*([^|]+?)\s*\|\s*(S|M|L)\s*\|\s*`([^`]+)`\s*\|\s*(\d+)\s*\|/);
@@ -82,7 +82,7 @@ cells.sort((a, b) => (a.files || 0) - (b.files || 0));
 const k = (n) => (n / 1000).toFixed(1);
 const pad = (s, n) => String(s).padEnd(n);
 
-// ---- per-cell sequence table ----
+// ---- 每个 cell 的调用序列表 ----
 console.log('\n=== PER-CELL: with-arm synapse sequence + payload (sorted by repo size) ===');
 console.log(pad('repo', 22), pad('files', 6), 'trace', pad('cg-call sequence', 40), pad('cgOutK', 7), 'turns(w/wo)');
 for (const c of cells) {
@@ -96,15 +96,15 @@ for (const c of cells) {
   );
 }
 
-// ---- trace adoption ----
-const flow = cells; // every matrix question is a canonical flow question by design
+// ---- trace 采用率 ----
+const flow = cells; // 矩阵中的每个问题按设计均为规范流程问题
 const used = flow.filter(c => c.with.traceUsed);
 console.log(`\n=== TRACE ADOPTION (all ${flow.length} cells are flow questions) ===`);
 console.log(`trace called in ${used.length}/${flow.length} cells`);
 console.log('used trace:', used.map(c => c.repo).join(', ') || '(none)');
 if (used.length) console.log('after-trace follow-ups:', used.map(c => `${c.repo}[${c.with.afterTrace.join(',') || 'none'}]`).join('  '));
 
-// ---- payload size by repo-size tier ----
+// ---- payload 大小按代码库规模分级 ----
 const tier = (f) => f < 200 ? 'S(<200)' : f < 2000 ? 'M(<2000)' : 'L(>=2000)';
 const byTier = {};
 for (const c of cells) { (byTier[tier(c.files || 0)] ??= []).push(c.with.cgOut); }
@@ -115,7 +115,7 @@ for (const t of ['S(<200)', 'M(<2000)', 'L(>=2000)']) {
   console.log(`  ${pad(t, 10)} n=${a.length}  avg cgOut=${k(avg)}K  range ${k(Math.min(...a))}-${k(Math.max(...a))}K`);
 }
 
-// ---- per-tool usage + avg payload (breadth vs path evidence) ----
+// ---- 各工具使用量 + 平均 payload（广度 vs 路径的证据）----
 const tot = {};
 for (const c of cells) for (const [name, v] of Object.entries(c.with.perTool)) {
   (tot[name] ??= { n: 0, out: 0 }); tot[name].n += v.n; tot[name].out += v.out;
@@ -125,7 +125,7 @@ for (const [name, v] of Object.entries(tot).sort((a, b) => b[1].n - a[1].n)) {
   console.log(`  ${pad(name, 10)} calls=${pad(v.n, 4)} avg=${k(v.out / v.n)}K/call  total=${k(v.out)}K`);
 }
 
-// ---- round-trips ----
+// ---- 轮次数 ----
 const sum = (arr, f) => arr.reduce((s, x) => s + (f(x) || 0), 0);
 const wTurns = sum(cells, c => c.with.turns), woTurns = sum(cells, c => c.without?.turns);
 const wCalls = sum(cells, c => c.with.cg.length);
@@ -134,4 +134,4 @@ console.log('\n=== ROUND-TRIPS ===');
 console.log(`turns: with=${wTurns}  without=${woTurns}  (${((1 - wTurns / woTurns) * 100).toFixed(0)}% fewer with)`);
 console.log(`avg turns/cell: with=${(wTurns / cells.length).toFixed(1)}  without=${(woTurns / cells.length).toFixed(1)}`);
 console.log(`total synapse calls=${wCalls} (avg ${(wCalls / cells.length).toFixed(1)}/cell)`);
-console.log(`every with-arm opens with a ToolSearch round-trip (deferred tools): ${tsAll ? 'YES — 1 fixed tax/run' : 'no'}`);
+console.log(`每个 with-arm 是否以 ToolSearch 轮次（延迟工具）开始：${tsAll ? 'YES — 每次运行固定消耗 1 轮' : 'no'}`);

@@ -1,28 +1,24 @@
 ﻿/**
- * Tiny TOML helpers — just enough to inject / replace / remove a
- * single dotted-key table block (`[mcp_servers.synapse]`) inside an
- * existing `~/.codex/config.toml`. We deliberately do NOT try to be a
- * general TOML parser/serializer; that would mean pulling in a
- * dependency (~50KB) for ~6 lines of output.
+ * 轻量 TOML 辅助函数——仅用于在现有 `~/.codex/config.toml` 中注入、
+ * 替换或删除单个点分键表格块（`[mcp_servers.synapse]`）。我们刻意不
+ * 尝试成为通用的 TOML 解析器/序列化器；那意味着为约 6 行输出引入一个
+ * 依赖（~50KB）。
  *
- * Strategy: treat the file as text. Find the `[mcp_servers.synapse]`
- * header line, splice it (and the lines that follow it until the next
- * `[...]` header or EOF) in or out. Everything outside that block is
- * preserved verbatim, byte-for-byte.
+ * 策略：将文件视为纯文本。找到 `[mcp_servers.synapse]` 标题行，将它
+ * （以及其后直到下一个 `[...]` 标题或 EOF 的行）插入或删除。块以外的
+ * 所有内容均逐字节保留。
  *
- * Limitations (acceptable for our narrow use):
- *   - Only handles top-level table headers; not array-of-tables or
- *     subtables nested inside `[mcp_servers]` itself (we always write
- *     the full dotted key `[mcp_servers.synapse]`).
- *   - Doesn't validate sibling TOML — if the file is malformed
- *     elsewhere, our injection won't fix it but won't make it worse.
- *   - Quotes string values with double quotes; escapes `\` and `"`.
+ * 局限性（在我们的窄用途下可接受）：
+ *   - 仅处理顶层表格标题；不处理数组表格或嵌套在 `[mcp_servers]` 内的
+ *     子表格（我们始终写入完整的点分键 `[mcp_servers.synapse]`）。
+ *   - 不验证同级 TOML——若文件其他地方格式有误，我们的注入不会修复它，
+ *     但也不会让情况更糟。
+ *   - 字符串值使用双引号；转义 `\` 和 `"`。
  */
 
 /**
- * Serialize a record into the body lines of a TOML table. Values
- * supported: string, string[]. Other types throw — the codex MCP
- * config only needs these two.
+ * 将记录序列化为 TOML 表格的正文行。支持的值类型：string、string[]。
+ * 其他类型会抛出异常——Codex MCP 配置只需要这两种类型。
  */
 export function serializeTomlTableBody(values: Record<string, string | string[]>): string {
   const lines: string[] = [];
@@ -40,26 +36,23 @@ export function serializeTomlTableBody(values: Record<string, string | string[]>
 }
 
 function quoteString(s: string): string {
-  // TOML basic strings: backslash and double-quote escapes; control
-  // chars not expected in our payload (paths/args).
+  // TOML 基本字符串：反斜杠和双引号需转义；我们的载荷（路径/参数）
+  // 中不会出现控制字符。
   return '"' + s.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
 }
 
 /**
- * Build a full table block: header line + body. Suitable for direct
- * insertion into a TOML file.
+ * 构建完整的表格块：标题行 + 正文。可直接插入 TOML 文件。
  */
 export function buildTomlTable(header: string, values: Record<string, string | string[]>): string {
   return `[${header}]\n${serializeTomlTableBody(values)}`;
 }
 
 /**
- * Insert or replace a top-level dotted-key TOML table block in the
- * given file content. Preserves all other content verbatim.
+ * 在给定文件内容中插入或替换顶层点分键 TOML 表格块。逐字保留所有其他内容。
  *
- * Returns `'inserted'` when the table was newly added, `'replaced'`
- * when an existing one was rewritten, `'unchanged'` when the
- * existing block already matches `block` byte-for-byte.
+ * 表格为新增时返回 `'inserted'`，现有表格被重写时返回 `'replaced'`，
+ * 现有块已与 `block` 逐字节一致时返回 `'unchanged'`。
  */
 export function upsertTomlTable(
   fileContent: string,
@@ -70,7 +63,7 @@ export function upsertTomlTable(
   const headerIdx = findHeaderIndex(fileContent, headerLine);
 
   if (headerIdx === -1) {
-    // Insert at end with separating blank line if there's existing content.
+    // 在末尾插入，若已有内容则以空行分隔。
     const trimmed = fileContent.trimEnd();
     const sep = trimmed.length > 0 ? '\n\n' : '';
     return {
@@ -89,8 +82,8 @@ export function upsertTomlTable(
 
   const before = fileContent.substring(0, headerIdx);
   const after = fileContent.substring(blockEnd);
-  // Trim trailing blank lines from `before` (we'll re-add one) and
-  // leading blank lines from `after` so the file shape stays clean.
+  // 从 `before` 末尾裁去多余空行（稍后重新添加一行），并从 `after`
+  // 开头裁去空行，使文件整体格式保持整洁。
   const beforeClean = before.replace(/\n+$/, '');
   const afterClean = after.replace(/^\n+/, '');
   const sepBefore = beforeClean.length > 0 ? '\n\n' : '';
@@ -102,8 +95,7 @@ export function upsertTomlTable(
 }
 
 /**
- * Remove a top-level dotted-key TOML table block. Returns the
- * possibly-empty new content + an action flag.
+ * 删除顶层点分键 TOML 表格块。返回可能为空的新内容及操作标志。
  */
 export function removeTomlTable(
   fileContent: string,
@@ -121,11 +113,10 @@ export function removeTomlTable(
 }
 
 /**
- * Locate the byte index of a header line (`[foo.bar]`) when it
- * appears at the start of a line. Returns -1 if not found.
+ * 定位标题行（`[foo.bar]`）在行首出现时的字节索引。未找到时返回 -1。
  */
 function findHeaderIndex(content: string, headerLine: string): number {
-  // Search BOL or right after a newline.
+  // 搜索行首或换行符之后。
   if (content.startsWith(headerLine)) return 0;
   const needle = '\n' + headerLine;
   const idx = content.indexOf(needle);
@@ -133,18 +124,17 @@ function findHeaderIndex(content: string, headerLine: string): number {
 }
 
 /**
- * Find the byte index of the next top-level `[...]` table header
- * (excluding array-of-tables `[[...]]`) starting from `from`, or
- * return content length when none.
+ * 从 `from` 位置开始，查找下一个顶层 `[...]` 表格标题
+ * （排除数组表格 `[[...]]`）的字节索引，若无则返回内容长度。
  */
 function findNextTableHeader(content: string, from: number): number {
-  // Look for "\n[" but skip "\n[[" (array of tables).
+  // 查找 "\n["，但跳过 "\n[["（数组表格）。
   let i = from;
   while (i < content.length) {
     const nlIdx = content.indexOf('\n[', i);
     if (nlIdx === -1) return content.length;
     if (content[nlIdx + 2] === '[') {
-      // [[...]] — keep searching past it.
+      // [[...]]——继续向后搜索。
       i = nlIdx + 2;
       continue;
     }

@@ -3,10 +3,9 @@ import { getNodeText } from '../tree-sitter-helpers';
 import type { LanguageExtractor } from '../tree-sitter-types';
 
 /**
- * Blank C# conditional-compilation directive lines (`#if` / `#elif` / `#else` /
- * `#endif`) before parsing. The vendored tree-sitter-c-sharp grammar mis-parses
- * a `#if` that appears *inside an enum member list* — the canonical
- * multi-targeting shape:
+ * 在解析前将 C# 条件编译指令行（`#if` / `#elif` / `#else` / `#endif`）清空。
+ * 内置的 tree-sitter-c-sharp 语法对出现在*枚举成员列表内部*的 `#if` 会解析错误——
+ * 这是典型的多目标构建形式：
  *
  *   enum ReadType {
  *   #if HAVE_DATE_TIME_OFFSET
@@ -15,30 +14,27 @@ import type { LanguageExtractor } from '../tree-sitter-types';
  *       ReadAsDouble,
  *   }
  *
- * It emits an ERROR that, for a nested enum, detaches the *enclosing class's*
- * member list, so most of the class's methods drop out of the index. Removing
- * the directive lines (keeping the guarded code) sidesteps it. Both branches of
- * an `#if/#else` are kept — the same behaviour the previous grammar produced,
- * and the right default for a code graph (index every symbol regardless of
- * build flags). Replacement preserves byte offsets (directive text → spaces,
- * newlines kept) so every symbol's line/column stays exact. (#237)
+ * 它会产生 ERROR 节点，对于嵌套枚举，该 ERROR 会断开*外层类的*成员列表，
+ * 导致类的大部分方法从索引中丢失。删除指令行（保留被守护的代码）可绕过此问题。
+ * `#if/#else` 的两个分支都保留——与旧语法的行为一致，也是代码图的正确默认值
+ *（无论构建标志如何，对所有符号都进行索引）。替换保留字节偏移量
+ *（指令文本 → 空格，换行保留），确保每个符号的行/列位置完全准确。(#237)
  */
 export function blankCsharpPreprocessorDirectives(source: string): string {
   if (source.indexOf('#') === -1) return source;
-  // Conditional-compilation directives only. `#region`/`#pragma`/`#nullable`
-  // parse fine and are left alone. A directive must be the first non-space token
-  // on its line (C# requirement), so anchor to line start.
+  // 仅处理条件编译指令。`#region`/`#pragma`/`#nullable`
+  // 可以正常解析，保持不变。指令必须是其行上的第一个非空格 token
+  //（C# 要求），因此锚定到行首。
   const re = /^([ \t]*)#[ \t]*(if|elif|else|endif)\b[^\n]*/gm;
   return source.replace(re, (m, indent) => indent + ' '.repeat(m.length - indent.length));
 }
 
 /**
- * A C# method's declared return type, normalized to the bare class name a chained
- * `Foo.Create().Bar()` could be called on (the #645/#608 mechanism). The return
- * type lives in the `returns` field (`static Foo Create()` → `Foo`); built-in
- * `predefined_type` (void/int/string/…) and arrays yield undefined, generics are
- * unwrapped to the base type, nullable `Foo?` is stripped, and a dotted namespace
- * is reduced to the simple name. Constructors have no `returns` field → undefined.
+ * C# 方法的声明返回类型，规范化为可用于链式调用 `Foo.Create().Bar()` 的裸类名
+ *（#645/#608 机制）。返回类型位于 `returns` 字段中（`static Foo Create()` → `Foo`）；
+ * 内置 `predefined_type`（void/int/string/…）和数组返回 undefined，泛型解包为基类型，
+ * 可空 `Foo?` 被去除，带点命名空间的类型缩减为简单名称。
+ * 构造函数没有 `returns` 字段，返回 undefined。
  */
 function extractCsharpReturnType(node: SyntaxNode, source: string): string | undefined {
   const typeNode = node.childForFieldName('returns');
@@ -55,13 +51,12 @@ function extractCsharpReturnType(node: SyntaxNode, source: string): string | und
 export const csharpExtractor: LanguageExtractor = {
   preParse: blankCsharpPreprocessorDirectives,
   functionTypes: [],
-  // Records are first-class type declarations in modern C# (DTOs, value objects,
-  // MediatR/CQRS messages). Without these, references to a record never resolve
-  // (#237). The shipped grammar parses EVERY record form as record_declaration —
-  // `record struct` / `readonly record struct` included (it has no
-  // record_struct_declaration node; that structTypes entry is forward-compat
-  // only) — so classifyClassNode tells the value-type form apart by its
-  // `struct` keyword child. (#831 follow-up)
+  // Record 是现代 C# 中的一等类型声明（DTO、值对象、MediatR/CQRS 消息）。
+  // 若不包含这些，对 record 的引用将永远无法解析（#237）。
+  // 已发布的语法将所有 record 形式都解析为 record_declaration——
+  // 包括 `record struct` / `readonly record struct`（不存在
+  // record_struct_declaration 节点；structTypes 中的条目仅为前向兼容）
+  // ——因此 classifyClassNode 通过 `struct` 关键字子节点来区分值类型形式。(#831 跟进)
   classTypes: ['class_declaration', 'record_declaration'],
   methodTypes: ['method_declaration', 'constructor_declaration'],
   interfaceTypes: ['interface_declaration'],
@@ -77,11 +72,11 @@ export const csharpExtractor: LanguageExtractor = {
   enumTypes: ['enum_declaration'],
   enumMemberTypes: ['enum_member_declaration'],
   typeAliasTypes: [],
-  // Namespaces qualify type names so same-named types in different namespaces are
-  // distinguishable (e.g. `ApplicationCore.Entities.CatalogBrand` vs
-  // `BlazorShared.Models.CatalogBrand`). Both block (`namespace Foo { … }`, which
-  // nests its types) and file-scoped (`namespace Foo;`) forms — extractFilePackage
-  // pushes the namespace onto the scope so nested/top-level types pick it up.
+  // 命名空间限定类型名称，使不同命名空间中同名类型可区分
+  //（例如 `ApplicationCore.Entities.CatalogBrand` 与
+  // `BlazorShared.Models.CatalogBrand`）。块形式（`namespace Foo { … }`，嵌套类型）
+  // 和文件作用域形式（`namespace Foo;`）均支持——
+  // extractFilePackage 将命名空间压栈，使嵌套/顶层类型能够获取它。
   packageTypes: ['namespace_declaration', 'file_scoped_namespace_declaration'],
   extractPackage: (node: SyntaxNode, source: string) => {
     const name =
@@ -110,7 +105,7 @@ export const csharpExtractor: LanguageExtractor = {
         if (text === 'internal') return 'internal';
       }
     }
-    return 'private'; // C# defaults to private
+    return 'private'; // C# 默认为 private
   },
   isStatic: (node) => {
     for (let i = 0; i < node.childCount; i++) {
@@ -121,9 +116,8 @@ export const csharpExtractor: LanguageExtractor = {
     }
     return false;
   },
-  // `const` and `static readonly` fields are C# constants (`MaxItems`, lookup
-  // tables, shared config). Drives `constant` kind so value-reference edges
-  // target them; instance `readonly` / plain `static` fields stay `field`s.
+  // `const` 和 `static readonly` 字段是 C# 常量（`MaxItems`、查找表、共享配置）。
+  // 驱动 `constant` 类型以便值引用边指向它们；实例 `readonly` / 普通 `static` 字段保持为 `field`。
   isConst: (node) => {
     let hasStatic = false;
     let hasReadonly = false;
@@ -148,12 +142,12 @@ export const csharpExtractor: LanguageExtractor = {
   },
   extractImport: (node, source) => {
     const importText = source.substring(node.startIndex, node.endIndex).trim();
-    // C# using directives: using System, using System.Collections.Generic, using static X, using Alias = X
+    // C# using 指令：using System，using System.Collections.Generic，using static X，using Alias = X
     const qualifiedName = node.namedChildren.find((c: SyntaxNode) => c.type === 'qualified_name');
     if (qualifiedName) {
       return { moduleName: getNodeText(qualifiedName, source), signature: importText };
     }
-    // Simple namespace like "using System;" - get the first identifier
+    // 简单命名空间，如 "using System;" — 获取第一个标识符
     const identifier = node.namedChildren.find((c: SyntaxNode) => c.type === 'identifier');
     if (identifier) {
       return { moduleName: getNodeText(identifier, source), signature: importText };

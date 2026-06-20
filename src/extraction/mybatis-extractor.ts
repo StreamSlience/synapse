@@ -2,27 +2,23 @@ import { Edge, ExtractionError, ExtractionResult, Node, UnresolvedReference } fr
 import { generateNodeId } from './tree-sitter-helpers';
 
 /**
- * MyBatisExtractor — parses MyBatis mapper XML files.
+ * MyBatisExtractor——解析 MyBatis mapper XML 文件。
  *
- * MyBatis splits a DAO interface across two files: a Java interface (parsed by
- * tree-sitter) declares the method, and an XML mapper file holds the SQL keyed
- * by `<namespace>` (the fully-qualified Java type name) and `id` (the method
- * name). Without the XML side in the graph, `trace(Controller, ...DAO.method)`
- * dead-ends at the interface method — the SQL it actually runs is invisible,
- * and "what does this query touch" / "where is this column written" can't be
- * answered.
+ * MyBatis 将 DAO 接口拆分到两个文件：Java 接口（由 tree-sitter 解析）声明方法，
+ * XML mapper 文件以 `<namespace>`（完全限定 Java 类型名）和 `id`（方法名）为键
+ * 存储 SQL。若图中缺少 XML 侧，`trace(Controller, ...DAO.method)` 会在接口方法处
+ * 断开——实际执行的 SQL 不可见，"此查询涉及哪些内容"/"此列在哪里被写入"等问题
+ * 无法回答。
  *
- * This extractor emits one method-shaped node per `<select|insert|update|
- * delete>` and per `<sql>` fragment, qualified as `<namespace>::<id>` so the
- * MyBatis framework synthesizer (`src/resolution/frameworks/mybatis.ts`) can
- * link the matching Java method → XML statement by suffix-matching qualified
- * names. `<include refid="...">` inside a statement yields an unresolved
- * reference to the SQL fragment, also keyed by `<namespace>::<refid>`.
+ * 本提取器为每个 `<select|insert|update|delete>` 和每个 `<sql>` 片段生成一个
+ * 方法形节点，限定名为 `<namespace>::<id>`，供 MyBatis 框架合成器
+ * （`src/resolution/frameworks/mybatis.ts`）通过后缀匹配限定名，将对应的
+ * Java 方法链接到 XML 语句。语句内的 `<include refid="...">` 会生成对 SQL 片段
+ * 的未解析引用，同样以 `<namespace>::<refid>` 为键。
  *
- * Non-mapper XML (Maven `pom.xml`, Spring beans XML, `web.xml`, log4j config,
- * etc.) is detected by the absence of a `<mapper namespace="...">` root and
- * returns just a file node — we still need the file row so the watcher can
- * track it, but we emit no symbols.
+ * 非 mapper XML（Maven `pom.xml`、Spring beans XML、`web.xml`、log4j 配置等）
+ * 通过缺少 `<mapper namespace="...">` 根标签来识别，仅返回文件节点——
+ * 我们仍需要文件行以便 watcher 跟踪，但不生成符号。
  */
 export class MyBatisExtractor {
   private filePath: string;
@@ -87,9 +83,8 @@ export class MyBatisExtractor {
   }
 
   /**
-   * Find the `<mapper namespace="X">` opening tag. Returns the namespace and
-   * the byte offsets of the body (between the opening and closing tag) so
-   * statement extraction can be scoped to mapper contents.
+   * 查找 `<mapper namespace="X">` 开标签。返回命名空间和 body 的字节偏移
+   * （开标签与闭标签之间），以便将语句提取限定在 mapper 内容范围内。
    */
   private findMapperRoot(): { namespace: string; bodyStart: number; bodyEnd: number } | null {
     const open = /<mapper\b([^>]*)>/.exec(this.source);
@@ -105,10 +100,9 @@ export class MyBatisExtractor {
 
   private extractMapper(fileNodeId: string, namespace: string, bodyStart: number, bodyEnd: number): void {
     const body = this.source.slice(bodyStart, bodyEnd);
-    // Match each top-level statement-shaped element. The body may have nested
-    // tags (`<if>`, `<foreach>`, `<include>`), so we scan with a regex that
-    // pairs an opening tag to its matching close — the simple form below works
-    // because MyBatis statement elements are not themselves nested.
+    // 匹配每个顶层语句形元素。body 中可能包含嵌套标签（`<if>`、`<foreach>`、
+    // `<include>`），因此使用正则将开标签与其匹配的闭标签配对扫描——
+    // 下面的简单形式有效，因为 MyBatis 语句元素本身不嵌套。
     const stmtRegex = /<(select|insert|update|delete|sql)\b([^>]*)>([\s\S]*?)<\/\1>/g;
     let m: RegExpExecArray | null;
     while ((m = stmtRegex.exec(body)) !== null) {
@@ -142,8 +136,8 @@ export class MyBatisExtractor {
       this.nodes.push(node);
       this.edges.push({ source: fileNodeId, target: nodeId, kind: 'contains' });
 
-      // <include refid="X"/> → reference to the SQL fragment in this mapper
-      // (or in another mapper, when the refid is qualified — `ns.X`).
+      // <include refid="X"/> → 对此 mapper 中 SQL 片段的引用
+      // （当 refid 带限定符时可能引用另一个 mapper，例如 `ns.X`）。
       const includeRegex = /<include\b[^>]*\brefid\s*=\s*"([^"]+)"/g;
       let inc: RegExpExecArray | null;
       while ((inc = includeRegex.exec(elemBody)) !== null) {
@@ -185,7 +179,7 @@ export class MyBatisExtractor {
   }
 
   private getLineNumber(offset: number): number {
-    // Binary search
+    // 二分查找
     let lo = 0;
     let hi = this.lineStarts.length - 1;
     while (lo < hi) {

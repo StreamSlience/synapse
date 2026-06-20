@@ -1,8 +1,8 @@
 /**
- * Per-language extraction configurations.
+ * 各编程语言的提取配置。
  *
- * Each file exports a LanguageExtractor config object.
- * This barrel builds the EXTRACTORS map consumed by TreeSitterExtractor.
+ * 每个文件导出一个 LanguageExtractor 配置对象。
+ * 本桶文件构建供 TreeSitterExtractor 使用的 EXTRACTORS 映射表。
  */
 
 import { Language } from '../../types';

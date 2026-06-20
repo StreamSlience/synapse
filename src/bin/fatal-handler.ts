@@ -1,80 +1,78 @@
-﻿/**
- * Last-resort handlers for uncaught exceptions and unhandled rejections.
+/**
+ * 未捕获异常和未处理 rejection 的最后兜底处理器。
  *
- * Reaching one of these means a fault escaped every boundary (per-request
- * try/catch in the MCP transport, the file watcher's own `'error'` handlers,
- * telemetry's fail-silent contract) — i.e. the process is in an undefined
- * state. Node's default in that case is to print and exit non-zero. The CLI
- * previously OVERRODE that to "log the error and keep running", which is the
- * bug behind two production incidents:
+ * 走到这里，说明某个错误绕过了所有边界（MCP 传输层的逐请求
+ * try/catch、文件监视器自身的 `'error'` 处理器、遥测的静默
+ * 失败契约）——即进程已处于未定义状态。Node 默认行为是打印并
+ * 以非零退出码退出。CLI 以前将其覆盖为"记录错误并继续运行"，
+ * 正是这个做法引发了两起生产事故：
  *
- *   - #799 — a stdin socket `'error'` escalated here; the server logged it and
- *     kept running, orphaning the detached MCP daemon and (on Linux) spinning a
- *     POLLHUP fd at 100% CPU. Fixed for that one trigger by treating stdin
- *     failure as shutdown (`src/mcp/stdin-teardown.ts`).
- *   - #850 — a *different* uncaught exception hit the same handler. Logging it
- *     forced V8 to lazily format the Error's `.stack`, which entered a
- *     non-terminating source-position walk and pinned a core. Because the
- *     handler kept the process alive, the detached daemon was left wedged: its
- *     PPID watchdog and idle-timer (both `setInterval`s) could no longer fire,
- *     and nothing respawned it — unrecoverable without a manual `kill`.
+ *   - #799 — 一个 stdin socket `'error'` 升级到了这里；服务器记录
+ *     后继续运行，孤立了已分离的 MCP 守护进程，并（在 Linux 上）
+ *     让一个 POLLHUP fd 以 100% CPU 空转。该触发路径已通过将
+ *     stdin 失败视为关闭来修复（`src/mcp/stdin-teardown.ts`）。
+ *   - #850 — 另一个未捕获异常命中了同一处理器。记录日志迫使 V8
+ *     惰性格式化 Error 的 `.stack`，从而进入一个不终止的源码位置
+ *     遍历，并钉死一个核心。由于处理器让进程保持存活，已分离的
+ *     守护进程被卡住：其 PPID 看门狗和空闲计时器（均为
+ *     `setInterval`）无法再触发，也没有任何东西重新启动它——不
+ *     手动 `kill` 就无法恢复。
  *
- * The fix restores the safe default: log a BOUNDED, hang-proof line, then exit
- * non-zero so a fresh daemon starts on the next connection.
+ * 修复方案恢复了安全默认值：记录一行有界、防挂起的日志，然后
+ * 以非零退出码退出，以便在下次连接时启动新的守护进程。
  *
- * Two properties are load-bearing and covered by tests:
- *   1. {@link describeFatal} never reads `error.stack` and never hands the raw
- *      Error to `console.*`. The lazy stack getter is exactly the step that can
- *      wedge (#850); since it would run *inside* this handler, touching it could
- *      block the very `exit()` below. Name + message are plain string
- *      properties and are always safe.
- *   2. We write synchronously to fd 2 and then exit, so the message is flushed
- *      even though `process.exit()` doesn't drain async streams.
+ * 以下两个属性是核心保证，并有测试覆盖：
+ *   1. {@link describeFatal} 绝不读取 `error.stack`，也绝不将原始
+ *      Error 传给 `console.*`。惰性 stack getter 正是可能卡住的步骤
+ *      （#850）；若在此处理器内触碰它，可能会阻塞下方的 `exit()`。
+ *      name 和 message 是普通字符串属性，始终安全。
+ *   2. 我们同步写入 fd 2 然后退出，因此即使 `process.exit()` 不会
+ *      排空异步流，消息也能被刷出。
  */
 import * as fs from 'fs';
 
 /**
- * Render an uncaught value for the last-resort log WITHOUT triggering stack
- * formatting. Pure and total — never throws, never touches `.stack`.
+ * 将未捕获的值渲染为最后兜底日志，不触发栈格式化。
+ * 纯函数且完全——永不抛出，永不触碰 `.stack`。
  */
 export function describeFatal(value: unknown): string {
   if (value instanceof Error) {
     const name = typeof value.name === 'string' && value.name ? value.name : 'Error';
-    // `message` is a plain own/proto string property — reading it does NOT
-    // format the stack (which is what can loop forever, #850).
+    // `message` 是普通的自有/原型字符串属性——读取它不会
+    // 格式化栈（那才是可能无限循环的地方，#850）。
     const message = typeof value.message === 'string' ? value.message : '';
     return message ? `${name}: ${message}` : name;
   }
   try {
     return String(value);
   } catch {
-    // e.g. an object with a throwing `toString` / `Symbol.toPrimitive`.
+    // 例如，一个 `toString` / `Symbol.toPrimitive` 会抛出的对象。
     return '<unstringifiable value>';
   }
 }
 
-/** Best-effort synchronous stderr write that can never keep a doomed process alive. */
+/** 尽力同步写入 stderr，永远不会让一个注定退出的进程保持存活。 */
 function writeStderr(line: string): void {
   try {
     fs.writeSync(2, line);
   } catch {
-    /* stderr closed/gone — nothing more we can safely do */
+    /* stderr 已关闭或不可用——没有更多可以安全做的事了 */
   }
 }
 
-/** Injectable seams so the wiring is testable without registering real handlers. */
+/** 可注入的接缝，使连接逻辑可在不注册真实处理器的情况下进行测试。 */
 export interface FatalHandlerDeps {
-  /** Event target to attach to. Defaults to `process`. */
+  /** 要绑定的事件目标，默认为 `process`。 */
   target?: NodeJS.EventEmitter;
-  /** How to terminate. Defaults to `process.exit`. */
+  /** 终止方式，默认为 `process.exit`。 */
   exit?: (code: number) => void;
-  /** How to emit the bounded line. Defaults to a synchronous fd-2 write. */
+  /** 输出有界日志行的方式，默认为同步写入 fd 2。 */
   write?: (line: string) => void;
 }
 
 /**
- * Install the uncaught-exception / unhandled-rejection handlers. Both log a
- * bounded line and then exit non-zero (Node's default fatal semantics).
+ * 安装未捕获异常 / 未处理 rejection 的处理器。两者均记录一行
+ * 有界日志，然后以非零退出码退出（与 Node 默认致命语义一致）。
  */
 export function installFatalHandlers(deps: FatalHandlerDeps = {}): void {
   const target = deps.target ?? process;

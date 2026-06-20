@@ -1,13 +1,13 @@
 ﻿#!/usr/bin/env node
-// Aggregate the README A/B (bench-readme.sh output): per repo, median of N runs
-// per arm → time, tool calls, tokens, cost, and % saved. Plus an average row.
+// 聚合 README A/B（bench-readme.sh 输出）：每个代码库取 N 次运行的中位数
+// → 耗时、工具调用次数、token 数、成本和节省百分比。末行显示总平均值。
 //
-// Tokens = SUM of per-turn assistant `usage` (input + output + cache read +
-// cache creation) — the cumulative "total tokens processed". NOTE: `result.usage`
-// is last-turn-only in current Claude Code, so it under-counts badly; don't use it.
-// `total_cost_usd` and `duration_ms` are already cumulative.
+// Token = 每轮 assistant `usage` 之和（input + output + cache read +
+// cache creation）——累计的「已处理 token 总量」。注意：当前 Claude Code 中
+// `result.usage` 仅记录最后一轮，严重少计；请勿使用。
+// `total_cost_usd` 和 `duration_ms` 已是累计值。
 //
-// Usage: node parse-bench-readme.mjs [/tmp/ab-readme]
+// 用法：node parse-bench-readme.mjs [/tmp/ab-readme]
 import { readFileSync, existsSync, readdirSync } from 'fs';
 import { join } from 'path';
 const ROOT = process.argv[2] || '/tmp/ab-readme';
@@ -30,11 +30,10 @@ function parse(file) {
         else if (/synapse/.test(n)) cg++;
       }
     }
-    // MCP cold-start race: the headless agent fired before `synapse serve --mcp`
-    // finished registering its tools, so early calls returned "No such tool
-    // available" and the agent floundered into grep/Read. That measures Synapse's
-    // startup latency, NOT its steady-state value — flag the run so the aggregate
-    // can exclude it (an artifact of headless first-turn timing, not the tool).
+    // MCP 冷启动竞态：无头 agent 在 `synapse serve --mcp` 完成工具注册前就开始执行，
+    // 早期调用返回"No such tool available"，agent 随之退回 grep/Read。
+    // 这衡量的是 Synapse 的启动延迟，而非稳态表现——标记该运行以便聚合时
+    // 可以排除（这是无头首轮时序问题，而非工具本身的问题）。
     if (e.type === 'user') for (const b of (Array.isArray(e.message?.content) ? e.message.content : [])) {
       if (b.type === 'tool_result') {
         const t = Array.isArray(b.content) ? b.content.map(c => c.text || '').join('') : (b.content || '');
@@ -56,9 +55,9 @@ const savings = { cost: [], tokens: [], time: [], tools: [] };
 for (const repo of REPOS) {
   const dir = join(ROOT, repo);
   const runDirs = existsSync(dir) ? readdirSync(dir).filter(d => /^run\d+$/.test(d)) : [];
-  // Exclude MCP-cold-start-raced WITH runs by default — they measure a startup
-  // race, not steady-state value. `CG_INCLUDE_RACED=1` keeps them (to see the raw
-  // distribution). The WITHOUT arm has no MCP, so it's never raced.
+  // 默认排除 MCP 冷启动竞态的 WITH 运行——它们衡量的是启动竞态而非稳态。
+  // `CG_INCLUDE_RACED=1` 保留它们（用于查看原始分布）。
+  // WITHOUT 组没有 MCP，因此永远不会发生竞态。
   const includeRaced = process.env.CG_INCLUDE_RACED === '1';
   const W = [], WO = []; let racedExcluded = 0;
   for (const rd of runDirs) {

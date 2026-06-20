@@ -1,43 +1,37 @@
 ﻿/**
- * The marker-fenced agent-instructions block the installer writes into each
- * agent's instructions file (CLAUDE.md / AGENTS.md / GEMINI.md).
+ * 安装器写入各智能体 instructions 文件（CLAUDE.md / AGENTS.md / GEMINI.md）
+ * 的标记围栏式智能体指令块。
  *
- * History: pre-#529 the installer wrote a full usage playbook here, which
- * duplicated the MCP `initialize` instructions for the main agent — so it
- * was removed and `mcp/server-instructions.ts` became the single source of
- * truth. A much smaller block returned for #704, because the MCP
- * instructions cannot reach two audiences that the instructions FILE does
- * reach:
+ * 历史背景：#529 之前，安装器在此处写入了完整的使用说明手册，这与主智能体的
+ * MCP `initialize` 指令重复，因此被移除，`mcp/server-instructions.ts` 成为
+ * 唯一真实来源。#704 时一个小得多的块重新加入，原因是 MCP 指令无法触达
+ * instructions 文件能覆盖的两类受众：
  *
- *  - **Task-tool subagents** — they receive the project instructions file
- *    in their context but NOT the MCP initialize instructions. They hold
- *    the synapse MCP tools only as deferred names and rarely think to
- *    load them: measured on a forced-delegation flow question (excalidraw,
- *    sonnet, high effort), subagents loaded + used synapse in ~1 of 9
- *    runs without this block, and consistently with it — including runs
- *    with zero Read/grep fallback.
- *  - **Non-MCP harnesses** — agents with no MCP client at all can still
- *    run the `synapse explore` / `synapse node` CLI, which prints the
- *    same output as the MCP tools.
+ *  - **Task-tool 子智能体** — 它们在上下文中接收项目 instructions 文件，
+ *    但不接收 MCP initialize 指令。它们仅以延迟名称持有 synapse MCP 工具，
+ *    很少主动加载：在强制委托的流程问题（excalidraw，sonnet，high effort）上
+ *    实测，没有此块时子智能体在约 9 次运行中只有 1 次加载并使用了 synapse，
+ *    而有此块时则稳定使用——包括零 Read/grep 回退的运行。
+ *  - **非 MCP 运行环境** — 完全没有 MCP 客户端的智能体仍然可以运行
+ *    `synapse explore` / `synapse node` CLI，其输出与 MCP 工具相同。
  *
- * Keep this block SHORT. The main agent reads it every turn on top of the
- * server instructions — the #529 duplication-cost argument still bounds
- * its size. Command names and the two surfaces, nothing more.
+ * 保持此块简短。主智能体每轮都会在服务器指令之上读取它——#529 的重复成本
+ * 论述依然限制其体积。仅包含命令名和两个入口，别无其他。
  */
 
-/** Markers used by the marker-based section write/removal. */
+/** 标记式章节写入/删除所用的边界标记。 */
 export const SYNAPSE_SECTION_START = '<!-- SYNAPSE_START -->';
 export const SYNAPSE_SECTION_END = '<!-- SYNAPSE_END -->';
 
 /**
- * The full block, markers included, exactly as written to disk.
+ * 完整块内容，包含边界标记，与写入磁盘时完全一致。
  *
- * The wording is deliberately CONDITIONAL ("in repositories indexed by…"):
- * a global install writes this into a user-scope file (~/.claude/CLAUDE.md,
- * ~/.codex/AGENTS.md) that applies to every project the user opens —
- * including unindexed ones, where an unconditional "this repository is
- * indexed" claim would send subagents into failing synapse calls (the
- * noise the unindexed-session policy exists to prevent).
+ * 措辞故意使用条件句（"在由 Synapse 索引的仓库中……"）：
+ * 全局安装会将此内容写入用户范围文件（~/.claude/CLAUDE.md、
+ * ~/.codex/AGENTS.md），该文件适用于用户打开的每个项目——
+ * 包括未索引的项目，在那里一个绝对化的"此仓库已索引"声明
+ * 会让子智能体陷入失败的 synapse 调用（这正是未索引会话策略
+ * 所要防止的噪声）。
  */
 export const SYNAPSE_INSTRUCTIONS_BLOCK = `${SYNAPSE_SECTION_START}
 ## Synapse

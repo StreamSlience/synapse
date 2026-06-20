@@ -1,34 +1,30 @@
 ﻿/**
- * File Watcher
+ * 文件监视器
  *
- * Watches the project directory for file changes and triggers debounced sync
- * operations to keep the code graph up-to-date.
+ * 监视项目目录的文件变更，并触发防抖同步操作以保持代码图最新。
  *
- * Uses Node's built-in `fs.watch` directly (no third-party watcher, no native
- * addon) with a per-platform strategy chosen to keep the open-descriptor /
- * kernel-watch cost BOUNDED rather than growing with the number of files:
+ * 直接使用 Node 内置的 `fs.watch`（无第三方监视器，无原生插件），
+ * 并采用按平台选择的策略，将打开的描述符/内核监视开销保持在有界范围内，
+ * 而非随文件数量增长：
  *
- *   - macOS / Windows: a SINGLE recursive `fs.watch(root, {recursive:true})`.
- *     libuv maps this to one FSEvents stream (macOS) / one
- *     ReadDirectoryChangesW handle (Windows), so it costs O(1) descriptors no
- *     matter how large the tree. This is the fix for the macOS file-table
- *     exhaustion (#644 / #496 / #555 / #628): the previous watcher held one
- *     open fd PER WATCHED FILE on macOS (tens of thousands of REG fds), which
- *     exhausted `kern.maxfiles` and crashed unrelated processes system-wide.
+ *   - macOS / Windows：对根目录使用单个递归 `fs.watch(root, {recursive:true})`。
+ *     libuv 将其映射为一个 FSEvents 流（macOS）/ 一个
+ *     ReadDirectoryChangesW 句柄（Windows），无论目录树多大都只消耗 O(1) 个描述符。
+ *     这是修复 macOS 文件表耗尽问题（#644 / #496 / #555 / #628）的方案：
+ *     旧版监视器在 macOS 上对每个被监视文件持有一个打开的 fd
+ *     （数万个 REG fd），耗尽了 `kern.maxfiles` 并导致无关进程系统级崩溃。
  *
- *   - Linux: recursive `fs.watch` is unsupported, so we watch each (non-ignored)
- *     DIRECTORY with one inotify watch — O(directories), NOT O(files). New
- *     directories are picked up dynamically and an overall watch cap bounds
- *     inotify usage on pathological monorepos (#579). A single inotify watch on
- *     a directory already reports create/modify/delete for its children, so
- *     per-file watches are never needed.
+ *   - Linux：递归 `fs.watch` 不受支持，因此对每个（未被忽略的）
+ *     目录使用一个 inotify 监视——O(目录数)，而非 O(文件数)。
+ *     新目录会被动态拾取，整体监视上限约束了在异常 monorepo 上的
+ *     inotify 用量（#579）。单个目录的 inotify 监视已能报告其直接子文件
+ *     的创建/修改/删除，因此从不需要逐文件监视。
  *
- * Excluded trees (node_modules/, dist/, .git/, …) are filtered via the
- * indexer's `buildScopeIgnore` (built-in default-ignore dirs + the project's
- * .gitignore) — on Linux they're never descended into (so they cost no watch),
- * and on macOS/Windows the single recursive stream still covers them but their
- * events are dropped before any sync is scheduled. Either way the watcher's
- * scope matches the indexer's (#276 / #407).
+ * 排除的目录树（node_modules/、dist/、.git/ 等）通过索引器的
+ * `buildScopeIgnore`（内置默认忽略目录 + 项目 .gitignore）过滤——
+ * 在 Linux 上不会进入这些目录（因此不产生监视开销），
+ * 在 macOS/Windows 上单个递归流仍会覆盖它们，但在调度任何同步之前
+ * 会丢弃其事件。两种方式下监视器的范围都与索引器保持一致（#276 / #407）。
  */
 
 import * as fs from 'fs';
@@ -40,24 +36,23 @@ import { isSynapseDataDir } from '../directory';
 import { watchDisabledReason } from './watch-policy';
 
 /**
- * Number of consecutive lock-contention retries the watcher tolerates before
- * it gives up and degrades auto-sync. Brief contention (another writer for a
- * few cycles) stays under this; a long-lived external writer crosses it.
+ * 监视器在放弃并降级自动同步之前，容忍的连续锁竞争重试次数上限。
+ * 短暂的竞争（另一个写入方持续几个周期）低于此值；长期外部写入方则会超过它。
  */
 const MAX_LOCK_RETRIES = 5;
-/** Cap on the exponential lock-retry backoff so it never sleeps absurdly long. */
+/** 指数级锁重试退避上限，避免等待时间过长。 */
 const MAX_LOCK_RETRY_DELAY_MS = 30_000;
 
-/** Actionable degrade message; both exhaustion paths share it verbatim. */
+/** 可操作的降级消息；两条耗尽路径共用同一文本。 */
 const EXHAUSTION_REASON =
   'OS watch/file limit exhausted; auto-sync disabled. Run `synapse sync` ' +
   '(or install git sync hooks) to refresh the graph after changes.';
 
 /**
- * Actionable, NON-fatal warning for Linux inotify watch-count exhaustion.
- * Unlike {@link EXHAUSTION_REASON} this does not disable the watcher — the
- * watches already installed keep working — so it names the exact kernel knob to
- * raise instead.
+ * Linux inotify 监视计数耗尽时的可操作非致命警告。
+ * 与 {@link EXHAUSTION_REASON} 不同，此警告不会禁用监视器——
+ * 已安装的监视器仍继续工作——因此它指明了需要调整的内核参数，
+ * 而非建议停用监视。
  */
 const INOTIFY_LIMIT_REASON =
   'Linux inotify watch limit reached (fs.inotify.max_user_watches); live ' +
@@ -67,9 +62,9 @@ const INOTIFY_LIMIT_REASON =
   'restart, or run `synapse sync` (or install git sync hooks) to refresh.';
 
 /**
- * True when an error is OS watch/file-descriptor exhaustion (EMFILE/ENFILE).
- * Prefers the structured `err.code`; falls back to message matching ONLY when
- * no code is present (some platforms surface a bare Error from `fs.watch`).
+ * 当错误为 OS 监视/文件描述符耗尽（EMFILE/ENFILE）时返回 true。
+ * 优先使用结构化的 `err.code`；仅在无 code 时才回退到消息匹配
+ * （某些平台从 `fs.watch` 抛出裸 Error）。
  */
 function isWatchResourceExhaustion(err: unknown): boolean {
   const e = err as NodeJS.ErrnoException | undefined;
@@ -81,46 +76,43 @@ function isWatchResourceExhaustion(err: unknown): boolean {
 }
 
 /**
- * True when an error is Linux inotify *watch-count* exhaustion. `fs.watch`
- * surfaces a hit `fs.inotify.max_user_watches` as ENOSPC ("no space" = no watch
- * descriptors left, NOT disk space). This only arises on the Linux
- * per-directory path; it is non-fatal (raise the limit and partial watching
- * keeps working), so it warns rather than degrading.
+ * 当错误为 Linux inotify *监视计数*耗尽时返回 true。`fs.watch` 将
+ * `fs.inotify.max_user_watches` 耗尽表现为 ENOSPC（"无空间" = 无监视描述符，
+ * 而非磁盘空间）。此错误仅在 Linux 逐目录路径上出现；为非致命错误
+ * （提高上限后部分监视仍继续工作），因此发出警告而非降级。
  */
 function isInotifyWatchExhaustion(err: unknown): boolean {
   return (err as NodeJS.ErrnoException | undefined)?.code === 'ENOSPC';
 }
 
 /**
- * Native recursive `fs.watch` is only reliable on macOS and Windows; on Linux
- * (and AIX) it throws `ERR_FEATURE_UNAVAILABLE_ON_PLATFORM`. We branch on this
- * to pick the recursive vs per-directory strategy.
+ * 原生递归 `fs.watch` 仅在 macOS 和 Windows 上可靠；在 Linux
+ * （和 AIX）上会抛出 `ERR_FEATURE_UNAVAILABLE_ON_PLATFORM`。
+ * 我们以此为分支，选择递归还是逐目录策略。
  */
 function supportsRecursiveWatch(): boolean {
   return process.platform === 'darwin' || process.platform === 'win32';
 }
 
 /**
- * Indirection over `fs.watch` so tests can inject a fake that throws or emits
- * `EMFILE`/`ENFILE` deterministically (real watch-resource exhaustion can't be
- * provoked reliably, and `fs.watch` is a non-configurable property so it can't
- * be spied). Production always uses the real `fs.watch`.
+ * 对 `fs.watch` 的间接封装，以便测试可注入一个确定性地抛出或触发
+ * `EMFILE`/`ENFILE` 的假实现（真实的监视资源耗尽无法可靠地触发，
+ * 且 `fs.watch` 是不可配置的属性无法被 spy）。生产环境始终使用真实的 `fs.watch`。
  */
 type WatchFn = typeof fs.watch;
 let watchImpl: WatchFn = fs.watch;
 
-/** @internal Test-only seam to inject a fake fs.watch implementation. */
+/** @internal 仅供测试使用：注入假的 fs.watch 实现的接缝。 */
 export function __setFsWatchForTests(fn: WatchFn | null): void {
   watchImpl = fn ?? fs.watch;
 }
 
 /**
- * Upper bound on simultaneously-watched directories on the Linux per-directory
- * path. Each is one inotify watch; the kernel's `fs.inotify.max_user_watches`
- * is the hard limit (commonly 8k–128k). We stop adding watches past this and
- * log once — partial live-watch (with `synapse sync` as the backstop) is far
- * better than exhausting the user's inotify budget and breaking watching
- * system-wide (#579). Tunable via SYNAPSE_MAX_DIR_WATCHES.
+ * Linux 逐目录路径上同时监视的目录数上限。每个目录消耗一个 inotify 监视；
+ * 内核的 `fs.inotify.max_user_watches` 是硬限制（通常为 8k–128k）。
+ * 超过此值后停止添加监视并记录一次日志——部分实时监视（以 `synapse sync` 作为
+ * 兜底）远优于耗尽用户的 inotify 配额并破坏系统级别的监视（#579）。
+ * 可通过 SYNAPSE_MAX_DIR_WATCHES 调整。
  */
 const DEFAULT_MAX_DIR_WATCHES = 50_000;
 
@@ -134,62 +126,61 @@ function maxDirWatches(): number {
 }
 
 /**
- * Test seam (see {@link __emitWatchEventForTests}). Maps a watcher's project
- * root to its live instance so tests can synthesize a change event
- * deterministically — real fs.watch delivery latency races under parallel
- * vitest (the reason the previous chokidar mock existed). Only populated under
- * a test runner, so production carries no bookkeeping or retained references.
+ * 测试接缝（参见 {@link __emitWatchEventForTests}）。将监视器的项目根目录
+ * 映射到其活跃实例，以便测试可确定性地合成变更事件——
+ * 真实 fs.watch 的传递延迟在并行 vitest 下会产生竞争
+ * （这正是之前 chokidar mock 存在的原因）。
+ * 仅在测试运行器下填充，因此生产环境不会产生额外的记账或引用保留。
  */
 const liveWatchersForTests = new Map<string, FileWatcher>();
 const IS_TEST_RUNTIME = !!(process.env.VITEST || process.env.NODE_ENV === 'test');
 
 /**
- * Options for the file watcher
+ * 文件监视器的选项
  */
 export interface WatchOptions {
   /**
-   * Debounce delay in milliseconds.
-   * After the last file change, wait this long before triggering sync.
-   * Default: 2000ms
+   * 防抖延迟（毫秒）。
+   * 最后一次文件变更后，等待此时长再触发同步。
+   * 默认值：2000ms
    */
   debounceMs?: number;
 
   /**
-   * Callback when a sync completes (for logging/diagnostics).
+   * 同步完成时的回调（用于日志/诊断）。
    */
   onSyncComplete?: (result: { filesChanged: number; durationMs: number }) => void;
 
   /**
-   * Callback when a sync errors (for logging/diagnostics).
+   * 同步出错时的回调（用于日志/诊断）。
    */
   onSyncError?: (error: Error) => void;
 
   /**
-   * Callback fired ONCE when live watching degrades permanently and auto-sync
-   * is disabled — OS watch-resource exhaustion (EMFILE/ENFILE), or a write lock
-   * held past the retry budget. The string is an actionable, human-readable
-   * reason. Lets a host (MCP server, daemon, CLI) tell the user that the index
-   * will no longer auto-update instead of silently serving stale results.
+   * 当实时监视因终态运行时故障（OS 监视资源耗尽 EMFILE/ENFILE，
+   * 或超出重试预算的写锁竞争）永久降级时触发一次的回调。
+   * 字符串为可操作的人类可读原因。
+   * 让宿主（MCP 服务器、守护进程、CLI）能告知用户索引将不再自动更新，
+   * 而不是静默地返回过期结果。
    */
   onDegraded?: (reason: string) => void;
 
   /**
-   * Test-only. When true, `start()` installs NO OS-level fs.watch — the
-   * watcher is "inert" and only the {@link __emitWatchEventForTests} /
-   * {@link FileWatcher.ingestEventForTests} seam drives its pipeline. This
-   * restores the deterministic, OS-free behavior the unit tests need (real
-   * FSEvents/inotify delivery races under parallel vitest). Production never
-   * sets it.
+   * 仅供测试使用。为 true 时，`start()` 不安装任何 OS 级别的 fs.watch——
+   * 监视器处于"惰性"状态，只有 {@link __emitWatchEventForTests} /
+   * {@link FileWatcher.ingestEventForTests} 接缝驱动其流水线。
+   * 这恢复了单元测试所需的确定性、无 OS 的行为
+   * （真实 FSEvents/inotify 传递在并行 vitest 下会产生竞争）。
+   * 生产环境从不设置此项。
    */
   inertForTests?: boolean;
 }
 
 /**
- * Thrown by a `syncFn` to signal that the underlying sync couldn't acquire
- * the cross-process write lock (#449). The watcher treats this as "no
- * progress" — preserves `pendingFiles`, skips `onSyncComplete`, and the
- * `finally` block reschedules. Quiet (debug-only) because a long-running
- * external indexer can hit this every debounce cycle.
+ * 由 `syncFn` 抛出，用于表示底层同步无法获取跨进程写锁（#449）。
+ * 监视器将此视为"无进展"——保留 `pendingFiles`，跳过 `onSyncComplete`，
+ * `finally` 块重新调度。静默处理（仅调试级别），因为长期运行的外部索引器
+ * 可能在每个防抖周期都触发此错误。
  */
 export class LockUnavailableError extends Error {
   constructor(message = 'Synapse file lock unavailable; another process is writing') {
@@ -199,102 +190,96 @@ export class LockUnavailableError extends Error {
 }
 
 /**
- * Per-file pending entry — tracks a source file the watcher saw an event for
- * but hasn't yet synced into the index. Exposed via {@link FileWatcher.getPendingFiles}
- * so MCP tool responses can mark stale results without forcing a wait.
+ * 每文件的待处理条目——记录监视器已收到事件但尚未同步到索引的源文件。
+ * 通过 {@link FileWatcher.getPendingFiles} 暴露，使 MCP 工具响应可在
+ * 不强制等待同步的情况下标记过期结果。
  */
 export interface PendingFile {
-  /** Project-relative POSIX path (e.g. "src/foo.ts"). */
+  /** 项目相对的 POSIX 路径（如 "src/foo.ts"）。 */
   path: string;
-  /** Wall-clock ms at the first event we saw for this path since the last sync. */
+  /** 自上次同步以来，首次收到此路径事件时的挂钟毫秒时间戳。 */
   firstSeenMs: number;
-  /** Wall-clock ms at the most recent event we saw for this path. */
+  /** 最近一次收到此路径事件时的挂钟毫秒时间戳。 */
   lastSeenMs: number;
   /**
-   * True when a sync is currently in flight that began AFTER this file's most
-   * recent event — i.e. the next successful sync will pick it up. False when
-   * the file is still in the debounce window (no sync running yet).
+   * 当某个同步正在进行且其开始时间晚于此文件最近一次事件时为 true——
+   * 即下一次成功的同步将处理此文件。为 false 表示文件仍在防抖窗口内
+   * （还没有同步启动）。
    */
   indexing: boolean;
 }
 
 /**
- * FileWatcher monitors a project directory for changes and triggers
- * debounced sync operations via a provided callback.
+ * FileWatcher 监视项目目录的变更，并通过提供的回调触发防抖同步操作。
  *
- * Design goals:
- * - Bounded resource usage: O(1) descriptors on macOS/Windows (one recursive
- *   watch), O(directories) inotify watches on Linux — never O(files), which
- *   was the system-crashing fd leak on macOS (#644/#496/#555/#628).
- * - Debounced to avoid thrashing on rapid saves
- * - Filters to supported source files by extension
- * - Ignores .synapse/ and .git/ regardless of .gitignore
- * - Tracks per-file pending state so MCP tools can flag stale results
- *   without blocking on a sync (issue #403)
+ * 设计目标：
+ * - 有界的资源使用：macOS/Windows 上 O(1) 个描述符（一个递归监视），
+ *   Linux 上 O(目录数) 个 inotify 监视——永远不会是 O(文件数)，
+ *   后者曾是 macOS 上导致系统崩溃的 fd 泄漏（#644/#496/#555/#628）。
+ * - 防抖以避免在快速保存时频繁触发
+ * - 按扩展名过滤支持的源文件
+ * - 无论 .gitignore 如何，始终忽略 .synapse/ 和 .git/
+ * - 跟踪每文件的待处理状态，使 MCP 工具可在不阻塞同步的情况下
+ *   标记过期结果（issue #403）
  */
 export class FileWatcher {
-  /** macOS/Windows: the single recursive watcher. Null on Linux. */
+  /** macOS/Windows：单个递归监视器。Linux 上为 null。 */
   private recursiveWatcher: fs.FSWatcher | null = null;
-  /** Linux: one watcher per watched directory (keyed by absolute path). */
+  /** Linux：每个被监视目录一个监视器（以绝对路径为键）。 */
   private dirWatchers = new Map<string, fs.FSWatcher>();
-  /** Set once the per-directory watch cap is hit, so we log only once. */
+  /** 触发逐目录监视上限后设置，以确保只记录一次日志。 */
   private dirCapWarned = false;
   /**
-   * Set once the Linux inotify watch limit (ENOSPC) is hit. Double duty: we
-   * warn only once, AND we stop attempting new directory watches for the rest
-   * of the session — once the kernel budget is exhausted every further
-   * `inotify_add_watch` fails too, so trying the rest of the tree is pure
-   * waste. NON-fatal (does not degrade): installed watches keep working.
+   * Linux inotify 监视上限（ENOSPC）触发后设置。双重作用：
+   * 只警告一次，并在本次会话中停止尝试新的目录监视——
+   * 一旦内核配额耗尽，后续每次 `inotify_add_watch` 都会失败，
+   * 因此继续尝试目录树的其余部分纯属浪费。非致命（不降级）：
+   * 已安装的监视器继续工作。
    */
   private inotifyLimitWarned = false;
   /**
-   * One-way latch: the reason live watching was permanently disabled at runtime
-   * (watch-resource exhaustion, or lock contention past the retry budget), or
-   * null while healthy. Set by {@link degrade}; cleared only by a fresh start().
+   * 单向锁存：实时监视因运行时终态故障（监视资源耗尽或超出重试预算的
+   * 锁竞争）而被永久禁用的原因，健康时为 null。
+   * 由 {@link degrade} 设置；仅在新的 start() 时清除。
    */
   private degradedReason: string | null = null;
-  /** Consecutive lock-contention retries for watcher-triggered syncs. */
+  /** 监视器触发同步时的连续锁竞争重试次数。 */
   private lockRetryCount = 0;
-  /** Test-only inert mode: started, but with no OS watcher installed. */
+  /** 仅供测试的惰性模式：已启动，但未安装 OS 监视器。 */
   private inert = false;
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   /**
-   * Files seen by the watcher since the last successful sync — populated on
-   * every change event, cleared at the start of a sync, and re-populated by
-   * events that arrive mid-sync (or restored on sync failure). Keyed by the
-   * same project-relative POSIX path the rest of the codebase uses, so a
-   * caller can intersect tool-response file paths against this map cheaply.
+   * 自上次成功同步以来监视器见过的文件——在每次变更事件时填充，
+   * 在同步开始时清空，由同步进行中到达的事件（或同步失败时恢复）重新填充。
+   * 以整个代码库使用的项目相对 POSIX 路径为键，
+   * 调用方可以低成本地将工具响应的文件路径与此 map 求交集。
    */
   private pendingFiles = new Map<string, { firstSeenMs: number; lastSeenMs: number }>();
   /**
-   * Wall-clock ms at which the in-flight sync began. Combined with
-   * {@link pendingFiles}'s `lastSeenMs`, this distinguishes "still in the
-   * debounce window" (lastSeen > syncStarted, sync hasn't started yet for
-   * this edit) from "currently being indexed" (lastSeen <= syncStarted).
+   * 正在进行的同步开始时的挂钟毫秒时间戳。结合
+   * {@link pendingFiles} 的 `lastSeenMs`，可区分"仍在防抖窗口内"
+   * （lastSeen > syncStarted，此次编辑还没有同步启动）和
+   * "正在索引中"（lastSeen <= syncStarted）两种状态。
    */
   private syncStartedMs = 0;
   private syncing = false;
   private stopped = false;
   /**
-   * True once the initial watch set is established. Unlike the previous
-   * chokidar implementation there is no asynchronous initial "crawl" emitting
-   * an `add` per existing file — `fs.watch` only reports changes from the
-   * moment it's installed — so this flips to true synchronously at the end of
-   * `start()`. The startup reconcile against on-disk state is handled
-   * separately by the engine's catch-up sync, not by the watcher.
+   * 初始监视集建立后置为 true。与之前的 chokidar 实现不同，
+   * 这里没有异步初始"扫描"为每个已有文件发出 `add` 事件——
+   * `fs.watch` 只报告安装后的变更——因此此标志在 `start()` 末尾同步翻转。
+   * 对磁盘状态的启动协调由引擎的追赶同步处理，而非监视器。
    */
   private ready = false;
   /**
-   * Callbacks that resolve when the watch set is established. Used by tests
-   * (and any production caller that cares about a clean baseline) to
-   * deterministically gate on watcher readiness.
+   * 监视集建立时解析的回调列表。供测试（以及任何需要干净基线的生产调用方）
+   * 用于确定性地等待监视器就绪。
    */
   private readyWaiters: Array<() => void> = [];
-  // The shared scope matcher (built-in defaults + project .gitignore, with
-  // embedded child repos matched by their OWN rules — #514), built once at
-  // start(). Same source of truth the indexer uses, so watcher scope can
-  // never diverge from index scope. An embedded repo created after start()
-  // joins the scope on the next watcher restart / re-index.
+  // 共享的范围匹配器（内置默认值 + 项目 .gitignore，嵌套子仓库按其
+  // 自身规则匹配——#514），在 start() 时构建一次。与索引器使用相同的
+  // 真实来源，确保监视器范围永远不会偏离索引范围。
+  // start() 后创建的嵌套仓库在下次监视器重启/重新索引时加入范围。
   private ignoreMatcher: ScopeIgnore | null = null;
 
   private readonly projectRoot: string;
@@ -320,8 +305,8 @@ export class FileWatcher {
   }
 
   /**
-   * Start watching for file changes.
-   * Returns true if watching started successfully, false otherwise.
+   * 开始监视文件变更。
+   * 成功启动返回 true，否则返回 false。
    */
   start(): boolean {
     if (this.recursiveWatcher || this.dirWatchers.size > 0 || this.inert) return true; // Already watching
@@ -329,22 +314,21 @@ export class FileWatcher {
     this.degradedReason = null;
     this.lockRetryCount = 0;
 
-    // Some environments make filesystem watching unusable — most notably
-    // WSL2 /mnt/ drives, where the underlying fs.watch calls block long
-    // enough to break MCP startup handshakes (issue #199). Skip watching
-    // there; callers fall back to manual `synapse sync` or git sync hooks.
+    // 某些环境使文件系统监视不可用——最典型的是 WSL2 /mnt/ 驱动器，
+    // 其中 fs.watch 调用会阻塞足够长的时间以破坏 MCP 启动握手（issue #199）。
+    // 在那里跳过监视；调用方回退到手动 `synapse sync` 或 git 同步钩子。
     const disabledReason = watchDisabledReason(this.projectRoot);
     if (disabledReason) {
       logDebug('File watcher disabled', { reason: disabledReason, projectRoot: this.projectRoot });
       return false;
     }
 
-    // Reuse the indexer's ignore set so the watcher and indexer agree on scope.
+    // 复用索引器的忽略集，确保监视器和索引器的范围一致。
     this.ignoreMatcher = buildScopeIgnore(this.projectRoot);
 
     try {
       if (this.inertForTests) {
-        // Test-only: install no OS watcher; the seam drives events instead.
+        // 仅供测试：不安装 OS 监视器；由接缝驱动事件。
         this.inert = true;
       } else if (supportsRecursiveWatch()) {
         this.startRecursive();
@@ -352,15 +336,13 @@ export class FileWatcher {
         this.startPerDirectory();
       }
 
-      // The per-directory (Linux) path catches watch-resource exhaustion inside
-      // watchTree and degrades synchronously rather than throwing, so it never
-      // reaches the catch below. Surface that as a failed start here so both
-      // strategies report exhaustion identically (start() === false).
+      // 逐目录（Linux）路径在 watchTree 内部同步捕获监视资源耗尽并降级，
+      // 而非抛出异常，因此永远不会到达下面的 catch。在此将其表现为启动失败，
+      // 使两种策略以相同方式报告耗尽（start() === false）。
       if (this.degradedReason) return false;
 
-      // No async crawl to wait on: as soon as the watch set is installed we
-      // have a clean baseline (pendingFiles is only populated by post-start
-      // events). Clear defensively and flip ready.
+      // 无异步扫描需要等待：一旦监视集安装完毕，我们就有了干净的基线
+      // （pendingFiles 只由 start() 后的事件填充）。防御性清空并翻转 ready。
       this.pendingFiles.clear();
       this.ready = true;
       for (const cb of this.readyWaiters) cb();
@@ -375,10 +357,9 @@ export class FileWatcher {
       });
       return true;
     } catch (err) {
-      // Watcher setup failed. Watch-resource exhaustion (EMFILE/ENFILE on the
-      // recursive path) is terminal — degrade cleanly with one actionable
-      // warning instead of leaving a half-broken watcher. Everything else
-      // (permission denied, missing directory) keeps the prior quiet-stop.
+      // 监视器设置失败。监视资源耗尽（递归路径上的 EMFILE/ENFILE）是终态——
+      // 以一条可操作的警告干净地降级，而非留下半损坏的监视器。
+      // 其他所有情况（权限拒绝、目录不存在）保持之前的静默停止行为。
       if (isWatchResourceExhaustion(err)) {
         this.degrade(EXHAUSTION_REASON, { error: String(err) });
       } else {
@@ -390,9 +371,8 @@ export class FileWatcher {
   }
 
   /**
-   * macOS/Windows: one recursive watcher for the whole tree. O(1) descriptors.
-   * `filename` arrives relative to the project root (with subdirectories), so
-   * it maps straight to a project-relative path.
+   * macOS/Windows：对整个目录树使用一个递归监视器。O(1) 个描述符。
+   * `filename` 相对于项目根目录到达（含子目录），可直接映射为项目相对路径。
    */
   private startRecursive(): void {
     this.recursiveWatcher = watchImpl(
@@ -413,29 +393,26 @@ export class FileWatcher {
   }
 
   /**
-   * Linux: walk the (non-ignored) tree and watch each directory. One inotify
-   * watch per directory reports create/modify/delete for that directory's
-   * direct children, so we never watch individual files.
+   * Linux：遍历（未被忽略的）目录树并监视每个目录。每个目录一个 inotify
+   * 监视，报告该目录直接子文件的创建/修改/删除，因此永远不需要监视单个文件。
    */
   private startPerDirectory(): void {
     this.watchTree(this.projectRoot, /* markExisting */ false);
   }
 
   /**
-   * Add an inotify watch for `dir` and recurse into its non-ignored
-   * subdirectories. When `markExisting` is true (a directory that appeared
-   * AFTER startup), the source files already inside it are recorded as pending
-   * — this closes the `mkdir + write` race where files created before the new
-   * directory's watch is installed would otherwise be missed until the next
-   * full sync. The initial startup walk passes false (the engine's catch-up
-   * sync owns the baseline).
+   * 为 `dir` 添加 inotify 监视并递归进入其未被忽略的子目录。
+   * 当 `markExisting` 为 true 时（启动后出现的目录），目录内已有的源文件
+   * 会被记录为待处理——这关闭了"mkdir + write"竞争：在新目录的监视安装之前
+   * 创建的文件否则会被遗漏，直到下次完整同步。初始启动遍历传入 false
+   * （引擎的追赶同步负责初始基线）。
    */
   private watchTree(dir: string, markExisting: boolean): void {
-    // A degrade() mid-walk (exhaustion on an earlier directory) calls stop(),
-    // which sets `stopped`; bail so the recursion unwinds without adding more
-    // watches to a watcher that is shutting down. `inotifyLimitWarned` does the
-    // same after ENOSPC — the kernel budget is gone, so stop trying the rest of
-    // the tree (every add would fail) while keeping the watches already set.
+    // 遍历中途 degrade()（某个目录上的耗尽）会调用 stop()，
+    // 将 `stopped` 置为 true；在此退出以让递归展开，避免向正在关闭的监视器
+    // 继续添加监视。`inotifyLimitWarned` 在 ENOSPC 后起相同作用——
+    // 内核配额已耗尽，继续尝试目录树其余部分的每次添加都会失败，
+    // 停止尝试同时保留已安装的监视。
     if (this.stopped || this.degradedReason || this.inotifyLimitWarned) return;
     if (this.dirWatchers.has(dir)) return;
     if (this.dirWatchers.size >= maxDirWatches()) {
@@ -454,17 +431,16 @@ export class FileWatcher {
         this.handleDirEvent(dir, filename)
       );
     } catch (err) {
-      // EMFILE/ENFILE means the PROCESS is out of descriptors — every further
-      // directory would fail too, so degrade the whole watcher rather than
-      // limping along with a partial watch set.
+      // EMFILE/ENFILE 意味着进程已耗尽描述符——后续每个目录都会失败，
+      // 因此降级整个监视器，而非以部分监视集勉强继续。
       if (isWatchResourceExhaustion(err)) {
         this.degrade(EXHAUSTION_REASON, { error: String(err), dir });
       } else if (isInotifyWatchExhaustion(err)) {
-        // ENOSPC = inotify watch budget exhausted. NON-fatal: keep the watches
-        // we have and tell the user the knob to raise (warn once).
+        // ENOSPC = inotify 监视配额耗尽。非致命：保留已有的监视，
+        // 并告知用户需要调整的内核参数（仅警告一次）。
         this.warnInotifyLimit({ error: String(err), dir });
       }
-      // ENOENT / EACCES on a single directory stays non-fatal: skip it quietly.
+      // 单个目录上的 ENOENT / EACCES 为非致命：静默跳过。
       return;
     }
     w.on('error', (err: unknown) => {
@@ -497,39 +473,37 @@ export class FileWatcher {
   }
 
   /**
-   * Linux per-directory event handler. `filename` is relative to `dir`. A new
-   * sub-directory is picked up by extending the watch tree; everything else is
-   * routed through the shared change handler.
+   * Linux 逐目录事件处理器。`filename` 相对于 `dir`。
+   * 新建子目录通过扩展监视树来处理；其他所有内容路由到共享的变更处理器。
    */
   private handleDirEvent(dir: string, filename: string | Buffer | null): void {
     if (this.stopped || filename == null) return;
     const full = path.join(dir, String(filename));
 
-    // A newly-created directory needs its own watch (recursive isn't available
-    // on Linux). statSync is cheap and these events are rare relative to file
-    // edits. If the path vanished (rapid create/delete) the stat throws and we
-    // fall through to the change handler, which no-ops on a non-source path.
+    // 新建目录需要自己的监视（Linux 不支持递归）。
+    // statSync 开销小且这类事件相比文件编辑较少。
+    // 若路径已消失（快速创建/删除），stat 抛出异常，
+    // 我们进入下面的变更处理器，对非源文件路径为空操作。
     try {
       if (fs.statSync(full).isDirectory()) {
         if (!this.shouldIgnoreDir(full)) this.watchTree(full, /* markExisting */ true);
         return;
       }
     } catch {
-      // deleted/inaccessible — treat as a normal change below
+      // 已删除或无法访问——当作普通变更事件处理
     }
 
     this.handleChange(normalizePath(path.relative(this.projectRoot, full)));
   }
 
   /**
-   * Shared change handler for both watch strategies. `rel` is a
-   * project-relative POSIX path. Applies the ignore + source-file filters and,
-   * for a real source change, records it as pending (#403) and schedules a
-   * debounced sync.
+   * 两种监视策略共享的变更处理器。`rel` 为项目相对的 POSIX 路径。
+   * 应用忽略 + 源文件过滤器，对于真实的源文件变更，将其记录为待处理（#403）
+   * 并调度防抖同步。
    *
-   * The recursive (macOS/Windows) watcher reports events for ignored trees too
-   * (one stream covers the whole repo), so the ignore check here is load-bearing
-   * — it drops node_modules/dist/.git churn before any sync is scheduled.
+   * 递归（macOS/Windows）监视器也会报告被忽略目录树的事件
+   * （一个流覆盖整个仓库），因此此处的忽略检查是关键——
+   * 它在调度任何同步之前丢弃 node_modules/dist/.git 的抖动。
    */
   private handleChange(rel: string): void {
     if (!rel || rel === '.' || rel.startsWith('..')) return;
@@ -549,24 +523,24 @@ export class FileWatcher {
     this.scheduleSync();
   }
 
-  /** Close and forget the watch for a directory that errored/was removed. */
+  /** 关闭并忘记出错/已被删除的目录的监视。 */
   private unwatchDir(dir: string): void {
     const w = this.dirWatchers.get(dir);
     if (w) {
       try {
         w.close();
       } catch {
-        /* already closed */
+        /* 已关闭 */
       }
       this.dirWatchers.delete(dir);
     }
   }
 
-  /** Our own dirs are always ignored, regardless of .gitignore. */
+  /** 无论 .gitignore 如何，我们自己的目录始终被忽略。 */
   private isAlwaysIgnored(rel: string): boolean {
-    // First path segment. Ignore any Synapse data dir — the active one AND a
-    // sibling like `.synapse-win` a second environment (Windows/WSL) created
-    // in the same tree, so neither side watches the other's index (#636).
+    // 路径的第一段。忽略所有 Synapse 数据目录——活跃的那个以及
+    // 另一个环境（Windows/WSL）在同一目录树中创建的兄弟目录
+    // （如 `.synapse-win`），以防两边互相监视对方的索引（#636）。
     const top = rel.split('/')[0] ?? rel;
     return (
       isSynapseDataDir(top) ||
@@ -575,23 +549,21 @@ export class FileWatcher {
   }
 
   /**
-   * True for any directory that should NOT be watched (used while building the
-   * Linux per-directory watch tree). Tests the directory form of the path so a
-   * dir-only ignore rule like `build/` matches.
+   * 对任何不应被监视的目录返回 true（用于构建 Linux 逐目录监视树时）。
+   * 测试路径的目录形式，以便仅目录的忽略规则（如 `build/`）能正确匹配。
    */
   private shouldIgnoreDir(dirPath: string): boolean {
     const rel = normalizePath(path.relative(this.projectRoot, dirPath));
-    if (!rel || rel === '.' || rel.startsWith('..')) return false; // root / outside
+    if (!rel || rel === '.' || rel.startsWith('..')) return false; // 根目录/外部
     if (this.isAlwaysIgnored(rel)) return true;
     if (!this.ignoreMatcher) return false;
     return this.ignoreMatcher.ignores(rel + '/');
   }
 
   /**
-   * Permanently disable live watching after a terminal runtime failure
-   * (watch-resource exhaustion, or lock contention past the retry budget).
-   * Idempotent: logs one actionable warning, fires {@link WatchOptions.onDegraded}
-   * once, and stops the watcher. A subsequent start() clears the latch.
+   * 在终态运行时故障（监视资源耗尽或超出重试预算的锁竞争）后
+   * 永久禁用实时监视。幂等：记录一条可操作的警告，触发一次
+   * {@link WatchOptions.onDegraded}，并停止监视器。后续的 start() 会清除锁存。
    */
   private degrade(reason: string, context: Record<string, unknown> = {}): void {
     if (this.degradedReason) return;
@@ -602,12 +574,11 @@ export class FileWatcher {
   }
 
   /**
-   * Warn ONCE that the Linux inotify watch budget is exhausted (ENOSPC), and
-   * stop adding new watches for the rest of this session — every further
-   * `inotify_add_watch` would fail too, so walking the rest of the tree is
-   * waste. Unlike {@link degrade} this is NON-fatal: the watches already
-   * installed keep firing, and `synapse sync` covers the unwatched remainder.
-   * The message names the kernel knob to raise (`fs.inotify.max_user_watches`).
+   * 仅警告一次 Linux inotify 监视配额耗尽（ENOSPC），并在本次会话中
+   * 停止添加新监视——后续每次 `inotify_add_watch` 都会失败，
+   * 继续遍历目录树是浪费。与 {@link degrade} 不同，此为非致命：
+   * 已安装的监视器继续触发，`synapse sync` 覆盖未监视的部分。
+   * 消息中指明了需要调整的内核参数（`fs.inotify.max_user_watches`）。
    */
   private warnInotifyLimit(context: Record<string, unknown> = {}): void {
     if (this.inotifyLimitWarned) return;
@@ -616,22 +587,21 @@ export class FileWatcher {
   }
 
   /**
-   * Whether live watching has degraded permanently (until the next start()).
-   * Distinct from {@link isActive}: a degraded watcher is inactive, but an
-   * inactive watcher is not necessarily degraded (it may simply be stopped or
-   * never started). Hosts use this to tell the user auto-sync is off.
+   * 实时监视是否已永久降级（直到下次 start()）。
+   * 与 {@link isActive} 不同：已降级的监视器是非活跃的，但非活跃的监视器
+   * 不一定已降级（可能只是已停止或从未启动）。宿主使用此方法告知用户自动同步已关闭。
    */
   isDegraded(): boolean {
     return this.degradedReason !== null;
   }
 
-  /** The reason live watching degraded, or null if it is healthy. */
+  /** 实时监视降级的原因，健康时为 null。 */
   getDegradedReason(): string | null {
     return this.degradedReason;
   }
 
   /**
-   * Stop watching for file changes.
+   * 停止监视文件变更。
    */
   stop(): void {
     this.stopped = true;
@@ -645,7 +615,7 @@ export class FileWatcher {
       try {
         this.recursiveWatcher.close();
       } catch {
-        /* already closed */
+        /* 已关闭 */
       }
       this.recursiveWatcher = null;
     }
@@ -653,15 +623,15 @@ export class FileWatcher {
       try {
         w.close();
       } catch {
-        /* already closed */
+        /* 已关闭 */
       }
     }
     this.dirWatchers.clear();
     this.dirCapWarned = false;
     this.inotifyLimitWarned = false;
     this.lockRetryCount = 0;
-    // NB: degradedReason is intentionally NOT reset here — it must survive the
-    // stop() that degrade() triggers so isDegraded() stays true. start() clears it.
+    // 注意：degradedReason 在此处故意不重置——它必须在 degrade() 触发的
+    // stop() 之后仍保持，以让 isDegraded() 返回 true。start() 会清除它。
     this.inert = false;
 
     this.pendingFiles.clear();
@@ -672,31 +642,29 @@ export class FileWatcher {
   }
 
   /**
-   * @internal Test-only: feed a synthetic project-relative change through the
-   * same filter → pendingFiles → debounced-sync path a real fs.watch event
-   * takes. Lets the watcher / staleness-banner suites stay deterministic
-   * instead of racing on OS watch-delivery latency. See
-   * {@link __emitWatchEventForTests}.
+   * @internal 仅供测试：将一个合成的项目相对路径变更送入与真实 fs.watch
+   * 事件相同的"过滤 → pendingFiles → 防抖同步"流水线。
+   * 让监视器/过期标记测试套件保持确定性，而非与 OS 监视传递延迟竞争。
+   * 参见 {@link __emitWatchEventForTests}。
    */
   ingestEventForTests(relPath: string): void {
     this.handleChange(normalizePath(relPath));
   }
 
   /**
-   * Whether the watcher is currently active.
+   * 监视器当前是否处于活跃状态。
    */
   isActive(): boolean {
     return (this.recursiveWatcher !== null || this.dirWatchers.size > 0 || this.inert) && !this.stopped;
   }
 
   /**
-   * Resolves once the watch set has been installed (or immediately if it
-   * already has). Useful for tests that need a deterministic boundary before
-   * asserting on `pendingFiles`.
+   * 在监视集安装完毕后解析（若已安装则立即解析）。
+   * 对需要在断言 `pendingFiles` 前有确定性边界的测试很有用。
    *
-   * Production callers don't need this: `pendingFiles` is read continuously,
-   * the staleness banner is always correct (empty or populated), and there is
-   * no asynchronous initial-scan window with `fs.watch`.
+   * 生产调用方不需要此方法：`pendingFiles` 持续被读取，
+   * 过期标记始终正确（空或已填充），且使用 `fs.watch` 没有
+   * 异步初始扫描窗口。
    */
   waitUntilReady(timeoutMs = 10000): Promise<void> {
     if (this.ready) return Promise.resolve();
@@ -712,7 +680,7 @@ export class FileWatcher {
   }
 
   /**
-   * Schedule a normal debounced sync after a source edit.
+   * 源文件编辑后调度一次正常的防抖同步。
    */
   private scheduleSync(): void {
     if (this.debounceTimer) {
@@ -725,9 +693,8 @@ export class FileWatcher {
   }
 
   /**
-   * Schedule a retry after a recoverable sync failure (lock contention). Kept
-   * separate from {@link scheduleSync} so prolonged contention backs off
-   * exponentially instead of hammering the lock every debounce cycle.
+   * 可恢复的同步失败（锁竞争）后调度重试。与 {@link scheduleSync} 分开，
+   * 以便持续竞争时以指数退避，而非每个防抖周期都锤击锁。
    */
   private scheduleRetrySync(delayMs: number): void {
     if (this.debounceTimer) {
@@ -740,19 +707,18 @@ export class FileWatcher {
   }
 
   /**
-   * Flush pending changes by running sync.
+   * 通过运行同步来刷新待处理变更。
    *
-   * pendingFiles is NOT cleared at the start of sync — entries are removed
-   * only after sync commits successfully, and only for entries whose
-   * lastSeenMs <= syncStartedMs. That way, a query that arrives mid-sync
-   * still sees the affected files marked stale (the DB hasn't been updated
-   * yet), and an event that lands mid-sync persists into the follow-up.
+   * pendingFiles 在同步开始时不会清空——条目仅在同步成功提交后、
+   * 且仅对 lastSeenMs <= syncStartedMs 的条目才会被移除。
+   * 这样，同步进行中到达的查询仍能看到受影响文件被标记为过期
+   * （DB 尚未更新），而同步进行中落地的事件也会持久化到后续同步中。
    *
-   * On sync failure pendingFiles is left untouched — every edit is still
-   * unindexed, and the rescheduled sync will absorb the same set next time.
+   * 同步失败时 pendingFiles 保持不变——每次编辑仍未被索引，
+   * 重新调度的同步下次将处理同一组文件。
    */
   private async flush(): Promise<void> {
-    // If already syncing, the post-sync check will re-trigger
+    // 若已在同步中，同步后的检查会重新触发
     if (this.syncing || this.stopped) return;
 
     this.syncStartedMs = Date.now();
@@ -760,14 +726,13 @@ export class FileWatcher {
 
     try {
       const result = await this.syncFn();
-      this.lockRetryCount = 0; // a clean sync clears any contention backoff
-      // Remove entries whose most recent event predates this sync — those
-      // edits are now in the DB. Entries with lastSeenMs > syncStartedMs
-      // arrived mid-sync; whether the in-flight sync captured them depends
-      // on when sync read that file, so we keep them as pending and let
-      // the follow-up sync handle them. We prefer false positives ("shown
-      // stale, actually fresh" → at worst one extra Read) over false
-      // negatives ("shown fresh, actually stale" → misleads the agent).
+      this.lockRetryCount = 0; // 干净的同步清除所有竞争退避
+      // 移除最近事件早于本次同步的条目——这些编辑现已入库。
+      // lastSeenMs > syncStartedMs 的条目在同步进行中到达；
+      // 正在进行的同步是否捕获到它们取决于同步读取该文件的时机，
+      // 因此保留它们为待处理，让后续同步处理。我们更倾向假阳性
+      // （"显示为过期，实际已新鲜"→最多多一次 Read）而非假阴性
+      // （"显示为新鲜，实际已过期"→误导智能体）。
       for (const [filePath, info] of this.pendingFiles) {
         if (info.lastSeenMs <= this.syncStartedMs) {
           this.pendingFiles.delete(filePath);
@@ -777,11 +742,10 @@ export class FileWatcher {
     } catch (err) {
       if (err instanceof LockUnavailableError) {
         this.lockRetryCount += 1;
-        // Lock-failure no-op (another writer holds the lock). pendingFiles
-        // stays intact and the `finally` block reschedules with backoff. Keep
-        // brief contention quiet (debug-only — a long external index would
-        // otherwise spam stderr every cycle), but stop retrying forever: once a
-        // writer holds the lock past the budget, degrade auto-sync explicitly.
+        // 锁失败空操作（另一个写入方持有锁）。pendingFiles 保持完整，
+        // `finally` 块以退避重新调度。对短暂竞争保持静默（仅调试级别——
+        // 长期外部索引器否则会每个周期都刷屏 stderr），但不无限重试：
+        // 一旦写入方持锁超过预算，明确降级自动同步。
         logDebug('Watch sync skipped: file lock unavailable', {
           pendingFiles: this.pendingFiles.size,
           retryCount: this.lockRetryCount,
@@ -795,22 +759,21 @@ export class FileWatcher {
           );
         }
       } else {
-        this.lockRetryCount = 0; // a non-lock failure isn't contention; reset backoff
+        this.lockRetryCount = 0; // 非锁失败不是竞争；重置退避
         const error = err instanceof Error ? err : new Error(String(err));
         logWarn('Watch sync failed', { error: error.message });
         this.onSyncError?.(error);
       }
-      // Failure: leave pendingFiles untouched. Every edit it tracks is
-      // still unindexed; the rescheduled sync sees the same set.
+      // 失败：pendingFiles 保持不变。它跟踪的每次编辑仍未被索引；
+      // 重新调度的同步会看到同一组文件。
     } finally {
       this.syncing = false;
 
-      // If pending files remain (mid-sync events, or this sync failed),
-      // schedule another pass. After lock contention, back off exponentially
-      // (debounceMs · 2^(n-1), capped) instead of retrying at the normal
-      // debounce cadence; a clean sync resets lockRetryCount so normal edits
-      // keep the fast debounce. A degrade() above already set `stopped`, so
-      // this won't reschedule a watcher that has given up.
+      // 若仍有待处理文件（同步进行中的事件，或本次同步失败），
+      // 调度下一轮处理。锁竞争后以指数退避（debounceMs · 2^(n-1)，有上限），
+      // 而非以正常防抖节奏重试；干净的同步会重置 lockRetryCount，
+      // 使正常编辑保持快速防抖。上面的 degrade() 已设置 `stopped`，
+      // 因此不会重新调度已放弃的监视器。
       if (this.pendingFiles.size > 0 && !this.stopped) {
         if (this.lockRetryCount > 0) {
           const retryDelayMs = Math.min(
@@ -826,19 +789,18 @@ export class FileWatcher {
   }
 
   /**
-   * Snapshot of files seen by the watcher since the last successful sync.
+   * 自上次成功同步以来监视器见过的文件快照。
    *
-   * Used by MCP tool responses to mark stale results without blocking on a
-   * sync: a tool that returns a hit in `src/foo.ts` while `src/foo.ts` is in
-   * this list tells the agent "Read this file directly, the index lags."
+   * 供 MCP 工具响应在不阻塞同步的情况下标记过期结果使用：
+   * 当工具在 `src/foo.ts` 中返回一个命中，而 `src/foo.ts` 在此列表中时，
+   * 告知智能体"直接 Read 此文件，索引存在延迟。"
    *
-   * `indexing` is true when a sync is currently in flight whose start time is
-   * AFTER this file's most recent event — i.e. that sync will absorb the
-   * edit. False means the file is still inside the debounce window and no
-   * sync has started yet (a follow-up call a few hundred ms later may show
-   * `indexing: true` or the file may have left the list entirely).
+   * 当某个同步正在进行且其开始时间晚于此文件最近一次事件时，
+   * `indexing` 为 true——即该同步将处理此编辑。
+   * false 表示文件仍在防抖窗口内且还没有同步启动
+   * （几百毫秒后的后续调用可能显示 `indexing: true`，或文件已不在列表中）。
    *
-   * Cheap: O(pendingFiles.size), no I/O, no locks.
+   * 开销低：O(pendingFiles.size)，无 I/O，无锁。
    */
   getPendingFiles(): PendingFile[] {
     const result: PendingFile[] = [];
@@ -855,12 +817,11 @@ export class FileWatcher {
 }
 
 /**
- * Test-only: synthesize a source-file change for the live watcher running at
- * `projectRoot`, exercising the real filter → pendingFiles → debounced-sync
- * logic without depending on fs.watch delivery timing (which races under
- * parallel vitest). `relPath` is project-relative POSIX (e.g. "src/foo.ts").
- * Returns false if no live watcher is registered for that root (e.g. outside a
- * test runtime, where the registry is intentionally not populated).
+ * 仅供测试：为运行在 `projectRoot` 的活跃监视器合成一次源文件变更，
+ * 经过真实的"过滤 → pendingFiles → 防抖同步"逻辑，无需依赖 fs.watch
+ * 传递时机（在并行 vitest 下会产生竞争）。`relPath` 为项目相对 POSIX 路径
+ * （如 "src/foo.ts"）。若该根目录没有注册活跃监视器（如在测试运行时之外，
+ * 注册表故意不填充）则返回 false。
  */
 export function __emitWatchEventForTests(projectRoot: string, relPath: string): boolean {
   const w = liveWatchersForTests.get(projectRoot);

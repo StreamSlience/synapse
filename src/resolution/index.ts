@@ -1,7 +1,7 @@
 ﻿/**
- * Reference Resolution Orchestrator
+ * 引用解析协调器
  *
- * Coordinates all reference resolution strategies.
+ * 统筹协调所有引用解析策略。
  */
 
 import * as fs from 'fs';
@@ -27,29 +27,27 @@ import { logDebug } from '../errors';
 import type { ReExport } from './types';
 import { LRUCache } from './lru-cache';
 
-/** Node kinds that can declare supertypes (extends/implements). */
+/** 可以声明超类型（extends/implements）的节点类型。 */
 const SUPERTYPE_BEARING_KINDS = new Set<Node['kind']>([
   'class', 'struct', 'interface', 'trait', 'protocol', 'enum',
 ]);
 
 /**
- * Languages whose chained static-factory/fluent calls defer to the conformance
- * second pass. Dotted-receiver languages resolve via matchDottedCallChain; the
- * `::`-receiver ones (Rust) via matchScopedCallChain.
+ * 链式静态工厂/流式调用会推迟到一致性第二遍处理的语言。
+ * 点号接收者语言通过 matchDottedCallChain 解析；
+ * `::` 接收者语言（Rust）通过 matchScopedCallChain 解析。
  */
 const CHAIN_LANGUAGES = new Set(['java', 'kotlin', 'csharp', 'swift', 'rust', 'go', 'scala', 'dart', 'objc', 'pascal']);
 const SCOPED_CHAIN_LANGUAGES = new Set(['rust']);
 
-/** The extractor's chained-receiver encoding: `<inner>().<method>`. */
+/** 提取器的链式接收者编码格式：`<inner>().<method>`。 */
 const CHAIN_SHAPE = /^(.+)\(\)\.(\w+)$/;
 
 /**
- * Cache size limits. Each per-resolver cache is bounded so memory
- * stays flat on large codebases (20k+ files). Sizes were chosen to
- * cover the working set for typical resolution batches without
- * exceeding a few hundred MB worst-case. Override via the env var
- * `SYNAPSE_RESOLVER_CACHE_SIZE` (single integer applied to all
- * caches) when tuning for very large or very small projects.
+ * 缓存大小限制。每个解析器的缓存都有上限，确保在大型代码库（20k+ 文件）上
+ * 内存保持平稳。大小的选取以覆盖典型解析批次的工作集为准，最坏情况下不超过
+ * 数百 MB。可通过环境变量 `SYNAPSE_RESOLVER_CACHE_SIZE`（单个整数，
+ * 应用于所有缓存）在超大或超小项目上进行调优。
  */
 const DEFAULT_CACHE_LIMIT = 5_000;
 function resolveCacheLimit(): number {
@@ -60,10 +58,10 @@ function resolveCacheLimit(): number {
   return DEFAULT_CACHE_LIMIT;
 }
 
-// Re-export types
+// 重新导出类型
 export * from './types';
 
-// Pre-built Sets for O(1) built-in lookups (allocated once, shared across all instances)
+// 预构建的 Set，用于 O(1) 内置符号查找（只分配一次，所有实例共享）
 const JS_BUILT_INS = new Set([
   'console', 'window', 'document', 'global', 'process',
   'Promise', 'Array', 'Object', 'String', 'Number', 'Boolean',
@@ -108,7 +106,7 @@ const GO_STDLIB_PACKAGES = new Set([
   'ring', 'scanner', 'tar', 'zip', 'gzip', 'zlib', 'tls', 'url',
   'user', 'pprof', 'trace', 'ast', 'build', 'parser', 'printer',
   'token', 'types', 'cgo', 'plugin', 'race', 'ioutil',
-  // Kubernetes-common stdlib aliases
+  // Kubernetes 常用标准库别名
   'utilruntime', 'utilwait', 'utilnet',
 ]);
 
@@ -149,7 +147,7 @@ const PASCAL_BUILT_INS = new Set([
 ]);
 
 const C_BUILT_INS = new Set([
-  // Standard C library functions
+  // 标准 C 库函数
   'printf', 'fprintf', 'sprintf', 'snprintf', 'scanf', 'fscanf', 'sscanf',
   'malloc', 'calloc', 'realloc', 'free',
   'memcpy', 'memmove', 'memset', 'memcmp', 'memchr',
@@ -173,7 +171,7 @@ const C_BUILT_INS = new Set([
   'int8_t', 'int16_t', 'int32_t', 'int64_t',
   'uint8_t', 'uint16_t', 'uint32_t', 'uint64_t',
   'FILE',
-  // POSIX additions commonly seen
+  // 常见的 POSIX 扩展
   'stat', 'lstat', 'fstat', 'open', 'close', 'read', 'write', 'pipe',
   'fork', 'exec', 'waitpid', 'getpid', 'getppid', 'kill', 'sleep', 'usleep',
   'pthread_create', 'pthread_join', 'pthread_mutex_lock', 'pthread_mutex_unlock',
@@ -181,10 +179,10 @@ const C_BUILT_INS = new Set([
 ]);
 
 const CPP_BUILT_INS = new Set([
-  // iostream objects (often used without std:: prefix via using)
+  // iostream 对象（通过 using 声明后常不带 std:: 前缀直接使用）
   'cout', 'cin', 'cerr', 'clog', 'endl', 'flush', 'ws',
-  'std', // the namespace itself when used as std::something
-  // Common C++ keywords that leak as references
+  'std', // 命名空间本身，在 std::something 形式时使用
+  // 会泄漏为引用的常见 C++ 关键字
   'nullptr', 'true', 'false', 'this', 'sizeof', 'alignof', 'typeid',
   'static_cast', 'dynamic_cast', 'reinterpret_cast', 'const_cast',
   'make_unique', 'make_shared', 'make_pair',
@@ -192,50 +190,48 @@ const CPP_BUILT_INS = new Set([
 ]);
 
 /**
- * Reference Resolver
+ * 引用解析器
  *
- * Orchestrates reference resolution using multiple strategies.
+ * 使用多种策略协调引用解析。
  */
 export class ReferenceResolver {
   private projectRoot: string;
   private queries: QueryBuilder;
   private context: ResolutionContext;
   private frameworks: FrameworkResolver[] = [];
-  // Chained static-factory/fluent call refs the first pass couldn't resolve,
-  // collected in-memory (the batched resolver deletes unresolved refs from the
-  // DB, so they can't be re-read). Drained by resolveChainedCallsViaConformance
-  // once implements/extends edges exist, to resolve methods on a supertype the
-  // receiver conforms to (#750).
+  // 第一遍无法解析的链式静态工厂/流式调用引用，保存在内存中
+  // （批量解析器会从数据库中删除未解析的引用，因此无法再次读取）。
+  // 待 implements/extends 边建立后，由 resolveChainedCallsViaConformance 消费，
+  // 以解析接收者所符合的超类型上的方法（#750）。
   private deferredChainRefs: UnresolvedRef[] = [];
-  // `this.<member>` function-as-value refs whose member is NOT on the
-  // enclosing class itself — possibly inherited. Collected in-memory for the
-  // same reason as deferredChainRefs and drained by
-  // resolveDeferredThisMemberRefs once implements/extends edges exist (#808).
+  // `this.<成员>` 函数引用中，成员不在封闭类本身的情况——可能是继承而来。
+  // 与 deferredChainRefs 同样原因保存在内存中，待 implements/extends 边建立后，
+  // 由 resolveDeferredThisMemberRefs 消费（#808）。
   private deferredThisMemberRefs: UnresolvedRef[] = [];
-  // Per-`.razor`/`.cshtml`-file `@using` namespace set (own directives + folder
-  // `_Imports.razor`, cascading to the project root). Used to disambiguate a
-  // markup type ref to the right C# namespace.
+  // 每个 `.razor`/`.cshtml` 文件的 `@using` 命名空间集合（本文件指令 + 文件夹
+  // `_Imports.razor`，逐级向上级联至项目根目录）。用于将标记类型引用
+  // 消歧到正确的 C# 命名空间。
   private razorUsingsCache = new Map<string, string[]>();
-  // All per-resolver caches are LRU-bounded. Previously these were
-  // unbounded Maps that grew with every distinct lookup and OOM'd on
-  // codebases with 20k+ files (see issue: unbounded cache growth).
-  private nodeCache: LRUCache<string, Node[]>; // per-file node cache
-  private fileCache: LRUCache<string, string | null>; // per-file content cache
+  // 所有每解析器缓存均受 LRU 限制。此前这些都是无界 Map，
+  // 随着每次不同的查找不断增长，在 20k+ 文件的代码库上会导致 OOM
+  // （参见 issue：无界缓存增长）。
+  private nodeCache: LRUCache<string, Node[]>; // 每文件节点缓存
+  private fileCache: LRUCache<string, string | null>; // 每文件内容缓存
   private importMappingCache: LRUCache<string, ImportMapping[]>;
   private reExportCache: LRUCache<string, ReExport[]>;
-  private nameCache: LRUCache<string, Node[]>; // name → nodes cache
-  private lowerNameCache: LRUCache<string, Node[]>; // lower(name) → nodes cache
-  private qualifiedNameCache: LRUCache<string, Node[]>; // qualified_name → nodes cache
-  private knownNames: Set<string> | null = null; // all known symbol names for fast pre-filtering
+  private nameCache: LRUCache<string, Node[]>; // 名称 → 节点缓存
+  private lowerNameCache: LRUCache<string, Node[]>; // lower(name) → 节点缓存
+  private qualifiedNameCache: LRUCache<string, Node[]>; // qualified_name → 节点缓存
+  private knownNames: Set<string> | null = null; // 所有已知符号名称，用于快速预过滤
   private knownFiles: Set<string> | null = null;
   private cachesWarmed = false;
-  // tsconfig/jsconfig path-alias map. `undefined` = not yet computed,
-  // `null` = computed and absent. Treated as immutable for the
-  // resolver's lifetime; callers re-create the resolver if config changes.
+  // tsconfig/jsconfig 路径别名映射。`undefined` = 尚未计算，
+  // `null` = 已计算但不存在。在解析器生命周期内视为不可变；
+  // 若配置变更，调用方需重新创建解析器。
   private projectAliases: AliasMap | null | undefined = undefined;
-  // go.mod module path. Same lazy/immutable convention as projectAliases.
+  // go.mod 模块路径。与 projectAliases 相同的懒加载/不可变约定。
   private goModule: GoModule | null | undefined = undefined;
-  // Monorepo workspace member packages. Same lazy/immutable convention.
+  // Monorepo 工作区成员包。与 projectAliases 相同的懒加载/不可变约定。
   private workspacePackages: WorkspacePackages | null | undefined = undefined;
 
   constructor(projectRoot: string, queries: QueryBuilder) {
@@ -243,8 +239,7 @@ export class ReferenceResolver {
     this.queries = queries;
 
     const limit = resolveCacheLimit();
-    // The content cache is heavier (full file text), so we give it a
-    // smaller budget than the metadata caches.
+    // 内容缓存较重（存储完整文件文本），因此给它分配比元数据缓存更小的预算。
     const contentLimit = Math.max(64, Math.floor(limit / 5));
     this.nodeCache = new LRUCache(limit);
     this.fileCache = new LRUCache(contentLimit);
@@ -258,7 +253,7 @@ export class ReferenceResolver {
   }
 
   /**
-   * Initialize the resolver (detect frameworks, etc.)
+   * 初始化解析器（检测框架等）
    */
   initialize(): void {
     this.frameworks = detectFrameworks(this.context);
@@ -266,12 +261,11 @@ export class ReferenceResolver {
   }
 
   /**
-   * Run each framework resolver's cross-file finalization pass and persist
-   * the returned node updates. Idempotent — safe to call after every indexAll
-   * and every incremental sync. Returns the number of nodes updated.
+   * 运行每个框架解析器的跨文件收尾处理，并持久化返回的节点更新。
+   * 幂等——在每次 indexAll 和每次增量同步后都可安全调用。返回已更新的节点数。
    *
-   * Caches are cleared before/after so the post-extract pass sees fresh DB
-   * state and downstream queries see the updated names.
+   * 缓存会在前后各清理一次，确保后置提取遍能看到最新的数据库状态，
+   * 下游查询也能看到更新后的名称。
    */
   runPostExtract(): number {
     let updated = 0;
@@ -295,25 +289,25 @@ export class ReferenceResolver {
   }
 
   /**
-   * Pre-build lightweight caches for resolution.
-   * Node lookups are now handled by indexed SQLite queries instead of
-   * loading all nodes into memory (which caused OOM on large codebases).
-   * We cache the set of known symbol names for fast pre-filtering.
+   * 预构建轻量级缓存以加速解析。
+   * 节点查找现在通过带索引的 SQLite 查询处理，而不是将所有节点加载到内存
+   * （后者在大型代码库上会导致 OOM）。
+   * 我们缓存已知符号名称集合，用于快速预过滤。
    */
   warmCaches(): void {
     if (this.cachesWarmed) return;
 
-    // Only cache the set of known file paths (lightweight string set)
+    // 只缓存已知文件路径集合（轻量字符串集合）
     this.knownFiles = new Set(this.queries.getAllFilePaths());
 
-    // Cache all distinct symbol names for fast pre-filtering (just strings, not full nodes)
+    // 缓存所有不同的符号名称，用于快速预过滤（只存储字符串，不存储完整节点）
     this.knownNames = new Set(this.queries.getAllNodeNames());
 
     this.cachesWarmed = true;
   }
 
   /**
-   * Clear internal caches
+   * 清除内部缓存
    */
   clearCaches(): void {
     this.nodeCache.clear();
@@ -329,7 +323,7 @@ export class ReferenceResolver {
   }
 
   /**
-   * Create the resolution context
+   * 创建解析上下文
    */
   private createContext(): ResolutionContext {
     return {
@@ -361,14 +355,14 @@ export class ReferenceResolver {
       },
 
       fileExists: (filePath: string) => {
-        // Check pre-built known files set first (O(1))
+        // 优先检查预构建的已知文件集合（O(1)）
         if (this.knownFiles) {
           const normalized = filePath.replace(/\\/g, '/');
           if (this.knownFiles.has(filePath) || this.knownFiles.has(normalized)) {
             return true;
           }
         }
-        // Fall back to filesystem for files not yet indexed
+        // 回退到文件系统，处理尚未索引的文件
         const fullPath = path.join(this.projectRoot, filePath);
         try {
           return fs.existsSync(fullPath);
@@ -432,10 +426,10 @@ export class ReferenceResolver {
       },
 
       getSupertypes: (typeName: string, language) => {
-        // Union the `implements`/`extends` targets of every same-named type node.
-        // Matching by simple name (not id) reconciles a type declared in one node
-        // (`KF::Builder`) with conformance declared in a separate extension node
-        // (`KF.Builder: KFOptionSetter`) — both have name `Builder`.
+        // 合并每个同名类型节点的 `implements`/`extends` 目标。
+        // 按简单名称（非 id）匹配，可将声明在一个节点中的类型
+        // （`KF::Builder`）与声明在独立扩展节点中的一致性
+        // （`KF.Builder: KFOptionSetter`）关联起来——两者的名称均为 `Builder`。
         const typeNodes = this.context
           .getNodesByName(typeName)
           .filter((n) => SUPERTYPE_BEARING_KINDS.has(n.kind) && n.language === language);
@@ -495,13 +489,11 @@ export class ReferenceResolver {
           this.reExportCache.set(filePath, []);
           return [];
         }
-        // Re-exports are a JS/TS-only construct, and what matters is the
-        // BARREL file's own language — not the consuming reference's. A
-        // `.svelte`/`.vue` consumer threads its own language down the
-        // re-export chase, which would make extractReExports() bail on a
-        // `.ts` index barrel and silently break the chain (#629). Re-key
-        // the parse on the barrel's extension so the chase works no matter
-        // what kind of file imports through it.
+        // 重导出是 JS/TS 特有的构造，关键是桶文件本身的语言——
+        // 而非消费方引用的语言。`.svelte`/`.vue` 消费方会将自身语言
+        // 传入重导出链，这会导致 extractReExports() 在 `.ts` index 桶文件上
+        // 中止，悄无声息地断开链条（#629）。改为按桶文件的扩展名来
+        // 确定解析语言，确保无论哪种文件通过它导入，追踪都能正常工作。
         const isJsFamily = /\.(?:d\.ts|[cm]?tsx?|[cm]?jsx?)$/i.test(filePath);
         const reExports = extractReExports(content, isJsFamily ? 'typescript' : language);
         this.reExportCache.set(filePath, reExports);
@@ -515,20 +507,20 @@ export class ReferenceResolver {
   }
 
   /**
-   * Resolve all unresolved references
+   * 解析所有未解析的引用
    */
   resolveAll(
     unresolvedRefs: UnresolvedReference[],
     onProgress?: (current: number, total: number) => void
   ): ResolutionResult {
-    // Pre-load all nodes into memory for fast lookups
+    // 预加载所有节点到内存以加速查找
     this.warmCaches();
 
     const resolved: ResolvedRef[] = [];
     const unresolved: UnresolvedRef[] = [];
     const byMethod: Record<string, number> = {};
 
-    // Convert to our internal format, using denormalized fields when available
+    // 转换为内部格式，优先使用非规范化字段（如果可用）
     const refs: UnresolvedRef[] = unresolvedRefs.map((ref) => ({
       fromNodeId: ref.fromNodeId,
       referenceName: ref.referenceName,
@@ -553,7 +545,7 @@ export class ReferenceResolver {
         unresolved.push(ref);
       }
 
-      // Report progress every 1% to avoid too many updates
+      // 每 1% 上报一次进度，避免更新过于频繁
       if (onProgress) {
         const currentPercent = Math.floor((i / total) * 100);
         if (currentPercent > lastReportedPercent) {
@@ -563,7 +555,7 @@ export class ReferenceResolver {
       }
     }
 
-    // Final progress report
+    // 最终进度上报
     if (onProgress && total > 0) {
       onProgress(total, total);
     }
@@ -581,28 +573,26 @@ export class ReferenceResolver {
   }
 
   /**
-   * Check if a reference name has any possible match in the codebase.
-   * Uses the pre-built knownNames set to skip expensive resolution
-   * for names that definitely don't exist as symbols.
+   * 检查引用名称在代码库中是否有任何可能的匹配。
+   * 使用预构建的 knownNames 集合，跳过对确实不存在的符号名称的昂贵解析。
    */
   private hasAnyPossibleMatch(name: string): boolean {
-    if (!this.knownNames) return true; // no pre-filter available
+    if (!this.knownNames) return true; // 没有预过滤器可用
 
-    // Direct name match
+    // 直接名称匹配
     if (this.knownNames.has(name)) return true;
 
-    // For qualified names like "obj.method" or "Class::method", check the parts
+    // 对于 "obj.method" 或 "Class::method" 形式的限定名，检查各部分
     const dotIdx = name.indexOf('.');
     if (dotIdx > 0) {
       const receiver = name.substring(0, dotIdx);
       const member = name.substring(dotIdx + 1);
       if (this.knownNames.has(receiver) || this.knownNames.has(member)) return true;
-      // Also check capitalized receiver (instance-method resolution)
+      // 同时检查首字母大写的接收者（实例方法解析）
       const capitalized = receiver.charAt(0).toUpperCase() + receiver.slice(1);
       if (this.knownNames.has(capitalized)) return true;
-      // JVM FQN: `com.example.foo.Bar` — the only useful segment is the
-      // last one (`Bar`); the earlier check finds `example.foo.Bar` which
-      // never matches a node name.
+      // JVM FQN：`com.example.foo.Bar` —— 唯一有用的片段是最后一段
+      // (`Bar`)；前面的检查找到的 `example.foo.Bar` 永远不会匹配节点名称。
       const lastDot = name.lastIndexOf('.');
       if (lastDot > dotIdx) {
         const tail = name.substring(lastDot + 1);
@@ -614,11 +604,11 @@ export class ReferenceResolver {
       const receiver = name.substring(0, colonIdx);
       const member = name.substring(colonIdx + 2);
       if (this.knownNames.has(receiver) || this.knownNames.has(member)) return true;
-      // Multi-segment path `a::b::c` (a Rust/C++ module call like
-      // `database::profiles::find`) — the only segment that names a symbol is
-      // the last (`c`); `member` above is `b::c`, which never matches a node
-      // name, so without this the pre-filter drops the ref before the Rust path
-      // resolver ever sees it. Mirror the dotted-name leaf check above.
+      // 多段路径 `a::b::c`（Rust/C++ 模块调用如
+      // `database::profiles::find`）—— 唯一命名符号的片段是最后一段（`c`）；
+      // 上面的 `member` 是 `b::c`，永远不会匹配节点名称，
+      // 若不处理，预过滤器会在 Rust 路径解析器看到它之前就将其丢弃。
+      // 与上面的点号名称叶节点检查对称处理。
       const lastColon = name.lastIndexOf('::');
       if (lastColon > colonIdx) {
         const tail = name.substring(lastColon + 2);
@@ -626,7 +616,7 @@ export class ReferenceResolver {
       }
     }
 
-    // For path-like references (e.g., "snippets/drawer-menu.liquid"), check the filename
+    // 对于路径形式的引用（如 "snippets/drawer-menu.liquid"），检查文件名部分
     const slashIdx = name.lastIndexOf('/');
     if (slashIdx > 0) {
       const fileName = name.substring(slashIdx + 1);
@@ -637,9 +627,9 @@ export class ReferenceResolver {
   }
 
   /**
-   * Does `ref.referenceName` match an import declared in its containing
-   * file? Used as a pre-filter escape so re-export chain resolution
-   * still gets a chance when the name has no project-wide declaration.
+   * `ref.referenceName` 是否匹配其所在文件中声明的某个导入？
+   * 用作预过滤的逃逸口，确保当名称在项目范围内没有声明时，
+   * 重导出链解析仍有机会执行。
    */
   private matchesAnyImport(ref: UnresolvedRef): boolean {
     const imports = this.context.getImportMappings(ref.filePath, ref.language);
@@ -656,20 +646,19 @@ export class ReferenceResolver {
   }
 
   /**
-   * Resolve a single reference
+   * 解析单个引用
    */
   resolveOne(ref: UnresolvedRef): ResolvedRef | null {
-    // Skip built-in/external references
+    // 跳过内置/外部引用
     if (this.isBuiltInOrExternal(ref)) {
       return null;
     }
 
-    // Fast pre-filter: skip if no symbol with this name exists anywhere
-    // AND the name doesn't match a local import. The import escape is
-    // necessary because re-export rename chains (`import { login }
-    // from './barrel'` where the barrel has `export { signIn as login }
-    // from './auth'`) intentionally call a name that has no
-    // declaration anywhere — only the renamed upstream symbol does.
+    // 快速预过滤：若代码库中不存在此名称的符号，
+    // 且该名称不匹配本地导入，则跳过。导入逃逸是必要的，
+    // 因为重导出重命名链（`import { login } from './barrel'`，
+    // 桶文件中有 `export { signIn as login } from './auth'`）
+    // 会刻意引用一个在任何地方都没有声明的名称——只有上游的重命名符号才有。
     if (
       !this.hasAnyPossibleMatch(ref.referenceName) &&
       !this.matchesAnyImport(ref) &&
@@ -678,14 +667,13 @@ export class ReferenceResolver {
       return null;
     }
 
-    // Function-as-value refs (#756) get a dedicated, strictly-gated path:
-    // import-based resolution first (an imported callback resolves through its
-    // import, the most precise cross-file signal), then matchFunctionRef
-    // (same-file first, unique-only cross-file, function/method targets only).
-    // They never reach the framework or fuzzy strategies below.
+    // 函数引用（#756）走专用的严格门控路径：
+    // 先进行基于导入的解析（已导入的回调通过其导入解析，是最精确的跨文件信号），
+    // 再用 matchFunctionRef（优先同文件，仅对唯一跨文件，目标限函数/方法）。
+    // 这些引用不会进入下面的框架策略或模糊策略。
     if (ref.referenceKind === 'function_ref') {
-      // `this.<member>` values (TS/JS) resolve ONLY against the enclosing
-      // class's own members — never a same-named symbol elsewhere.
+      // `this.<成员>` 值（TS/JS）只针对封闭类的自有成员解析——
+      // 绝不匹配其他位置的同名符号。
       if (ref.referenceName.startsWith('this.')) {
         return this.gateLanguage(this.resolveThisMemberFnRef(ref), ref);
       }
@@ -699,17 +687,17 @@ export class ReferenceResolver {
       return this.gateLanguage(matchFunctionRef(ref, this.context), ref);
     }
 
-    // JVM FQN imports skip framework/name-matcher: `import com.example.Bar`
-    // resolves directly through the qualifiedName index, which is unambiguous
-    // even when several `Bar` classes exist in different packages.
+    // JVM FQN 导入跳过框架/名称匹配器：`import com.example.Bar`
+    // 直接通过 qualifiedName 索引解析，即使不同包中存在多个 `Bar` 类，
+    // 该索引也是无歧义的。
     const jvmImport = resolveJvmImport(ref, this.context);
     if (jvmImport) return jvmImport;
 
-    // Razor/Blazor: a markup or `@code` type ref resolves through the file's
-    // `@using` namespaces (incl. folder `_Imports.razor`). This precisely
-    // disambiguates a simple name that exists in several namespaces — e.g.
-    // `CatalogBrand` resolving to `BlazorShared.Models::CatalogBrand` (the DTO,
-    // which the `.razor` `@using`s) rather than the same-named domain entity.
+    // Razor/Blazor：标记或 `@code` 中的类型引用通过文件的 `@using`
+    // 命名空间（含文件夹 `_Imports.razor`）解析。这能精确地消歧一个在多个命名空间
+    // 中存在的简单名称——例如将 `CatalogBrand` 解析为
+    // `BlazorShared.Models::CatalogBrand`（该 DTO 由 `.razor` 的 `@using` 引入），
+    // 而不是同名的领域实体。
     if (ref.language === 'razor') {
       const razorResult = this.resolveRazorUsing(ref);
       if (razorResult) return razorResult;
@@ -717,30 +705,29 @@ export class ReferenceResolver {
 
     const candidates: ResolvedRef[] = [];
 
-    // Strategy 1: Try framework-specific resolution. Cross-language bridges
-    // are deliberately preserved (Drupal `routing.yml` → PHP controller, RN
-    // JS → native `calls`) — `gateFrameworkLanguage` only drops a type/import
-    // edge between two KNOWN families (see its doc), never a `calls` bridge or
-    // a config↔code edge.
+    // 策略 1：尝试框架专属解析。跨语言桥接故意保留
+    // （Drupal `routing.yml` → PHP 控制器，RN JS → 原生 `calls`）——
+    // `gateFrameworkLanguage` 只丢弃两个已知语言族之间的类型/导入边，
+    // 不会丢弃 `calls` 桥接或 config↔code 边。
     for (const framework of this.frameworks) {
       const result = this.gateFrameworkLanguage(framework.resolve(ref, this.context), ref);
       if (result) {
-        if (result.confidence >= 0.9) return result; // High confidence, return immediately
+        if (result.confidence >= 0.9) return result; // 高置信度，直接返回
         candidates.push(result);
       }
     }
 
-    // Strategy 2: Try import-based resolution
+    // 策略 2：尝试基于导入的解析
     const importResult = this.gateLanguage(resolveViaImport(ref, this.context), ref);
     if (importResult) {
       if (importResult.confidence >= 0.9) return importResult;
       candidates.push(importResult);
     }
 
-    // PHP include/require paths resolve to files via import resolution only.
-    // If that didn't find the file, do NOT fall back to the symbol
-    // name-matcher — it would mis-connect e.g. "inc/db.php" to an unrelated
-    // db.php elsewhere in the tree (a wrong edge is worse than none, #660).
+    // PHP include/require 路径只通过导入解析定位到文件。
+    // 若导入解析未找到文件，则不能回退到符号名称匹配器——
+    // 那样会错误地将 "inc/db.php" 连接到树中其他无关的 db.php
+    // （错误的边比没有边更糟，#660）。
     if (isPhpIncludePathRef(ref)) {
       return candidates.length > 0
         ? candidates.reduce((best, curr) =>
@@ -749,16 +736,16 @@ export class ReferenceResolver {
         : null;
     }
 
-    // Strategy 3: Try name matching
+    // 策略 3：尝试名称匹配
     const nameResult = this.gateLanguage(matchReference(ref, this.context), ref);
     if (nameResult) {
       candidates.push(nameResult);
     }
 
     if (candidates.length === 0) {
-      // Defer a chained static-factory/fluent call the first pass couldn't
-      // resolve — its method may live on a supertype the receiver conforms to,
-      // resolvable once implements/extends edges exist (the conformance pass).
+      // 将第一遍无法解析的链式静态工厂/流式调用推迟处理——
+      // 其方法可能定义在接收者所符合的超类型上，
+      // 待 implements/extends 边建立后（一致性遍）即可解析。
       if (
         ref.referenceKind === 'calls' &&
         CHAIN_LANGUAGES.has(ref.language) &&
@@ -769,26 +756,24 @@ export class ReferenceResolver {
       return null;
     }
 
-    // Return highest confidence candidate
+    // 返回置信度最高的候选项
     return candidates.reduce((best, curr) =>
       curr.confidence > best.confidence ? curr : best
     );
   }
 
   /**
-   * Create edges from resolved references
+   * 从已解析的引用创建边
    */
   createEdges(resolved: ResolvedRef[]): Edge[] {
     return resolved.map((ref) => {
-      // `function_ref` (#756) is internal-only: it persists as a `references`
-      // edge (the registration site depends on the callback), distinguishable
-      // by metadata.resolvedBy === 'function-ref'. callers/impact already
-      // traverse `references`, so registration sites surface with no
-      // graph-layer changes.
+      // `function_ref`（#756）仅供内部使用：持久化为 `references` 边
+      // （注册位置取决于回调），可通过 metadata.resolvedBy === 'function-ref' 区分。
+      // callers/impact 已遍历 `references`，因此注册位置无需修改图层即可呈现。
       let kind: Edge['kind'] =
         ref.original.referenceKind === 'function_ref' ? 'references' : ref.original.referenceKind;
 
-      // Promote "extends" to "implements" when a class/struct targets an interface
+      // 当类/结构体的目标是接口时，将 "extends" 提升为 "implements"
       if (kind === 'extends') {
         const targetNode = this.queries.getNodeById(ref.targetNodeId);
         if (targetNode && (targetNode.kind === 'interface' || targetNode.kind === 'protocol')) {
@@ -799,11 +784,10 @@ export class ReferenceResolver {
         }
       }
 
-      // Promote "calls" to "instantiates" when the resolved target is a
-      // class/struct. Languages without a `new` keyword (Python, Ruby)
-      // express instantiation as `Foo()` — extraction can't tell that
-      // apart from a function call without symbol info, but resolution
-      // can: if `Foo` resolves to a class, the call IS an instantiation.
+      // 当解析目标是类/结构体时，将 "calls" 提升为 "instantiates"。
+      // 没有 `new` 关键字的语言（Python、Ruby）将实例化表达为 `Foo()`——
+      // 提取器在没有符号信息时无法将其与函数调用区分，
+      // 但解析器可以：若 `Foo` 解析为一个类，则该调用确实是实例化。
       if (kind === 'calls') {
         const targetNode = this.queries.getNodeById(ref.targetNodeId);
         if (targetNode && (targetNode.kind === 'class' || targetNode.kind === 'struct')) {
@@ -820,10 +804,9 @@ export class ReferenceResolver {
         metadata: {
           confidence: ref.confidence,
           resolvedBy: ref.resolvedBy,
-          // Uniform marker for function-as-value edges (#756), regardless of
-          // which strategy resolved them (import vs matchFunctionRef) — lets
-          // tooling label "callback registration" and lets validation diff
-          // exactly the edges this feature added.
+          // 函数引用边（#756）的统一标记，不论由哪种策略解析
+          // （导入 vs matchFunctionRef）——让工具能标注"回调注册"，
+          // 也让验证精确对比该功能新增的边。
           ...(ref.original.referenceKind === 'function_ref' ? { fnRef: true } : {}),
         },
       };
@@ -831,7 +814,7 @@ export class ReferenceResolver {
   }
 
   /**
-   * Resolve and persist edges to database
+   * 解析引用并将边持久化到数据库
    */
   resolveAndPersist(
     unresolvedRefs: UnresolvedReference[],
@@ -839,15 +822,15 @@ export class ReferenceResolver {
   ): ResolutionResult {
     const result = this.resolveAll(unresolvedRefs, onProgress);
 
-    // Create edges from resolved references
+    // 从已解析的引用创建边
     const edges = this.createEdges(result.resolved);
 
-    // Insert edges into database
+    // 将边插入数据库
     if (edges.length > 0) {
       this.queries.insertEdges(edges);
     }
 
-    // Clean up resolved refs from unresolved_refs table so metrics are accurate
+    // 从 unresolved_refs 表中清理已解析的引用，确保指标准确
     if (result.resolved.length > 0) {
       this.queries.deleteSpecificResolvedReferences(
         result.resolved.map((r) => ({
@@ -862,31 +845,29 @@ export class ReferenceResolver {
   }
 
   /**
-   * Second resolution pass for chained static-factory / fluent calls whose
-   * chained method is defined on a SUPERTYPE the receiver's type conforms to —
-   * a protocol-extension / inherited / default-interface method (#750). The
-   * first pass can't resolve these because `implements`/`extends` edges aren't
-   * built yet; this runs AFTER edges are persisted, so `context.getSupertypes`
-   * (and the conformance fallback in resolveMethodOnType) can walk them.
+   * 对链式静态工厂/流式调用的第二遍解析——这些调用的链式方法定义在接收者类型
+   * 所符合的超类型上（协议扩展/继承/默认接口方法，#750）。第一遍无法解析，
+   * 因为 `implements`/`extends` 边尚未建立；本方法在边持久化之后运行，
+   * 因此 `context.getSupertypes`（以及 resolveMethodOnType 中的一致性回退）
+   * 可以遍历这些边。
    *
-   * Operates only on the leftover unresolved refs that have the `inner().method`
-   * chain shape, for the dotted-chain languages — a small set — and is idempotent
-   * (re-resolving an already-resolved ref is a no-op since it's been deleted).
-   * Returns the number of newly-created edges.
+   * 仅对 `inner().method` 链式形式且属于点号链语言的剩余未解析引用操作——
+   * 数量较少——且是幂等的（重复解析已解析的引用是空操作，因为它已被删除）。
+   * 返回新创建的边数。
    */
   resolveChainedCallsViaConformance(): number {
     const deferred = this.deferredChainRefs;
     this.deferredChainRefs = [];
     if (deferred.length === 0) return 0;
 
-    // Read fresh edges (the main pass built the implements/extends edges after
-    // these refs were deferred). matchDottedCallChain now resolves a method on a
-    // supertype via context.getSupertypes -> resolveMethodOnType's conformance walk.
+    // 读取最新的边（主遍在这些引用被推迟后构建了 implements/extends 边）。
+    // matchDottedCallChain 现在可以通过 context.getSupertypes ->
+    // resolveMethodOnType 的一致性遍历，解析超类型上的方法。
     this.clearCaches();
     const resolved: ResolvedRef[] = [];
     for (const ref of deferred) {
-      // `::`-receiver languages (Rust) split on `::` (matchScopedCallChain);
-      // dotted-receiver languages on `.` (matchDottedCallChain).
+      // `::` 接收者语言（Rust）使用 `::` 分割（matchScopedCallChain）；
+      // 点号接收者语言使用 `.` 分割（matchDottedCallChain）。
       const chainMatch = SCOPED_CHAIN_LANGUAGES.has(ref.language)
         ? matchScopedCallChain(ref, this.context)
         : matchDottedCallChain(ref, this.context);
@@ -904,9 +885,9 @@ export class ReferenceResolver {
   }
 
   /**
-   * Resolve and persist in batches to keep memory bounded.
-   * Processes unresolved references in chunks, persisting edges and cleaning
-   * up resolved refs after each batch to avoid accumulating large arrays.
+   * 分批解析并持久化，以保持内存有界。
+   * 分块处理未解析的引用，每批次后持久化边并清理已解析的引用，
+   * 避免积累大型数组。
    */
   async resolveAndPersistBatched(
     onProgress?: (current: number, total: number) => void,
@@ -923,8 +904,8 @@ export class ReferenceResolver {
       byMethod: {} as Record<string, number>,
     };
 
-    // Process in batches. We always read from offset 0 because resolved refs
-    // are deleted after each batch, shifting the remaining rows forward.
+    // 分批处理。每批次删除已解析的引用后，始终从偏移量 0 读取，
+    // 剩余行会向前移动。
     let prevRemaining = Number.POSITIVE_INFINITY;
     while (true) {
       const batch = this.queries.getUnresolvedReferencesBatch(0, batchSize);
@@ -932,13 +913,13 @@ export class ReferenceResolver {
 
       const result = this.resolveAll(batch);
 
-      // Persist edges immediately
+      // 立即持久化边
       const edges = this.createEdges(result.resolved);
       if (edges.length > 0) {
         this.queries.insertEdges(edges);
       }
 
-      // Clean up resolved refs so they don't appear in the next batch
+      // 清理已解析的引用，避免它们出现在下一批次中
       if (result.resolved.length > 0) {
         this.queries.deleteSpecificResolvedReferences(
           result.resolved.map((r) => ({
@@ -949,7 +930,7 @@ export class ReferenceResolver {
         );
       }
 
-      // Delete unresolvable refs from this batch to avoid re-processing them
+      // 从数据库删除本批次无法解析的引用，避免重复处理
       if (result.unresolved.length > 0) {
         this.queries.deleteSpecificResolvedReferences(
           result.unresolved.map((r) => ({
@@ -960,7 +941,7 @@ export class ReferenceResolver {
         );
       }
 
-      // Aggregate stats
+      // 汇总统计数据
       aggregateStats.total += result.stats.total;
       aggregateStats.resolved += result.stats.resolved;
       aggregateStats.unresolved += result.stats.unresolved;
@@ -971,36 +952,34 @@ export class ReferenceResolver {
       processed += batch.length;
       onProgress?.(processed, total);
 
-      // Yield so progress UI can render between batches
+      // 让出执行权，使进度 UI 能在批次间渲染
       await new Promise(resolve => setImmediate(resolve));
 
-      // If nothing was resolved or removed in this batch, we'd loop forever
-      // on the same rows. Break to avoid infinite loop.
+      // 若本批次既未解析也未移除任何内容，则会在相同行上无限循环。
+      // 中断以避免无限循环。
       if (result.resolved.length === 0 && result.unresolved.length === batch.length) {
         break;
       }
 
-      // Non-progress guard (defense-in-depth). Because we re-read from offset 0
-      // each pass, the unresolved_refs table MUST shrink every iteration — both
-      // resolved and unresolved refs are deleted above. If it didn't shrink, a
-      // resolver returned a match whose `original.referenceName` differs from the
-      // stored row, so the keyed delete no-ops, and we'd re-read + re-resolve +
-      // re-insert the same rows forever (the runaway that grew a 99-file repo to
-      // 5M edges / 1.4 GB before the Go-fallback fix). Stop rather than grow the
-      // graph without bound.
+      // 非进度保护（纵深防御）。由于每次从偏移量 0 重新读取，
+      // unresolved_refs 表必须在每次迭代中缩小——上面已删除已解析和未解析的引用。
+      // 若未缩小，说明某个解析器返回了匹配项，但其 `original.referenceName`
+      // 与存储的行不同，导致键删除无效，同一批行会被反复读取、解析和插入
+      // （这正是在 99 文件代码库上产生 500 万条边 / 1.4 GB 的 Go 回退修复前的失控情况）。
+      // 停止，而不是无限制地扩张图。
       const remaining = this.queries.getUnresolvedReferencesCount();
       if (remaining >= prevRemaining) break;
       prevRemaining = remaining;
     }
 
-    // Dynamic-edge synthesis: now that all base `calls` edges are persisted,
-    // synthesize observer/callback dispatch edges (dispatcher → registered
-    // callbacks) that static parsing leaves out. Best-effort — never fail the
-    // index on it. See docs/design/callback-edge-synthesis.md.
+    // 动态边合成：所有基础 `calls` 边持久化后，
+    // 合成静态解析遗漏的观察者/回调分发边（调度器 → 已注册的回调）。
+    // 尽力而为——绝不因此让索引失败。
+    // 参见 docs/design/callback-edge-synthesis.md。
     try {
       aggregateStats.byMethod['callback-synthesis'] = synthesizeCallbackEdges(this.queries, this.context);
     } catch {
-      // synthesis is additive and optional; ignore failures
+      // 合成是增量可选的；忽略失败
     }
 
     return {
@@ -1011,53 +990,53 @@ export class ReferenceResolver {
   }
 
   /**
-   * Get detected frameworks
+   * 获取已检测到的框架
    */
   getDetectedFrameworks(): string[] {
     return this.frameworks.map((f) => f.name);
   }
 
   /**
-   * Check if reference is to a built-in or external symbol
+   * 检查引用是否指向内置或外部符号
    */
   private isBuiltInOrExternal(ref: UnresolvedRef): boolean {
     const name = ref.referenceName;
     const isJsTs = ref.language === 'typescript' || ref.language === 'javascript'
       || ref.language === 'tsx' || ref.language === 'jsx';
 
-    // JavaScript/TypeScript built-ins
+    // JavaScript/TypeScript 内置符号
     if (isJsTs && JS_BUILT_INS.has(name)) {
       return true;
     }
 
-    // Common JS/TS library calls (console.log, Math.floor, JSON.parse)
+    // 常见的 JS/TS 库调用（console.log、Math.floor、JSON.parse）
     if (isJsTs && (name.startsWith('console.') || name.startsWith('Math.') || name.startsWith('JSON.'))) {
       return true;
     }
 
-    // React hooks from React itself
+    // React 自身提供的 hooks
     if (isJsTs && REACT_HOOKS.has(name)) {
       return true;
     }
 
-    // Python built-ins (bare calls only — dotted calls like console.print are method calls)
+    // Python 内置函数（仅裸调用——console.print 等点号调用是方法调用）
     if (ref.language === 'python' && PYTHON_BUILT_INS.has(name)) {
       return true;
     }
 
-    // Python built-in method calls (e.g., list.extend, dict.update)
+    // Python 内置方法调用（如 list.extend、dict.update）
     if (ref.language === 'python') {
       const dotIdx = name.indexOf('.');
       if (dotIdx > 0) {
         const receiver = name.substring(0, dotIdx);
         const method = name.substring(dotIdx + 1);
-        // Filter calls on built-in types (list.append, dict.update, etc.)
+        // 过滤内置类型上的调用（list.append、dict.update 等）
         if (PYTHON_BUILT_IN_TYPES.has(receiver)) {
           return true;
         }
-        // Filter built-in methods on non-class receivers
-        // (e.g., items.append where items is a local list variable)
-        // But allow if the capitalized receiver matches a known codebase class
+        // 过滤非类接收者上的内置方法
+        // （如 items.append，其中 items 是一个局部列表变量）
+        // 但若首字母大写的接收者匹配代码库中已知的类，则保留
         if (PYTHON_BUILT_IN_METHODS.has(method)) {
           const capitalized = receiver.charAt(0).toUpperCase() + receiver.slice(1);
           if (!this.knownNames?.has(capitalized)) {
@@ -1065,18 +1044,17 @@ export class ReferenceResolver {
           }
         }
       }
-      // A bare name colliding with a builtin method (index, get, update, count…)
-      // is only a builtin when NOTHING in the codebase declares it. A declared
-      // symbol with that exact name — e.g. a Flask/FastAPI view `def index()` or
-      // `def get()` — is a real reference target. Mirrors the knownNames guard on
-      // the dotted branch above; without it, every handler named after a builtin
-      // method silently loses its route→handler edge.
+      // 与内置方法名冲突的裸名（index、get、update、count……）
+      // 只有在代码库中完全没有声明时才视为内置。若有同名符号——
+      // 如 Flask/FastAPI 视图 `def index()` 或 `def get()`——
+      // 则是真实的引用目标。与上面点号分支上的 knownNames 保护对称；
+      // 若无此保护，每个以内置方法名命名的处理器都会悄无声息地丢失其路由→处理器边。
       if (PYTHON_BUILT_IN_METHODS.has(name) && !this.knownNames?.has(name)) {
         return true;
       }
     }
 
-    // Go standard library packages — refs like "fmt.Println", "http.ListenAndServe", etc.
+    // Go 标准库包——如 "fmt.Println"、"http.ListenAndServe" 等形式的引用
     if (ref.language === 'go') {
       const dotIdx = name.indexOf('.');
       if (dotIdx > 0) {
@@ -1090,7 +1068,7 @@ export class ReferenceResolver {
       }
     }
 
-    // Pascal/Delphi built-ins and standard library units
+    // Pascal/Delphi 内置符号和标准库单元
     if (ref.language === 'pascal') {
       if (PASCAL_UNIT_PREFIXES.some((p) => name.startsWith(p))) {
         return true;
@@ -1100,18 +1078,15 @@ export class ReferenceResolver {
       }
     }
 
-    // C/C++ standard library symbols (printf, malloc, std::vector, etc.).
-    // Names that collide with user-defined symbols are NOT filtered —
-    // C and C++ projects routinely shadow stdlib names (custom allocators
-    // define `malloc`/`free`, stream wrappers define `read`/`write`/`open`,
-    // containers define `move`/`swap`, logging libs wrap `printf`). Killing
-    // those resolutions makes the graph wrong, not cleaner. We only filter
-    // when there's no user node with this name — then name-matching would
-    // produce zero edges anyway and the filter just short-circuits work.
+    // C/C++ 标准库符号（printf、malloc、std::vector 等）。
+    // 与用户定义符号冲突的名称不会被过滤——C 和 C++ 项目经常遮蔽标准库名称
+    // （自定义分配器定义 `malloc`/`free`，流封装器定义 `read`/`write`/`open`，
+    // 容器定义 `move`/`swap`，日志库封装 `printf`）。
+    // 杀死那些解析会让图变错，而不是更干净。我们只在用户没有定义该名称的节点时过滤——
+    // 此时名称匹配无论如何都不会产生边，过滤只是短路了工作。
     if (ref.language === 'c' || ref.language === 'cpp') {
-      // C++ std:: namespace prefix — safe to filter unconditionally,
-      // since `std::foo` is never a user-defined qualified name in
-      // tree-sitter output.
+      // C++ std:: 命名空间前缀——可无条件过滤，
+      // 因为 `std::foo` 在 tree-sitter 输出中绝不会是用户定义的限定名。
       if (name.startsWith('std::')) return true;
       if (C_BUILT_INS.has(name) || CPP_BUILT_INS.has(name)) {
         return !this.hasAnyPossibleMatch(name);
@@ -1122,7 +1097,7 @@ export class ReferenceResolver {
   }
 
   /**
-   * Get file path from node ID
+   * 从节点 ID 获取文件路径
    */
   private getFilePathFromNodeId(nodeId: string): string {
     const node = this.queries.getNodeById(nodeId);
@@ -1130,7 +1105,7 @@ export class ReferenceResolver {
   }
 
   /**
-   * Get language from node ID
+   * 从节点 ID 获取语言
    */
   private getLanguageFromNodeId(nodeId: string): UnresolvedRef['language'] {
     const node = this.queries.getNodeById(nodeId);
@@ -1138,21 +1113,19 @@ export class ReferenceResolver {
   }
 
   /**
-   * Drop an import/name-strategy resolution that crosses a language family.
-   * Two regimes (mirrors `applyLanguageGate`'s candidate filter):
-   *  - `references` (type usage): STRICT — a `Type.member` static read names a
-   *    same-family type, never a coincidentally same-named symbol in another
-   *    language. Drops any non-same-family target.
-   *  - `imports` (import binding / `#include`): both-known — a C++ `#include
-   *    "X.h"` must not resolve to a same-named ObjC header on another platform
-   *    (basename collision), but a singleton-family / SFC language (`vue` →
-   *    `.ts`) importing across is left alone.
-   * Applies to the import (strategy 2) + name-match (strategy 3) results.
+   * 丢弃跨语言族的导入/名称匹配策略解析结果。
+   * 两种模式（对应 `applyLanguageGate` 的候选过滤）：
+   *  - `references`（类型用法）：严格——`Type.member` 静态读取的是同族类型，
+   *    绝不是另一语言中碰巧同名的符号。丢弃所有非同族目标。
+   *  - `imports`（导入绑定 / `#include`）：两端已知——C++ 的 `#include "X.h"`
+   *    不能解析为另一平台上同名的 ObjC 头文件（基本名冲突），
+   *    但单一族/SFC 语言（`vue` → `.ts`）的跨族导入不受影响。
+   * 适用于导入（策略 2）+ 名称匹配（策略 3）的结果。
    */
   /**
-   * Collect the `@using` namespaces in scope for a `.razor`/`.cshtml` file: its
-   * own `@using` directives plus every `_Imports.razor` from the file's folder up
-   * to the project root (Razor `_Imports` cascade). Cached per file.
+   * 收集 `.razor`/`.cshtml` 文件作用域内的 `@using` 命名空间：
+   * 文件自身的 `@using` 指令，加上从文件所在文件夹到项目根目录逐级级联的
+   * `_Imports.razor`（Razor `_Imports` 级联机制）。按文件缓存。
    */
   private getRazorUsings(filePath: string): string[] {
     const cached = this.razorUsingsCache.get(filePath);
@@ -1164,7 +1137,7 @@ export class ReferenceResolver {
     };
     addFrom(this.context.readFile(filePath));
     let dir = filePath.includes('/') ? filePath.slice(0, filePath.lastIndexOf('/')) : '';
-    // Walk up to the project root, reading each level's _Imports.razor.
+    // 向上遍历到项目根目录，读取每一层的 _Imports.razor。
     for (;;) {
       addFrom(this.context.readFile(dir ? `${dir}/_Imports.razor` : '_Imports.razor'));
       if (!dir) break;
@@ -1177,11 +1150,11 @@ export class ReferenceResolver {
   }
 
   /**
-   * Resolve a Razor/Blazor simple type ref through the file's `@using`
-   * namespaces: `CatalogBrand` + `@using BlazorShared.Models` → the node whose
-   * qualified name is `BlazorShared.Models::CatalogBrand`. Only resolves when the
-   * `@using` set yields exactly ONE type (otherwise it stays ambiguous and falls
-   * through to name-matching).
+   * 通过文件的 `@using` 命名空间解析 Razor/Blazor 中的简单类型引用：
+   * `CatalogBrand` + `@using BlazorShared.Models` → 限定名为
+   * `BlazorShared.Models::CatalogBrand` 的节点。
+   * 只有当 `@using` 集合恰好产生唯一一个类型时才解析
+   * （否则仍然有歧义，回退到名称匹配）。
    */
   private resolveRazorUsing(ref: UnresolvedRef): ResolvedRef | null {
     if (ref.referenceName.includes('.') || ref.referenceName.includes('::')) return null;
@@ -1199,22 +1172,21 @@ export class ReferenceResolver {
   }
 
   /**
-   * Resolve a `this.<member>` function-as-value reference (#756/#808) to the
-   * ENCLOSING CLASS's own member — never a same-named symbol elsewhere. The
-   * registration idiom (`btn.on('click', this.handleClick)`) names a member
-   * of the class being defined, so the only valid target shares the
-   * from-symbol's qualified-name scope. Function/method targets only — a
-   * property (a data field, post-#808 classification) yields no edge — same
-   * file required, no fallback of any kind.
+   * 将 `this.<成员>` 函数引用（#756/#808）解析到封闭类的自有成员——
+   * 绝不匹配其他位置的同名符号。注册惯用法
+   * （`btn.on('click', this.handleClick)`）命名的是正在定义的类的成员，
+   * 因此唯一有效的目标与 from 符号共享限定名作用域。
+   * 目标限函数/方法——属性（数据字段，#808 分类后）不产生边——
+   * 要求同文件，不做任何形式的回退。
    */
   private resolveThisMemberFnRef(ref: UnresolvedRef): ResolvedRef | null {
     const member = ref.referenceName.slice('this.'.length);
     if (!member) return null;
     const fromNode = this.queries.getNodeById(ref.fromNodeId);
     if (!fromNode) return null;
-    // A hook declared at class-body level (Ruby `before_action :authenticate`)
-    // attributes to the CLASS node itself — its qualified name IS the scope.
-    // For members, strip the member segment.
+    // 在类体级别声明的 hook（Ruby `before_action :authenticate`）
+    // 归属于类节点本身——其限定名即作用域。
+    // 对于成员，去掉成员片段。
     let classPrefix: string;
     if (SUPERTYPE_BEARING_KINDS.has(fromNode.kind) || fromNode.kind === 'module') {
       classPrefix = fromNode.qualifiedName;
@@ -1232,9 +1204,8 @@ export class ReferenceResolver {
           n.id !== ref.fromNodeId
       );
     if (candidates.length === 0) {
-      // Not on the class itself — possibly INHERITED. implements/extends
-      // edges don't exist yet in this pass, so retry in the supertype pass
-      // (resolveDeferredThisMemberRefs) instead of giving up.
+      // 不在类本身上——可能是继承而来。此遍中 implements/extends 边尚不存在，
+      // 因此推迟到超类型遍（resolveDeferredThisMemberRefs）重试，而不是放弃。
       this.deferredThisMemberRefs.push(ref);
       return null;
     }
@@ -1248,14 +1219,12 @@ export class ReferenceResolver {
   }
 
   /**
-   * Second pass for `this.<member>` refs whose member wasn't on the enclosing
-   * class itself (#808): once implements/extends edges exist, walk the
-   * class's supertypes (transitively, depth-capped) and resolve the member on
-   * the nearest one that declares it — `this.handleSubmit` registered in a
-   * subclass resolves to `FormBase::handleSubmit`. Validated targets only
-   * (function/method kind, same language family); no match → no edge.
-   * Mirrors resolveChainedCallsViaConformance's lifecycle. Returns the number
-   * of newly-created edges.
+   * 对封闭类本身未声明的 `this.<成员>` 引用的第二遍处理（#808）：
+   * 待 implements/extends 边建立后，（有深度上限地）遍历类的超类型，
+   * 在最近声明该成员的超类型上解析它——子类中注册的 `this.handleSubmit`
+   * 解析为 `FormBase::handleSubmit`。只验证目标（函数/方法类型，同语言族）；
+   * 无匹配则不产生边。
+   * 生命周期与 resolveChainedCallsViaConformance 对称。返回新创建的边数。
    */
   resolveDeferredThisMemberRefs(): number {
     const deferred = this.deferredThisMemberRefs;
@@ -1268,7 +1237,7 @@ export class ReferenceResolver {
       const member = ref.referenceName.slice('this.'.length);
       const fromNode = this.queries.getNodeById(ref.fromNodeId);
       if (!fromNode || !member) continue;
-      // Class-body-level hooks (Ruby) attribute to the CLASS node itself.
+      // 类体级别的 hook（Ruby）归属于类节点本身。
       let className: string;
       if (SUPERTYPE_BEARING_KINDS.has(fromNode.kind) || fromNode.kind === 'module') {
         className = fromNode.name;
@@ -1281,12 +1250,12 @@ export class ReferenceResolver {
           : classPrefix;
       }
 
-      // NODE-anchored BFS up the supertype graph: start from the class node
-      // in the ref's own file (never a same-named class elsewhere — rails has
-      // a dozen `Engine`s), follow implements/extends EDGES to supertype
-      // NODES, and look members up through `contains` edges. No name-based
-      // unions anywhere — a name-keyed getSupertypes('Engine') merged every
-      // Engine's parents and produced a cross-class wrong edge on rails.
+      // 节点锚定的 BFS 超类型图遍历：从引用所在文件中的类节点出发
+      // （绝不匹配其他位置的同名类——rails 中有十几个 `Engine`），
+      // 沿 implements/extends 边遍历到超类型节点，
+      // 通过 `contains` 边查找成员。整个过程不做任何基于名称的合并——
+      // 基于名称的 getSupertypes('Engine') 会合并每个 Engine 的父类，
+      // 在 rails 上产生跨类的错误边。
       let frontierNodes = this.context
         .getNodesByName(className)
         .filter(
@@ -1295,8 +1264,8 @@ export class ReferenceResolver {
             n.filePath === ref.filePath
         );
       if (frontierNodes.length === 0) {
-        // The class itself may be declared in another file (partial/reopened
-        // classes); fall back to same-family nodes of that name.
+        // 类本身可能声明在另一个文件中（partial/reopened 类）；
+        // 回退到同族的同名节点。
         frontierNodes = this.context
           .getNodesByName(className)
           .filter(
@@ -1315,7 +1284,7 @@ export class ReferenceResolver {
             if (!superNode || seenNodes.has(superNode.id)) continue;
             seenNodes.add(superNode.id);
             if (!SUPERTYPE_BEARING_KINDS.has(superNode.kind)) continue;
-            // Member lookup anchored on the supertype's contains edges.
+            // 通过超类型的 contains 边进行成员查找。
             for (const c of this.queries.getOutgoingEdges(superNode.id, ['contains'])) {
               const m = this.queries.getNodeById(c.target);
               if (
@@ -1365,17 +1334,15 @@ export class ReferenceResolver {
   }
 
   /**
-   * Drop a FRAMEWORK-strategy resolution that crosses two *known* language
-   * families for a type-usage (`references`) or import-binding (`imports`)
-   * edge. The framework strategy is intentionally ungated for cross-language
-   * bridges, but those legitimate bridges are either `calls` edges (RN/Expo
-   * JS → native) or config↔code edges whose config side (`yaml`/`blade`/…) is
-   * not a known programming-language family. A `references`/`imports` edge
-   * between two *known* families is always a coincidental name collision — the
-   * React/Svelte/Vue PascalCase component resolvers name-match `getNodesByName`
-   * without a language check, so a TS `<TestRunner>` ref happily matched a
-   * Kotlin `class TestRunner`. Gating only the both-known-cross-family case
-   * lets config bridges and `calls` bridges through untouched.
+   * 丢弃框架策略中跨越两个已知语言族的 `references` 或 `imports` 边。
+   * 框架策略对跨语言桥接故意不设门控，但合法的桥接要么是 `calls` 边
+   * （RN/Expo JS → 原生），要么是 config↔code 边，其 config 侧
+   * （`yaml`/`blade`/……）不属于已知的编程语言族。
+   * 两个已知语言族之间的 `references`/`imports` 边始终是偶然的名称冲突——
+   * React/Svelte/Vue PascalCase 组件解析器通过 `getNodesByName` 匹配，
+   * 没有语言检查，导致 TS 的 `<TestRunner>` 引用愉快地匹配了 Kotlin 的
+   * `class TestRunner`。只门控两端均为已知跨族的情况，
+   * 可让 config 桥接和 `calls` 桥接不受影响地通过。
    */
   private gateFrameworkLanguage(result: ResolvedRef | null, ref: UnresolvedRef): ResolvedRef | null {
     if (!result) return result;
@@ -1387,7 +1354,7 @@ export class ReferenceResolver {
 }
 
 /**
- * Create a reference resolver instance
+ * 创建引用解析器实例
  */
 export function createResolver(projectRoot: string, queries: QueryBuilder): ReferenceResolver {
   const resolver = new ReferenceResolver(projectRoot, queries);

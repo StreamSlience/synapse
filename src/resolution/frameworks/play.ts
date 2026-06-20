@@ -1,18 +1,15 @@
 /**
- * Play Framework (Scala/Java) resolver.
+ * Play Framework（Scala/Java）解析器。
  *
- * Play declares HTTP routes in a dedicated `conf/routes` file (and included
- * `conf/*.routes`), Rails-style:
+ * Play 在专用的 `conf/routes` 文件（以及包含的 `conf/*.routes`）中以 Rails 风格声明 HTTP 路由：
  *
  *   GET   /computers        controllers.Application.list(p: Int ?= 0)
  *   POST  /computers        controllers.Application.save
  *   GET   /assets/*file     controllers.Assets.versioned(path = "/public", file: Asset)
  *
- * The file is extensionless, so the file walk only indexes it because
- * `isPlayRoutesFile` (grammars.ts) opts it in; it's processed through the
- * no-grammar path and this resolver extracts the routes. Each route references
- * its handler as `Controller.method` (the package prefix is dropped), resolved
- * to the action method in the controller class.
+ * 该文件无扩展名，因此文件遍历仅在 `isPlayRoutesFile`（grammars.ts）选择加入时才对其建立索引；
+ * 它通过无语法路径处理，由本解析器提取路由。每条路由将其处理器引用为
+ * `Controller.method`（包前缀被丢弃），并解析为控制器类中的 action 方法。
  */
 
 import { Node } from '../../types';
@@ -25,8 +22,8 @@ const CLASS_KINDS = new Set(['class']);
 
 export const playResolver: FrameworkResolver = {
   name: 'play',
-  // `yaml` so this resolver runs on conf/routes (detectLanguage maps it to yaml);
-  // `scala`/`java` so it's active in Play projects of either language.
+  // `yaml` 使本解析器运行于 conf/routes（detectLanguage 将其映射为 yaml）；
+  // `scala`/`java` 使其在两种语言的 Play 项目中均处于激活状态。
   languages: ['scala', 'java', 'yaml'],
 
   detect(context: ResolutionContext): boolean {
@@ -37,8 +34,8 @@ export const playResolver: FrameworkResolver = {
     return false;
   },
 
-  // The handler is `Controller.method` (a class-qualified action), which names no
-  // bare declared symbol, so resolveOne's pre-filter could drop it — claim it.
+  // 处理器为 `Controller.method`（类限定的 action），不对应任何裸声明符号，
+  // 因此 resolveOne 的预过滤器可能会丢弃它——在此声明认领。
   claimsReference(name: string): boolean {
     return /^[A-Za-z_]\w*\.[A-Za-z_]\w*$/.test(name);
   },
@@ -68,14 +65,14 @@ export const playResolver: FrameworkResolver = {
     const lines = content.split('\n');
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i]!.trim();
-      // Skip comments and `->` route includes (a sub-router mount, not an action).
+      // 跳过注释和 `->` 路由包含（子路由挂载，而非 action）。
       if (!line || line.startsWith('#') || line.startsWith('->')) continue;
       const m = line.match(ROUTE_LINE);
       if (!m) continue;
       const [, method, routePath, action] = m;
 
-      // action: `controllers.Application.list(p: Int ?= 0)` → drop args, keep the
-      // last `Controller.method` segment (package prefix is irrelevant for lookup).
+      // action：`controllers.Application.list(p: Int ?= 0)` → 丢弃参数，保留最后的
+      // `Controller.method` 片段（包前缀与查找无关）。
       const fqn = action!.split('(')[0]!.trim();
       const parts = fqn.split('.').filter(Boolean);
       if (parts.length < 2) continue;

@@ -1,16 +1,14 @@
 ﻿#!/usr/bin/env node
-// probe-sweep — direct MCP test across N repos × N tools, no claude needed.
+// probe-sweep — 直接跨 N 个代码库 × N 个工具进行 MCP 测试，无需 claude。
 //
-// Measures response characteristics (size, sections present, signals fired)
-// for each (repo, query) pair against the built dist/. Sub-second per probe;
-// the full sweep below runs in ~10-30s vs hours for a real claude audit.
+// 针对已构建的 dist/ 测量每个（repo, query）对的响应特征（大小、存在的章节、触发的信号）。
+// 每个探针亚秒级完成；下方的完整扫描约耗时 10-30s，而真实 claude 审计需数小时。
 //
-// Use this to iterate on backend changes rapidly: change tools.ts /
-// context-builder, npm run build, re-run probe-sweep, compare. Once a
-// change looks good on probe metrics, run a focused claude audit for the
-// few repos that matter to confirm end-to-end cost behavior.
+// 用此工具快速迭代后端变更：修改 tools.ts / context-builder，运行 npm run build，
+// 重跑 probe-sweep 并对比。一旦变更在探针指标上表现良好，
+// 针对关键代码库运行专项 claude 审计，确认端到端成本行为。
 //
-// Usage: node scripts/agent-eval/probe-sweep.mjs [--tool=context|explore|trace] [--repos=a,b,c]
+// 用法：node scripts/agent-eval/probe-sweep.mjs [--tool=context|explore|trace] [--repos=a,b,c]
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 
@@ -25,11 +23,11 @@ const tools = await load('dist/mcp/tools.js');
 const Synapse = idx.default?.default ?? idx.default ?? idx.Synapse;
 const ToolHandler = tools.ToolHandler ?? tools.default?.ToolHandler;
 
-// Each entry: repo, query, optional 2nd arg for trace (from, to).
-// The query is the same prompt used in the real claude audits, so probe
-// output is directly comparable to the agent's would-be input.
+// 每条记录：repo、查询、可选的 trace 第二参数（from, to）。
+// 查询与真实 claude 审计中使用的提示词相同，因此探针输出
+// 可直接与 agent 的预期输入对比。
 const SWEEP = [
-  // Small realworld template repos (the loss cases from the cross-language sweep)
+  // 小型真实世界模板代码库（跨语言扫描中的失败案例）
   { id: 'gin-rw',        repo: '/tmp/synapse-corpus/gin-realworld',         q: 'How does this Gin app route a request through its middleware chain to a handler?' },
   { id: 'go-mux',        repo: '/tmp/synapse-corpus/go-mux',                q: 'How does this gorilla/mux app route a request to its handler?' },
   { id: 'fastapi-rw',    repo: '/tmp/synapse-corpus/fastapi-realworld',     q: 'How does FastAPI route a request through its dependencies to a handler?' },
@@ -48,14 +46,14 @@ const SWEEP = [
   { id: 'flask-rest',    repo: '/tmp/synapse-corpus/flask-restful-realworld', q: 'How does Flask-RESTful route a request to a resource method?' },
   { id: 'laravel-rw',    repo: '/tmp/synapse-corpus/laravel-realworld',     q: 'How does Laravel route a request to the controller method?' },
   { id: 'aspnet-rw',     repo: '/tmp/synapse-corpus/aspnet-realworld',      q: 'How does ASP.NET route a request to the controller action?' },
-  // The iter7 wins/ties (to make sure we don't regress)
+  // iter7 的胜出/平局项（确保不出现回退）
   { id: 'cobra',         repo: '/tmp/synapse-corpus/cobra',                 q: 'How does cobra parse commands and flags?' },
   { id: 'sinatra',       repo: '/tmp/synapse-corpus/sinatra',               q: 'How does sinatra route a request to its handler?' },
   { id: 'slim',          repo: '/tmp/synapse-corpus/slim',                  q: 'How does slim route a request and apply middleware?' },
 ];
 
-// Detect signals in response text — these are the levers we've added that
-// otherwise only show up via "agent ran X more tool calls" downstream.
+// 检测响应文本中的信号——这些是我们添加的杠杆，
+// 否则只能通过下游的「agent 多调用了 X 次工具」才能体现。
 const detect = (text) => ({
   hasEntryPoints: /^### Entry Points/m.test(text),
   hasRelatedSymbols: /^### Related Symbols/m.test(text),
@@ -93,7 +91,7 @@ for (const s of subjects) {
   }
 }
 
-// Pretty-print as a compact table.
+// 以紧凑表格格式打印。
 const fmt = (r) =>
   r.error
     ? `  ${r.id.padEnd(13)} ERROR: ${r.error}`
@@ -108,7 +106,7 @@ console.log('  id            chars  lines    ms signals');
 console.log('  ' + '-'.repeat(56));
 for (const r of rows) console.log(fmt(r));
 
-// Sum + medians for the size pillar
+// 大小维度的求和 + 中位数
 const sizes = rows.filter(r => !r.error).map(r => r.chars);
 sizes.sort((a, b) => a - b);
 const median = sizes[Math.floor(sizes.length / 2)];

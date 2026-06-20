@@ -1,15 +1,15 @@
 /**
- * Astro Framework Resolver
+ * Astro 框架解析器
  *
- * Handles Astro component references, the `Astro` global, `astro:*` virtual
- * module imports, and Astro's `src/pages/` file-based routing.
+ * 处理 Astro 组件引用、`Astro` 全局对象、`astro:*` 虚拟
+ * 模块导入，以及 Astro `src/pages/` 基于文件的路由。
  */
 
 import { Node } from '../../types';
 import { FrameworkResolver, UnresolvedRef, ResolvedRef, ResolutionContext } from '../types';
 
 /**
- * Astro virtual module prefixes — framework-provided, not user code
+ * Astro 虚拟模块前缀——由框架提供，非用户代码
  */
 const ASTRO_VIRTUAL_MODULES = [
   'astro:content',
@@ -27,7 +27,7 @@ export const astroResolver: FrameworkResolver = {
   name: 'astro',
 
   detect(context: ResolutionContext): boolean {
-    // Check for astro in package.json
+    // 检查 package.json 中是否有 astro
     const packageJson = context.readFile('package.json');
     if (packageJson) {
       try {
@@ -37,19 +37,19 @@ export const astroResolver: FrameworkResolver = {
           return true;
         }
       } catch {
-        // Invalid JSON
+        // 无效的 JSON
       }
     }
 
-    // Check for .astro files in project
+    // 检查项目中是否有 .astro 文件
     const allFiles = context.getAllFiles();
     return allFiles.some((f) => f.endsWith('.astro'));
   },
 
   resolve(ref: UnresolvedRef, context: ResolutionContext): ResolvedRef | null {
-    // Pattern 1: the `Astro` global (Astro.props, Astro.url, Astro.params, …)
-    // — runtime-provided in every component's frontmatter. Resolving it as
-    // framework-provided keeps it from name-matching a user symbol named Astro.
+    // 模式 1：`Astro` 全局对象（Astro.props、Astro.url、Astro.params 等）
+    // ——在每个组件的 frontmatter 中由运行时提供。将其解析为
+    // 框架提供，以避免与用户定义的名为 Astro 的符号匹配。
     if (ref.referenceName === 'Astro' || ref.referenceName.startsWith('Astro.')) {
       return {
         original: ref,
@@ -59,7 +59,7 @@ export const astroResolver: FrameworkResolver = {
       };
     }
 
-    // Pattern 2: astro:* virtual module imports (astro:content, astro:assets, …)
+    // 模式 2：astro:* 虚拟模块导入（astro:content、astro:assets 等）
     if (ref.referenceKind === 'imports' && ref.referenceName.startsWith('astro:')) {
       if (ASTRO_VIRTUAL_MODULES.some((prefix) => ref.referenceName.startsWith(prefix))) {
         return {
@@ -71,9 +71,8 @@ export const astroResolver: FrameworkResolver = {
       }
     }
 
-    // Pattern 3: Component references (PascalCase) — resolve to component
-    // nodes. Template tags arrive as `references`, frontmatter expression
-    // usages as `calls`.
+    // 模式 3：组件引用（PascalCase）——解析为组件节点。
+    // 模板标签以 `references` 到达，frontmatter 表达式用法以 `calls` 到达。
     if (
       isPascalCase(ref.referenceName) &&
       (ref.referenceKind === 'references' || ref.referenceKind === 'calls')
@@ -96,20 +95,19 @@ export const astroResolver: FrameworkResolver = {
     const nodes: Node[] = [];
     const now = Date.now();
 
-    // Normalize to forward slashes
+    // 规范化为正斜杠
     const normalized = filePath.replace(/\\/g, '/');
 
-    // Astro file-based routing lives under src/pages/ — .astro files are
-    // pages, .ts/.js files are API endpoints. (.md/.mdx pages exist too but
-    // aren't indexed as source.) Underscore-prefixed segments are excluded
-    // from routing by Astro.
+    // Astro 基于文件的路由位于 src/pages/ 下——.astro 文件是页面，
+    // .ts/.js 文件是 API 端点。（.md/.mdx 页面也存在但不作为源代码索引。）
+    // 以下划线开头的路径段被 Astro 排除在路由之外。
     const pagesMatch = /(?:^|\/)src\/pages\//.exec(normalized);
     if (pagesMatch && /\.(astro|ts|js|mjs)$/.test(normalized)) {
       const afterPages = normalized.substring(pagesMatch.index + pagesMatch[0].length);
       const base = afterPages.split('/').pop() || '';
 
-      // Underscore-prefixed segments are excluded from routing by Astro;
-      // a stray `*.config.*` in a pages dir is never a route.
+      // 以下划线开头的路径段被 Astro 排除在路由之外；
+      // pages 目录中出现的 `*.config.*` 文件也不是路由。
       if (
         !afterPages.split('/').some((segment) => segment.startsWith('_')) &&
         !/\.config\.[a-z]+$/.test(base)
@@ -137,40 +135,39 @@ export const astroResolver: FrameworkResolver = {
 };
 
 /**
- * Check if string is PascalCase
+ * 检查字符串是否为 PascalCase
  */
 function isPascalCase(str: string): boolean {
   return /^[A-Z][a-zA-Z0-9]*$/.test(str);
 }
 
 /**
- * Resolve an Astro component reference using name-based lookup
+ * 通过名称查找解析 Astro 组件引用
  */
 function resolveComponent(
   name: string,
   fromFile: string,
   context: ResolutionContext
 ): string | null {
-  // Look for component nodes by name
+  // 按名称查找组件节点
   const candidates = context.getNodesByName(name);
   const components = candidates.filter((n) => n.kind === 'component');
 
   if (components.length === 0) return null;
 
-  // Prefer same directory
+  // 优先同目录
   const fromDir = fromFile.substring(0, fromFile.lastIndexOf('/'));
   const sameDir = components.filter((n) => n.filePath.startsWith(fromDir));
   if (sameDir.length > 0) return sameDir[0]!.id;
 
-  // No positional signal: only an UNAMBIGUOUS name may resolve — picking
-  // components[0] would choose an arbitrary same-named component in a
-  // multi-app monorepo (#764). Ambiguity falls through to the name-matcher,
-  // whose proximity scoring decides.
+  // 无位置信号：只有名称无歧义时才解析——
+  // 在多应用 monorepo 中选择 components[0] 会随机命中同名组件（#764）。
+  // 有歧义时交由名称匹配器的邻近度评分决定。
   return components.length === 1 ? components[0]!.id : null;
 }
 
 /**
- * Convert a path under src/pages/ to an Astro route path.
+ * 将 src/pages/ 下的路径转换为 Astro 路由路径。
  *
  * blog/[slug].astro        -> /blog/:slug
  * blog/[...path].astro     -> /blog/*path
@@ -178,18 +175,18 @@ function resolveComponent(
  * index.astro              -> /
  */
 function filePathToAstroRoute(afterPages: string): string {
-  // Remove the extension
+  // 去除扩展名
   const withoutExt = afterPages.replace(/\.(astro|ts|js|mjs)$/, '');
 
-  // index files map to their parent path (index -> /, blog/index -> /blog)
+  // index 文件映射到父路径（index -> /，blog/index -> /blog）
   const withoutIndex = withoutExt.replace(/(^|\/)index$/, '$1').replace(/\/$/, '');
 
-  // Convert Astro param syntax
+  // 转换 Astro 参数语法
   const route = '/' + withoutIndex
-    .replace(/\[\.\.\.([^\]]+)\]/g, '*$1') // [...rest] -> *rest (catch-all)
+    .replace(/\[\.\.\.([^\]]+)\]/g, '*$1') // [...rest] -> *rest（捕获全部）
     .replace(/\[([^\]]+)\]/g, ':$1'); // [param] -> :param
 
   if (route === '/') return '/';
-  // Remove trailing slash
+  // 去除末尾斜杠
   return route.replace(/\/$/, '');
 }

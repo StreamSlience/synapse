@@ -1,14 +1,14 @@
 ﻿#!/usr/bin/env bash
-# Sufficiency A/B for an IMPLEMENTATION task (the agent edits): when it uses
-# synapse (explore/node) to understand before editing, does it still Read? Like
-# ab-sufficiency.sh but copies+indexes a FRESH target per run (the agent mutates
-# it), so runs don't see each other's edits.
+# 实现任务（agent 会编辑）的充分性 A/B：当它先用
+# synapse（explore/node）理解再编辑时，是否仍会 Read？
+# 与 ab-sufficiency.sh 类似，但每次运行都复制+索引一份全新目标
+#（agent 会修改它），使各次运行互不影响。
 #
-# WITH synapse (pre-warmed) vs WITHOUT (empty MCP), N runs each. Reports
-# explore/node vs Read/Grep + the files Read, and whether the build still passes.
+# 有 synapse（预热）vs 无（空 MCP），各 N 次运行。
+# 报告 explore/node vs Read/Grep + 被 Read 的文件，以及构建是否仍通过。
 #
-# Usage: ab-impl.sh <indexed-repo> "<task>" [runs] [build-cmd]
-# Env: AGENT_EVAL_OUT (default: /tmp/ab-impl)
+# 用法：ab-impl.sh <indexed-repo> "<task>" [runs] [build-cmd]
+# 环境变量：AGENT_EVAL_OUT（默认：/tmp/ab-impl）
 set -uo pipefail
 REPO="${1:?usage: ab-impl.sh <indexed-repo> \"<task>\" [runs] [build-cmd]}"
 Q="${2:?task required}"

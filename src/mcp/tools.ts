@@ -1,16 +1,16 @@
 ﻿/**
- * MCP Tool Definitions
+ * MCP 工具定义
  *
- * Defines the tools exposed by the Synapse MCP server.
+ * 定义 Synapse MCP 服务器暴露的工具。
  */
 
 import type Synapse from '../index';
 import { findNearestSynapseRoot } from '../directory';
-// Lazy-load the heavy Synapse chain off the MCP startup path — see the same
-// helper in engine.ts. ToolHandler must load to answer tools/list (static
-// schemas), but it must NOT drag in sqlite/query layers before the daemon binds;
-// Synapse is pulled in only when a tool actually opens a project. require() is
-// sync + cached (CommonJS build).
+// 将繁重的 Synapse 调用链延迟加载，脱离 MCP 启动路径——参见
+// engine.ts 中的同名辅助函数。ToolHandler 必须加载以响应 tools/list
+//（静态 schema），但在守护进程绑定之前，它绝不能拖入 sqlite/query 层；
+// Synapse 仅在工具实际打开项目时才被引入。require() 是
+// 同步且缓存的（CommonJS 构建）。
 const loadSynapse = (): typeof import('../index').default =>
   (require('../index') as typeof import('../index')).default;
 import {
@@ -31,73 +31,67 @@ import { isGeneratedFile } from '../extraction/generated-detection';
 import { scanDynamicDispatch } from './dynamic-boundaries';
 
 /**
- * An expected, recoverable "synapse can't serve this" condition — most
- * importantly a project with no index. The dispatch catch converts these to
- * SUCCESS-shaped responses (guidance text, NO isError): an `isError: true`
- * early in a session teaches the agent the toolset is broken and it stops
- * calling synapse entirely (observed repeatedly), which is exactly wrong
- * for conditions the agent can simply work around (use built-in tools for
- * that codebase / pass projectPath). isError is reserved for "stop trying"
- * cases: security refusals ({@link PathRefusalError}) and genuine
- * malfunctions.
+ * 一种预期的、可恢复的"synapse 无法服务"状态——最典型的是项目没有索引。
+ * 调度 catch 块将此类错误转换为成功形状的响应（指引文本，无 isError）：
+ * 会话初期的 `isError: true` 会让智能体认为工具集损坏并完全停止调用 synapse
+ *（多次观测到），而这对于智能体完全可以绕过的情况来说恰恰是错的
+ *（使用内置工具处理该代码库 / 传入 projectPath）。
+ * isError 保留给"停止尝试"的场景：安全拒绝（{@link PathRefusalError}）
+ * 和真实故障。
  */
 export class NotIndexedError extends Error {}
 
 /**
- * A security refusal (sensitive system path). Stays `isError: true` WITHOUT
- * retry guidance — abandoning this path is the desired agent reaction.
+ * 安全拒绝（敏感系统路径）。保持 `isError: true` 且不带重试指引——
+ * 放弃此路径是期望的智能体反应。
  */
 export class PathRefusalError extends Error {}
 import { resolve as resolvePath } from 'path';
 
-/** Maximum output length to prevent context bloat (characters) */
+/** 防止上下文膨胀的最大输出长度（字符数） */
 const MAX_OUTPUT_LENGTH = 15000;
 
 /**
- * Maximum length for free-form string inputs (query, task, symbol).
- * Bounds memory and CPU when a buggy or hostile MCP client sends a
- * huge payload — without this an attacker could ship a 100MB string
- * and force a full FTS5 scan / OOM the server. 10 000 characters is
- * far beyond any realistic legitimate query.
+ * 自由格式字符串输入（query、task、symbol）的最大长度。
+ * 限制内存和 CPU 消耗，防止有缺陷或恶意的 MCP 客户端发送巨型载荷——
+ * 没有此限制，攻击者可发送 100MB 字符串并强制触发完整 FTS5 扫描/使服务器 OOM。
+ * 10000 个字符远超任何合理的真实查询。
  */
 const MAX_INPUT_LENGTH = 10_000;
 
 /**
- * Maximum length for path-like string inputs (projectPath, path
- * filter, glob pattern). Paths beyond a few thousand chars are
- * never legitimate and signal abuse or a bug upstream.
+ * 路径类字符串输入（projectPath、路径过滤器、glob 模式）的最大长度。
+ * 超过几千字符的路径从不合法，通常表明滥用或上游 bug。
  */
 const MAX_PATH_LENGTH = 4_096;
 
 /**
- * Rust path roots that have no file-system equivalent — `crate` is the
- * current crate, `super` is the parent module, `self` is the current
- * module. Used by `matchesSymbol` to strip these before file-path
- * matching so `crate::configurator::stage_apply::run` resolves the
- * same as `configurator::stage_apply::run`.
+ * 没有文件系统对应物的 Rust 路径根——`crate` 是当前 crate，
+ * `super` 是父模块，`self` 是当前模块。`matchesSymbol` 使用此集合
+ * 在文件路径匹配前剥离这些前缀，使 `crate::configurator::stage_apply::run`
+ * 与 `configurator::stage_apply::run` 解析为同一符号。
  */
 const RUST_PATH_PREFIXES = new Set(['crate', 'super', 'self']);
 
 /**
- * Node kinds that contain other symbols. For these, `synapse_node` with
- * `includeCode=true` returns a structural outline (member names + signatures
- * + line numbers) instead of the full body, which for a large class is a
- * multi-thousand-character wall of source that bloats the agent's context.
+ * 包含其他符号的节点类型。对于这些类型，`synapse_node` 在 `includeCode=true`
+ * 时返回结构概要（成员名称 + 签名 + 行号），而非完整正文——
+ * 大型类的完整正文是数千字符的源码，会使智能体的上下文膨胀。
  */
 const CONTAINER_NODE_KINDS = new Set<NodeKind>([
   'class', 'struct', 'interface', 'trait', 'protocol', 'enum', 'namespace', 'module',
 ]);
 
-/** Last `::` / `.` / `/`-separated segment of a qualified symbol. */
+/** 限定符号最后一段 `::` / `.` / `/` 分隔的部分。 */
 function lastQualifierPart(symbol: string): string {
   const parts = symbol.split(/::|[./]/).filter((p) => p.length > 0);
   return parts[parts.length - 1] ?? symbol;
 }
 
 /**
- * Calculate the recommended number of synapse_explore calls based on project size.
- * Larger codebases need more exploration calls to cover their surface area,
- * but smaller ones should use fewer to avoid unnecessary overhead.
+ * 根据项目规模计算推荐的 synapse_explore 调用次数。
+ * 较大的代码库需要更多探索调用以覆盖其表面积，
+ * 较小的代码库应使用更少调用以避免不必要的开销。
  */
 export function getExploreBudget(fileCount: number): number {
   if (fileCount < 500) return 1;
@@ -108,74 +102,67 @@ export function getExploreBudget(fileCount: number): number {
 }
 
 /**
- * Adaptive output budget for `synapse_explore`, scaled to project size.
+ * `synapse_explore` 的自适应输出预算，按项目规模缩放。
  *
- * Smaller codebases get a tighter total cap, fewer default files, smaller
- * per-file cap, and tighter clustering — so a focused query on a 100-file
- * project doesn't dump a whole file's worth of source into the agent's
- * context. Larger codebases keep the generous defaults because the
- * agent's native discovery cost (grep + find + many Reads) genuinely
- * dwarfs a fat explore call at that scale.
+ * 较小的代码库有更严格的总上限、更少的默认文件数、更小的
+ * 单文件上限，以及更紧密的聚类——使对 100 个文件项目的精准查询
+ * 不会将整个文件的源码倾倒进智能体上下文。较大的代码库保留宽松的默认值，
+ * 因为智能体的原生发现成本（grep + find + 大量 Read）在那种规模下
+ * 确实超过一次较大的 explore 调用。
  *
- * Meta-text (relationships map, "additional relevant files" list,
- * completeness signal, budget note) is gated off for tiny projects
- * where one rich call is the whole story and the extra prose is just
- * overhead.
+ * 元文本（关系图、"其他相关文件"列表、完整性信号、预算说明）
+ * 对于极小项目被关闭——在那里一次丰富调用就是全部，额外的文字只是开销。
  *
- * Tier breakpoints mirror `getExploreBudget` so a project sits in the
- * same tier across both knobs.
+ * 分层断点与 `getExploreBudget` 保持一致，使项目在两个参数中处于相同层级。
  */
 export interface ExploreOutputBudget {
-  /** Hard cap on total output characters. */
+  /** 总输出字符数的硬上限。 */
   maxOutputChars: number;
-  /** Default `maxFiles` when the caller didn't specify one. */
+  /** 调用方未指定时的默认 `maxFiles`。 */
   defaultMaxFiles: number;
-  /** Cap on contiguous source returned per file (across all its clusters). */
+  /** 每文件（跨所有聚类）返回的连续源码上限。 */
   maxCharsPerFile: number;
-  /** Cluster gap threshold in lines — tighter clustering on small projects. */
+  /** 聚类间隔阈值（行数）——小项目使用更紧密的聚类。 */
   gapThreshold: number;
-  /** Max symbols listed in the per-file header (`#### path — sym(kind), ...`). */
+  /** 每文件头部（`#### 路径 — 符号(类型), ...`）中列出的最大符号数。 */
   maxSymbolsInFileHeader: number;
-  /** Max edges shown per relationship kind in the Relationships section. */
+  /** 关系部分每种关系类型显示的最大边数。 */
   maxEdgesPerRelationshipKind: number;
-  /** Include the "Relationships" section. */
+  /** 是否包含"关系"章节。 */
   includeRelationships: boolean;
-  /** Include the "Additional relevant files (not shown)" trailing list. */
+  /** 是否包含"其他相关文件（未显示）"尾部列表。 */
   includeAdditionalFiles: boolean;
-  /** Include the "Complete source code is included above…" reminder. */
+  /** 是否包含"以上已包含完整源码…"提示。 */
   includeCompletenessSignal: boolean;
-  /** Include the explore-budget reminder at the end. */
+  /** 是否在末尾包含 explore 预算提示。 */
   includeBudgetNote: boolean;
   /**
-   * Hard-drop test/spec/icon/i18n files from the relevant-file set unless
-   * the query itself mentions tests. Today they're only deprioritized in
-   * the sort, which on tiny repos still lets one slip into the top N (e.g.
-   * cobra's `command_test.go` displaced `args.go` and contributed ~10KB of
-   * pure noise to "How does cobra parse commands?"). Off by default; on
-   * for the very-tiny tier where one slip dominates the budget.
+   * 除非查询本身提到测试，否则从相关文件集合中硬删除测试/spec/图标/i18n 文件。
+   * 目前它们只在排序中降权，对于极小的仓库，一个文件仍可能滑入前 N
+   *（例如 cobra 的 `command_test.go` 挤掉了 `args.go`，
+   * 为"cobra 如何解析命令？"贡献了约 10KB 的纯噪音）。
+   * 默认关闭；对极小层级开启，因为一次滑入会主导整个预算。
    */
   excludeLowValueFiles: boolean;
 }
 
 export function getExploreOutputBudget(fileCount: number): ExploreOutputBudget {
-  // Tiered budget, scaled to project size. The budget is a CEILING (relevance
-  // still gates WHAT is included), and it MUST stay under the agent's INLINE
-  // tool-result cap (~25K chars). Above that, the host externalizes the result
-  // to a file the agent then Reads back — re-introducing a read AND the
-  // cache-write cost — which is exactly what a 35K vscode explore did in the
-  // n=4 README A/B. So even large repos cap at ~24K: the answer is the handful
-  // of ~100-line flow windows the agent would have grep-located and read (it
-  // natively reads ~6–9 files, median 100-line ranges), NOT a sprawl of 12
-  // files. Concentration onto the flow emerges from this cap + the named-file-
-  // first sort dropping peripheral files. Invariant: a larger tier must never
-  // get a smaller `maxCharsPerFile` than a smaller tier.
+  // 按项目规模分层的预算。预算是上限（相关性仍决定包含什么），
+  // 且必须保持低于智能体的内联工具结果上限（约 25K 字符）。
+  // 超过该上限，宿主会将结果外部化为文件，智能体随后读取——
+  // 重新引入一次 read 和缓存写入成本——正是 vscode n=4 README A/B 中
+  // 35K explore 所做的事。因此即使是大型仓库也上限约 24K：答案是
+  // 智能体通过 grep 定位并读取的几个约 100 行流程窗口（原生读取
+  // 约 6–9 个文件，中位数约 100 行范围），而非 12 个文件的大杂烩。
+  // 聚焦于流程来自此上限 + 命名文件优先排序剔除外围文件。
+  // 不变式：较大层级的 `maxCharsPerFile` 绝不能小于较小层级。
   if (fileCount < 150) {
     return {
-      // ITER3: revert iter2's aggressive body shrink (forced Read fallback —
-      // the per-file 2.5K cap pushed the agent to Read instead of node).
-      // Back to the iter1 shape (13K/4/3.8K) but keep the test-file
-      // hard-exclude. The cost lever for this tier lives in steering the
-      // agent to stop after 1-2 calls, not in this budget.
+      // ITER3：回退 iter2 激进的正文收缩（强制 Read 回退——
+      // 2.5K 的单文件上限使智能体转而使用 Read 而非 node）。
+      // 恢复为 iter1 的形态（13K/4/3.8K），但保留测试文件硬排除。
+      // 此层级的成本杠杆在于引导智能体在 1–2 次调用后停止，
+      // 而非调整此预算。
       maxOutputChars: 13000,
       defaultMaxFiles: 4,
       maxCharsPerFile: 3800,
@@ -191,7 +178,7 @@ export function getExploreOutputBudget(fileCount: number): ExploreOutputBudget {
   }
   if (fileCount < 500) {
     return {
-      // ITER3: same revert/keep-filter pattern as <150.
+      // ITER3：与 <150 的回退/保留过滤器模式相同。
       maxOutputChars: 18000,
       defaultMaxFiles: 5,
       maxCharsPerFile: 3800,
@@ -207,9 +194,8 @@ export function getExploreOutputBudget(fileCount: number): ExploreOutputBudget {
   }
   if (fileCount < 5000) {
     return {
-      // ~150-line per-file window (the native read unit) × ~6 files, capped at
-      // the ~24K inline ceiling so the response is never externalized. Per-file
-      // stays ≥ the <500 tier (3800) — monotonic.
+      // 约 150 行单文件窗口（原生读取单元）× 约 6 个文件，上限约 24K 内联上限
+      // 使响应不被外部化。单文件上限 ≥ <500 层级（3800）——单调递增。
       maxOutputChars: 24000,
       defaultMaxFiles: 8,
       maxCharsPerFile: 6500,
@@ -223,10 +209,9 @@ export function getExploreOutputBudget(fileCount: number): ExploreOutputBudget {
       excludeLowValueFiles: false,
     };
   }
-  // Large + very-large repos: SAME ~24K inline ceiling (a bigger response just
-  // externalizes — see vscode). More files indexed → more CALLS via
-  // getExploreBudget, not a bigger single response. Per-file 7000 (≥ smaller
-  // tiers) gives the central file a ~180-line orientation window.
+  // 大型 + 超大型仓库：相同的约 24K 内联上限（更大的响应只会被外部化——参见 vscode）。
+  // 更多索引文件 → 通过 getExploreBudget 增加调用次数，而非更大的单次响应。
+  // 单文件 7000（≥ 较小层级）给中心文件约 180 行的定向窗口。
   if (fileCount < 15000) {
     return {
       maxOutputChars: 24000,
@@ -258,43 +243,39 @@ export function getExploreOutputBudget(fileCount: number): ExploreOutputBudget {
 }
 
 /**
- * Whether `synapse_explore` should prefix source lines with their line
- * numbers (cat -n style: `<num>\t<code>`).
+ * `synapse_explore` 是否应为源码行添加行号前缀（cat -n 风格：`<num>\t<code>`）。
  *
- * Line numbers let the agent cite `file:line` straight from the explore
- * payload instead of re-Reading the file just to find a line number — the
- * dominant residual cost on precise-tracing questions (#185 follow-up).
+ * 行号使智能体能够直接从 explore 结果中引用 `文件:行号`，
+ * 而无需重新读取文件来查找行号——这是精准追踪问题上残余的主要成本（#185 跟进）。
  *
- * Defaults ON. Set `SYNAPSE_EXPLORE_LINENUMS=0` to disable (used by the
- * A/B harness to measure the payload-cost vs. read-savings tradeoff).
+ * 默认开启。设置 `SYNAPSE_EXPLORE_LINENUMS=0` 可禁用
+ *（用于 A/B 测试框架，衡量载荷成本与读取节省之间的权衡）。
  */
 function exploreLineNumbersEnabled(): boolean {
   return process.env.SYNAPSE_EXPLORE_LINENUMS !== '0';
 }
 
 /**
- * Adaptive explore sizing (default ON). `synapse_explore` skeletonizes OFF-SPINE
- * polymorphic-sibling files — a file whose class is one of ≥3 interchangeable
- * implementations of a shared interface (e.g. OkHttp's `: Interceptor` classes) —
- * to class + member signatures (bodies elided), keeping the on-spine exemplar full.
- * This sizes the response to the answer instead of the budget cap on sibling-heavy
- * flows (OkHttp interceptor-chain explore 28.5k→16.6k, ~28% cheaper than native
- * search, reads flat). It is PROVABLY INERT elsewhere: distinct pipeline steps (no
- * ≥3-implementer supertype, e.g. Excalidraw's `renderStaticScene`) and on-spine
- * files keep full source — output is byte-identical to shipped on excalidraw /
- * tokio / django / vscode / gin. Set `SYNAPSE_ADAPTIVE_EXPLORE=0` to disable.
+ * 自适应 explore 大小（默认开启）。`synapse_explore` 会对"非主干"多态兄弟文件
+ * 进行骨架化——其类是共享接口的 ≥3 个可互换实现之一（例如 OkHttp 的 `: Interceptor` 类）——
+ * 仅保留类和成员签名（正文省略），同时保留主干示例的完整内容。
+ * 这使响应大小适配答案而非预算上限，用于兄弟文件较多的流程
+ *（OkHttp 拦截器链 explore 从 28.5k 降至 16.6k，比原生搜索便宜约 28%，读取持平）。
+ * 在其他场景下证明为无操作：不同的流程步骤（无 ≥3 个实现者的父类型，
+ * 如 Excalidraw 的 `renderStaticScene`）和主干文件保留完整源码——
+ * 输出与已发布的 excalidraw/tokio/django/vscode/gin 字节完全相同。
+ * 设置 `SYNAPSE_ADAPTIVE_EXPLORE=0` 可禁用。
  */
 function adaptiveExploreEnabled(): boolean {
   return process.env.SYNAPSE_ADAPTIVE_EXPLORE !== '0' && process.env.SYNAPSE_ADAPTIVE_EXPLORE !== 'false';
 }
 
 /**
- * Prefix each line of a source slice with its 1-based line number, matching
- * the Read tool's `cat -n` convention (number + tab) so the agent treats it
- * the same way it treats Read output.
+ * 为源码片段的每行添加从 1 开始的行号前缀，与 Read 工具的 `cat -n`
+ * 惯例（行号 + Tab）保持一致，使智能体以相同方式处理其输出。
  *
- * @param slice  contiguous source text (already extracted from the file)
- * @param firstLineNumber  the 1-based line number of the slice's first line
+ * @param slice  连续的源码文本（已从文件中提取）
+ * @param firstLineNumber  片段第一行从 1 开始的行号
  */
 function numberSourceLines(slice: string, firstLineNumber: number): string {
   const out: string[] = [];
@@ -306,10 +287,9 @@ function numberSourceLines(slice: string, firstLineNumber: number): string {
 }
 
 /**
- * Per-file staleness banner emitted at the top of a tool response when the
- * file watcher has pending events for files referenced by the response.
- * The agent uses this to fall back to Read for those specific files
- * without waiting for the debounced sync (issue #403).
+ * 当文件监视器对响应引用的文件有待处理事件时，在工具响应顶部
+ * 发出的单文件过期横幅。智能体使用此信息直接 Read 这些特定文件，
+ * 无需等待防抖同步（issue #403）。
  */
 export function formatStaleBanner(stale: PendingFile[]): string {
   const now = Date.now();
@@ -328,9 +308,9 @@ export function formatStaleBanner(stale: PendingFile[]): string {
 }
 
 /**
- * Compact footer listing pending files that are NOT referenced in this
- * response. Gives the agent a complete project-wide freshness picture
- * without bloating the main banner.
+ * 列出本次响应中未引用的待处理文件的紧凑页脚。
+ * 为智能体提供完整的项目级新鲜度全貌，
+ * 同时不使主横幅膨胀。
  */
 export function formatStaleFooter(stale: PendingFile[]): string {
   const MAX = 5;
@@ -348,12 +328,10 @@ export function formatStaleFooter(stale: PendingFile[]): string {
 }
 
 /**
- * Whole-index degradation banner (issue #876). Emitted at the top of a read
- * tool response when live watching has permanently stopped — at which point
- * `getPendingFiles()` is empty, so the per-file banner above can't fire even
- * though the index is now FROZEN and silently drifting stale. Leads with the
- * agent-actionable instruction (Read directly) and carries the reason, which
- * already names the operator remedy (`synapse sync` / git hooks).
+ * 全量索引降级横幅（issue #876）。当实时监视永久停止时，在读取工具响应顶部发出——
+ * 此时 `getPendingFiles()` 为空，因此上述单文件横幅无法触发，
+ * 即使索引现已冻结并静默漂移为过时状态。以智能体可操作的指令开头（直接 Read），
+ * 并附带原因，其中已提及操作者的修复措施（`synapse sync` / git hooks）。
  */
 export function formatDegradedBanner(reason: string | null): string {
   return (
@@ -365,7 +343,7 @@ export function formatDegradedBanner(reason: string | null): string {
 }
 
 /**
- * MCP Tool definition
+ * MCP 工具定义
  */
 export interface ToolDefinition {
   name: string;
@@ -385,7 +363,7 @@ interface PropertySchema {
 }
 
 /**
- * Tool execution result
+ * 工具执行结果
  */
 export interface ToolResult {
   content: Array<{
@@ -396,7 +374,7 @@ export interface ToolResult {
 }
 
 /**
- * Common projectPath property for cross-project queries
+ * 跨项目查询的通用 projectPath 属性
  */
 const projectPathProperty: PropertySchema = {
   type: 'string',
@@ -404,13 +382,12 @@ const projectPathProperty: PropertySchema = {
 };
 
 /**
- * All Synapse MCP tools
+ * 全部 Synapse MCP 工具
  *
- * Designed for minimal context usage - use synapse_explore as the primary tool
- * (one call usually answers the whole question), and only use other tools for
- * targeted follow-up queries.
+ * 设计原则：最小化上下文使用——以 synapse_explore 为主工具
+ *（通常一次调用即可回答整个问题），其他工具仅用于有针对性的后续查询。
  *
- * All tools support cross-project queries via the optional `projectPath` parameter.
+ * 所有工具均通过可选的 `projectPath` 参数支持跨项目查询。
  */
 export const tools: ToolDefinition[] = [
   {
@@ -617,10 +594,10 @@ export const tools: ToolDefinition[] = [
 ];
 
 /**
- * Allowlist-filtered tool definitions WITHOUT an engine — the static surface the
- * proxy answers `tools/list` with before any project is open. Mirrors
- * `ToolHandler.getTools()` in the no-Synapse case (the dynamic per-repo budget
- * note in a description only adds once `cg` is loaded; the schemas are static).
+ * 无引擎时的白名单过滤工具定义——代理在任何项目打开前
+ * 用于回答 `tools/list` 的静态接口。与无 Synapse 情况下的
+ * `ToolHandler.getTools()` 保持一致（描述中的动态每仓库预算说明
+ * 仅在 `cg` 加载后添加；schema 是静态的）。
  */
 export function getStaticTools(): ToolDefinition[] {
   const raw = process.env.SYNAPSE_MCP_TOOLS;
@@ -632,98 +609,91 @@ export function getStaticTools(): ToolDefinition[] {
 }
 
 /**
- * The MCP tools served by DEFAULT (short names). The other defined tools
- * (callees, impact, files, status) remain fully functional — handlers stay,
- * the library API and CLI are untouched, and `SYNAPSE_MCP_TOOLS` re-enables
- * any of them — they just aren't LISTED to agents anymore.
+ * 默认提供给智能体的 MCP 工具（短名称）。其他已定义的工具
+ *（callees、impact、files、status）仍然完全可用——处理器保留，
+ * 库 API 和 CLI 不受影响，`SYNAPSE_MCP_TOOLS` 可重新启用其中任何工具——
+ * 只是不再对智能体列出。
  *
- * Evidence for the cut (the "adapt the tool to the agent" principle —
- * fewer tools = fewer mis-picks, and presence itself steers):
- * - `synapse_impact` appears in ZERO recorded eval runs ever — its
- *   blast-radius info already arrives inline on explore (the "Blast radius"
- *   section) and node (the dependents note), so agents never need the
- *   standalone tool.
- * - `synapse_callees` is redundant by construction: a symbol's body (which
- *   node returns) IS its callee list, plus the caller/callee trail.
- * - `synapse_files` / `synapse_status`: the tiny-repo audit (see
- *   getTools) found they "reduce to one grep"; staleness banners already
- *   inline the pending-sync info on every read tool, and the CLI covers
- *   diagnostics.
- * - `synapse_callers` stays: exhaustive call-site enumeration (every
- *   caller with file:line, callback registrations labeled, one section per
- *   same-named definition) is the one job explore/node don't replicate.
+ * 删减的依据（"适配工具到智能体"原则——
+ * 工具越少 = 误选越少，工具的存在本身就会引导行为）：
+ * - `synapse_impact` 在所有已记录的 eval 运行中从未出现过——
+ *   其影响半径信息已内联在 explore（"Blast radius"节）和 node
+ *（依赖方说明）中，因此智能体从不需要独立工具。
+ * - `synapse_callees` 在构造上是冗余的：符号的正文（node 返回的）
+ *   本身就是其被调用列表，加上调用者/被调用者路径。
+ * - `synapse_files` / `synapse_status`：小型仓库审计（参见 getTools）
+ *   发现它们"归结为一次 grep"；每次读取工具上的过期横幅
+ *   已内联待同步信息，CLI 已覆盖诊断需求。
+ * - `synapse_callers` 保留：穷举调用点枚举（每个调用者含文件:行号、
+ *   回调注册标记、每个同名定义一节）是 explore/node 不重复的唯一功能。
  */
 const DEFAULT_MCP_TOOLS = new Set(['explore', 'node', 'search', 'callers']);
 
 /**
- * Tool handler that executes tools against a Synapse instance
+ * 针对 Synapse 实例执行工具的工具处理器
  *
- * Supports cross-project queries via the projectPath parameter.
- * Other projects are opened on-demand and cached for performance.
+ * 通过 projectPath 参数支持跨项目查询。
+ * 其他项目按需打开并缓存以提升性能。
  */
 export class ToolHandler {
-  // Cache of opened Synapse instances for cross-project queries
+  // 跨项目查询已打开的 Synapse 实例缓存
   private projectCache: Map<string, Synapse> = new Map();
-  // The directory the server last searched for a default project. Surfaced in
-  // the "not initialized" error so users can see why detection missed.
+  // 服务器上次搜索默认项目的目录。在"未初始化"错误中暴露，
+  // 使用户可以看到为何检测未能找到项目。
   private defaultProjectHint: string | null = null;
-  // Per-start-path cache of the git worktree/index mismatch (issue #155). The
-  // mismatch is a fixed property of (where the request came from → which
-  // .synapse/ it resolves to), so the up-to-two `git rev-parse` spawns run
-  // once and every later tool call reuses the result — never shelling out to
-  // git on the hot path. `undefined` = not computed yet; `null` = no mismatch.
+  // 按起始路径缓存 git worktree/index 不匹配（issue #155）。
+  // 不匹配是（请求来源 → 解析到哪个 .synapse/）的固定属性，
+  // 因此最多两次 `git rev-parse` 调用只执行一次，之后所有工具调用复用结果——
+  // 在热路径上不再 shell 出 git。`undefined` = 尚未计算；`null` = 无不匹配。
   private worktreeMismatchCache: Map<string, WorktreeIndexMismatch | null> = new Map();
-  // Gate that the MCP engine pokes after `cg.open()` so the first tool call
-  // blocks on the post-open filesystem reconcile (catch-up sync). Without
-  // this, a tool call that races past `catchUpSync()` serves rows for files
-  // that were deleted (or edited) while no MCP server was running — and the
-  // per-file staleness banner can't help, because `getPendingFiles()` is
-  // populated by the watcher, not by catch-up. Cleared on first await so
-  // subsequent calls don't pay any cost.
+  // MCP 引擎在 `cg.open()` 后触发的门控，使第一次工具调用
+  // 阻塞于打开后的文件系统对账（追赶同步）。没有此门控，
+  // 竞争跨越 `catchUpSync()` 的工具调用会返回已删除（或已编辑）文件的行——
+  // 因为 `getPendingFiles()` 由监视器填充，而非追赶同步。
+  // 首次 await 后清除，使后续调用无额外开销。
   private catchUpGate: Promise<void> | null = null;
 
   constructor(private cg: Synapse | null) {}
 
   /**
-   * Update the default Synapse instance (e.g. after lazy initialization)
+   * 更新默认 Synapse 实例（例如延迟初始化后）
    */
   setDefaultSynapse(cg: Synapse): void {
     this.cg = cg;
   }
 
   /**
-   * Engine-only: register the catch-up sync promise so the next `execute()`
-   * call awaits it before serving. The handler swallows rejections (the
-   * engine logs them) so a sync failure never propagates as a tool error;
-   * we still want to serve a best-effort result over the same potentially-
-   * stale data, which is what would have happened without the gate.
+   * 仅限引擎：注册追赶同步 Promise，使下一次 `execute()` 调用
+   * 在响应前等待它。处理器会吞掉拒绝（引擎会记录），使同步失败
+   * 不会作为工具错误传播；我们仍希望在潜在过时的数据上提供尽力而为的结果，
+   * 这与没有门控时的行为一致。
    */
   setCatchUpGate(p: Promise<void> | null): void {
     this.catchUpGate = p;
   }
 
   /**
-   * Record the directory the server tried to resolve the default project from.
-   * Used only to make the "no default project" error actionable.
+   * 记录服务器尝试解析默认项目的目录。
+   * 仅用于使"无默认项目"错误可操作。
    */
   setDefaultProjectHint(searchedPath: string): void {
     this.defaultProjectHint = searchedPath;
   }
 
   /**
-   * Whether a default Synapse instance is available
+   * 是否有可用的默认 Synapse 实例
    */
   hasDefaultSynapse(): boolean {
     return this.cg !== null;
   }
 
   /**
-   * Optional allowlist of exposed tools, parsed from the SYNAPSE_MCP_TOOLS
-   * env var (comma-separated short names, e.g. "trace,search,node,context").
-   * Unset/empty → every tool is exposed. Lets an operator (or an A/B harness)
-   * trim the tool surface without rebuilding the client config; the ablated
-   * tool is then truly absent from ListTools rather than merely denied on call.
-   * Matching is on the short form, so "node" and "synapse_node" both work.
+   * 暴露工具的可选白名单，从 SYNAPSE_MCP_TOOLS 环境变量解析
+   *（逗号分隔的短名称，例如 "trace,search,node,context"）。
+   * 未设置/为空 → 暴露所有工具。允许操作者（或 A/B 测试框架）
+   * 在无需重建客户端配置的情况下裁剪工具接口；被裁剪的工具
+   * 将真正从 ListTools 中缺席，而非仅在调用时被拒绝。
+   * 匹配基于短名称形式，因此 "node" 和 "synapse_node" 均有效。
    */
   private toolAllowlist(): Set<string> | null {
     const raw = process.env.SYNAPSE_MCP_TOOLS;
@@ -733,23 +703,21 @@ export class ToolHandler {
     return set.size ? set : null;
   }
 
-  /** Whether a tool name passes the SYNAPSE_MCP_TOOLS allowlist (if any). */
+  /** 工具名称是否通过 SYNAPSE_MCP_TOOLS 白名单（如果有）。 */
   private isToolAllowed(name: string): boolean {
     const allow = this.toolAllowlist();
     return !allow || allow.has(name.replace(/^synapse_/, ''));
   }
 
   /**
-   * Get tool definitions with dynamic descriptions based on project size.
-   * The synapse_explore tool description includes a budget recommendation
-   * scaled to the number of indexed files. Honors the SYNAPSE_MCP_TOOLS
-   * allowlist so a trimmed surface is reflected in ListTools.
+   * 根据项目规模获取带有动态描述的工具定义。
+   * synapse_explore 工具描述中包含根据已索引文件数缩放的预算建议。
+   * 遵循 SYNAPSE_MCP_TOOLS 白名单，使 ListTools 反映裁剪后的接口。
    */
   getTools(): ToolDefinition[] {
     const allow = this.toolAllowlist();
-    // No explicit allowlist → the default 4-tool surface (see
-    // DEFAULT_MCP_TOOLS for the evidence). An allowlist replaces the
-    // default entirely, so any defined tool can be re-enabled.
+    // 无明确白名单 → 默认 4 工具接口（参见 DEFAULT_MCP_TOOLS 的依据）。
+    // 白名单完全替换默认接口，因此任何已定义的工具均可重新启用。
     let visible = allow
       ? tools.filter(t => allow.has(t.name.replace(/^synapse_/, '')))
       : tools.filter(t => DEFAULT_MCP_TOOLS.has(t.name.replace(/^synapse_/, '')));
@@ -759,29 +727,25 @@ export class ToolHandler {
       const stats = this.cg.getStats();
       const budget = getExploreBudget(stats.fileCount);
 
-      // Tiny-repo tool gating: on projects under TINY_REPO_FILE_THRESHOLD
-      // files, only expose the core trio (search, node, explore) — one
-      // below even the 4-tool default: at this scale callers, too, reduces
-      // to one grep. (Historical note: the audit below ran when context and
-      // trace still existed; its "5 core tools" are today's trio.)
+      // 极小仓库工具门控：对于文件数低于 TINY_REPO_FILE_THRESHOLD 的项目，
+      // 仅暴露核心三件套（search、node、explore）——比默认 4 工具少一个：
+      // 在这种规模下，callers 也可以归结为一次 grep。
+      //（历史说明：以下审计在 context 和 trace 仍存在时进行；其"5 个核心工具"
+      // 对应今天的三件套。）
       //
-      // n=2 audits ruled out cutting below 5 tools:
-      // - 3-tool gate (search + context + trace): cost regressed on
-      //   cobra/ky/sinatra. The agent fell back to raw Reads to cover
-      //   what synapse_node + synapse_explore would have answered.
-      // - 1-tool gate (search only): catastrophic regression — express
-      //   went from -43% WIN to +107% LOSS. With only search, the agent
-      //   can't navigate the call graph structurally and reads everything.
+      // n=2 审计排除了减到 5 工具以下的方案：
+      // - 3 工具门控（search + context + trace）：成本在 cobra/ky/sinatra 上回退。
+      //   智能体退回到原始 Read 来覆盖 synapse_node + synapse_explore 本可回答的内容。
+      // - 1 工具门控（仅 search）：灾难性回退——express 从 -43% 胜利变为 +107% 失败。
+      //   仅有 search 时，智能体无法在结构上导航调用图，只能读取所有内容。
       //
-      // 5 is the empirical lower bound. Tools beyond search/context/
-      // node/explore/trace pay overhead that the agent doesn't recoup
-      // on tiny-repo flow questions.
-      // ITER4: raise threshold 150 → 500 so single-file frameworks
-      // (sinatra at 159, slim_framework around 200) also get the
-      // 5-tool surface. The empirical 5-tool floor was set on <150
-      // probes; iter3 measurement showed sinatra is structurally the
-      // SAME problem as cobra (single-file WITHOUT-arm Read wins),
-      // so it deserves the same gating.
+      // 5 是经验下限。超出 search/context/node/explore/trace 的工具
+      // 在极小仓库流程问题上产生智能体无法收回的开销。
+      // ITER4：将阈值从 150 提升至 500，使单文件框架
+      //（sinatra 约 159 个文件，slim_framework 约 200 个）也获得 5 工具接口。
+      // 经验 5 工具下限基于 <150 的探测；iter3 测量显示 sinatra
+      // 在结构上与 cobra（单文件无 synapse 时 Read 胜出）是同一问题，
+      // 因此应采用相同的门控。
       const TINY_REPO_FILE_THRESHOLD = 500;
       const TINY_REPO_CORE_TOOLS = new Set([
         'synapse_explore',
@@ -807,13 +771,13 @@ export class ToolHandler {
   }
 
   /**
-   * Get Synapse instance for a project
+   * 获取项目的 Synapse 实例
    *
-   * If projectPath is provided, opens that project's Synapse (cached).
-   * Otherwise returns the default Synapse instance.
+   * 若提供了 projectPath，则打开该项目的 Synapse（已缓存）。
+   * 否则返回默认 Synapse 实例。
    *
-   * Walks up parent directories to find the nearest .synapse/ folder,
-   * similar to how git finds .git/ directories.
+   * 向上遍历父目录查找最近的 .synapse/ 文件夹，
+   * 类似 git 查找 .git/ 目录的方式。
    */
   private getSynapse(projectPath?: string): Synapse {
     if (!projectPath) {
@@ -834,16 +798,15 @@ export class ToolHandler {
       return this.cg;
     }
 
-    // Check cache first (using original path as key)
+    // 先检查缓存（使用原始路径作为键）
     if (this.projectCache.has(projectPath)) {
       return this.projectCache.get(projectPath)!;
     }
 
-    // Reject sensitive system directories before opening. Only validate a
-    // path that actually exists — a nested or not-yet-created sub-path of a
-    // real project must still be allowed to resolve UP to its .synapse/
-    // root below (issue #238), so we don't run the existence-checking
-    // validator on paths that are meant to walk up.
+    // 在打开之前拒绝敏感系统目录。仅对实际存在的路径进行验证——
+    // 真实项目的嵌套或尚未创建的子路径仍必须允许向上解析到其
+    // .synapse/ 根（issue #238），因此我们不对旨在向上遍历的路径
+    // 运行存在性检查验证器。
     if (existsSync(projectPath)) {
       const pathError = validateProjectPath(projectPath);
       if (pathError) {
@@ -851,7 +814,7 @@ export class ToolHandler {
       }
     }
 
-    // Walk up parent directories to find nearest .synapse/
+    // 向上遍历父目录查找最近的 .synapse/
     const resolvedRoot = findNearestSynapseRoot(projectPath);
 
     if (!resolvedRoot) {
@@ -863,26 +826,26 @@ export class ToolHandler {
       );
     }
 
-    // If the path resolves to the default project, reuse the already-open
-    // default instance rather than opening a SECOND connection to the same DB.
-    // A duplicate connection serializes reads against the watcher's auto-sync
-    // writes; on the wasm backend (no WAL) that surfaces as intermittent
-    // "database is locked" on concurrent tool calls. See issue #238. Deliberately
-    // not cached under projectPath — the server owns and closes the default
-    // instance, so routing it through projectCache.closeAll() would double-close it.
+    // 若路径解析到默认项目，复用已打开的默认实例，
+    // 而非对同一数据库打开第二个连接。
+    // 重复连接会将读操作与监视器自动同步写操作序列化；
+    // 在 wasm 后端（无 WAL）上，这会在并发工具调用时表现为
+    // 间歇性"数据库被锁定"错误。参见 issue #238。
+    // 故意不在 projectPath 下缓存——服务器拥有并关闭默认实例，
+    // 通过 projectCache.closeAll() 路由会导致双重关闭。
     if (this.cg && this.cg.getProjectRoot() === resolvedRoot) {
       return this.cg;
     }
 
-    // Check if we already have this resolved root cached (different path, same project)
+    // 检查已解析根路径是否已缓存（不同路径，相同项目）
     if (this.projectCache.has(resolvedRoot)) {
       const cg = this.projectCache.get(resolvedRoot)!;
-      // Cache under original path too for faster future lookups
+      // 也在原始路径下缓存，加速未来查找
       this.projectCache.set(projectPath, cg);
       return cg;
     }
 
-    // Open and cache under both paths
+    // 打开并在两个路径下缓存
     const cg = loadSynapse().openSync(resolvedRoot);
     this.projectCache.set(resolvedRoot, cg);
     if (projectPath !== resolvedRoot) {
@@ -892,7 +855,7 @@ export class ToolHandler {
   }
 
   /**
-   * Close all cached project connections
+   * 关闭所有已缓存的项目连接
    */
   closeAll(): void {
     for (const cg of this.projectCache.values()) {
@@ -903,12 +866,12 @@ export class ToolHandler {
   }
 
   /**
-   * Validate that a value is a non-empty string within length bounds.
+   * 校验值是否为非空字符串且在长度限制之内。
    *
-   * The `maxLength` cap protects against MCP clients that ship huge
-   * payloads (10MB+ query strings either by accident or maliciously).
-   * Without this, a single oversized input can pin the FTS5 index or
-   * exhaust memory before any real work runs.
+   * `maxLength` 上限用于防止 MCP 客户端发送巨型载荷
+   *（无论是意外还是恶意的 10MB+ 查询字符串）。
+   * 没有此限制，单个超大输入可能在任何实际工作开始之前
+   * 就使 FTS5 索引挂起或耗尽内存。
    */
   private validateString(
     value: unknown,
@@ -927,8 +890,8 @@ export class ToolHandler {
   }
 
   /**
-   * Validate an optional path-like string input. Returns the value if
-   * valid (or undefined), or a ToolResult with the error.
+   * 校验可选路径类字符串输入。若有效则返回值（或 undefined），
+   * 否则返回含错误信息的 ToolResult。
    */
   private validateOptionalPath(
     value: unknown,
@@ -947,14 +910,13 @@ export class ToolHandler {
   }
 
   /**
-   * Cached git worktree/index mismatch for a tool call's effective project.
+   * 工具调用有效项目的已缓存 git worktree/index 不匹配。
    *
-   * The "effective project" is what the request targets: an explicit
-   * `projectPath` arg, else the directory the server resolved its default
-   * project from (`defaultProjectHint`), else cwd. Memoized per start path —
-   * see `worktreeMismatchCache`. Best-effort: if the project can't be resolved
-   * (e.g. nothing initialized yet), it reports "no mismatch" so a tool is never
-   * broken by this check.
+   * "有效项目"是请求的目标：显式 `projectPath` 参数，否则为服务器
+   * 解析其默认项目的目录（`defaultProjectHint`），否则为 cwd。
+   * 按起始路径记忆——参见 `worktreeMismatchCache`。尽力而为：
+   * 若项目无法解析（例如尚未初始化），报告"无不匹配"，
+   * 使工具不因此检查而损坏。
    */
   private worktreeMismatchFor(projectPath?: string): WorktreeIndexMismatch | null {
     const startPath = projectPath ?? this.defaultProjectHint ?? process.cwd();
@@ -965,7 +927,7 @@ export class ToolHandler {
     try {
       mismatch = detectWorktreeIndexMismatch(startPath, this.getSynapse(projectPath).getProjectRoot());
     } catch {
-      // No resolvable project (or any other resolution error) → nothing to warn.
+      // 无可解析的项目（或任何其他解析错误）→ 无需警告。
       mismatch = null;
     }
     this.worktreeMismatchCache.set(startPath, mismatch);
@@ -973,12 +935,10 @@ export class ToolHandler {
   }
 
   /**
-   * Prefix a successful read-tool result with a compact worktree-mismatch
-   * notice when the resolved index belongs to a different git working tree than
-   * the caller's (issue #155). Without this, an agent in a nested worktree
-   * silently trusts main-branch results. No-op on error results and when there
-   * is no mismatch. `synapse_status` is excluded — it embeds its own verbose
-   * warning — so it stays out of this path.
+   * 当已解析索引属于与调用方不同的 git 工作树时，在成功的读取工具结果前
+   * 添加紧凑的 worktree 不匹配提示（issue #155）。没有此提示，嵌套 worktree
+   * 中的智能体会静默信任主分支结果。对错误结果和无不匹配时为无操作。
+   * `synapse_status` 被排除——它嵌入了自己的详细警告——因此不走此路径。
    */
   private withWorktreeNotice(result: ToolResult, projectPath?: string): ToolResult {
     if (result.isError) return result;
@@ -994,17 +954,14 @@ export class ToolHandler {
   }
 
   /**
-   * Annotate a successful read-tool result with per-file staleness — the
-   * non-blocking answer to issue #403. The file watcher tracks every event
-   * it sees per path; here we intersect "files referenced in this response"
-   * against that pending set and prepend a compact banner so the agent can
-   * fall back to Read for those *specific* files without waiting for the
-   * debounced sync to fire. Other pending files in the project (not
-   * referenced by this response) get a small footer so the agent has a
-   * complete picture without bloating the banner.
+   * 为成功的读取工具结果标注单文件过期信息——issue #403 的非阻塞解决方案。
+   * 文件监视器按路径跟踪每个事件；此处我们将"此响应引用的文件"
+   * 与待处理集合取交集，并在前面添加紧凑横幅，使智能体能够对*特定*文件
+   * 直接使用 Read，而无需等待防抖同步触发。项目中其他待处理文件
+   *（本次响应未引用）在页脚中显示，使智能体获得完整信息而不使横幅膨胀。
    *
-   * Cost when nothing is pending — the common case — is one boolean check.
-   * No I/O, no parsing of markdown beyond a per-pending-file substring scan.
+   * 无待处理时（常见情况）的成本——仅一次布尔值检查。
+   * 无 I/O，无 markdown 解析，仅针对每个待处理文件进行子字符串扫描。
    */
   private withStalenessNotice(result: ToolResult, projectPath?: string): ToolResult {
     if (result.isError) return result;
@@ -1013,33 +970,30 @@ export class ToolHandler {
     try {
       cg = this.getSynapse(projectPath);
     } catch {
-      return result; // no default project — leave as is
+      return result; // 无默认项目——保持原样
     }
 
-    // Cross-project `projectPath` calls open a cached Synapse WITHOUT a
-    // watcher (watchers are only attached to the default session project).
-    // When the cross-project path happens to be the same project as the
-    // default cg, the cached instance is the wrong one — its pendingFiles is
-    // permanently empty. Detect the equal-path case and prefer the default
-    // cg so the staleness signal still fires when an agent passes the
-    // explicit projectPath form of its own project.
+    // 跨项目 `projectPath` 调用打开的是无监视器的缓存 Synapse
+    //（监视器仅附加到默认会话项目）。
+    // 当跨项目路径恰好与默认 cg 是同一项目时，缓存实例不正确——
+    // 其 pendingFiles 永远为空。检测等路径情况并优先使用默认 cg，
+    // 使智能体以显式 projectPath 形式传入其自身项目时，过期信号仍能触发。
     if (this.cg && cg !== this.cg) {
       try {
         const sameProject =
           resolvePath(this.cg.getProjectRoot()) === resolvePath(cg.getProjectRoot());
         if (sameProject) cg = this.cg;
       } catch {
-        /* getProjectRoot may throw on a closed instance — leave cg as is */
+        /* getProjectRoot 可能在已关闭的实例上抛出——保持 cg 原样 */
       }
     }
 
-    // Whole-index degradation (#876): once live watching has permanently
-    // stopped, getPendingFiles() is empty so the per-file banner below can't
-    // fire — but the index is now FROZEN and silently drifting stale. Surface
-    // one global notice instead, so the agent Reads for current content rather
-    // than trusting a response off a no-longer-updating index. (Cross-project
-    // calls open a watcher-less Synapse, so this is false there — correct: we
-    // only know degraded state for the default session project.)
+    // 全量索引降级（#876）：一旦实时监视永久停止，
+    // getPendingFiles() 为空，下方的单文件横幅无法触发——
+    // 但索引现已冻结并静默漂移为过时状态。改为显示一条全局提示，
+    // 使智能体读取最新内容，而非信任一个不再更新的索引的响应。
+    //（跨项目调用打开无监视器的 Synapse，因此此处为 false——正确：
+    // 我们只知道默认会话项目的降级状态。）
     let degraded = false;
     try {
       degraded = cg.isWatcherDegraded?.() ?? false;
@@ -1059,8 +1013,8 @@ export class ToolHandler {
       return { ...result, content: [{ type: 'text', text: composed }, ...tail] };
     }
 
-    // Defensive: some test fakes inject a partial Synapse stub without the
-    // newer pending-files API. Treat missing/throwing as "no pending files."
+    // 防御性措施：某些测试 fake 注入了不含较新待处理文件 API 的
+    // 部分 Synapse stub。将缺失/抛出视为"无待处理文件"。
     let pending: PendingFile[] = [];
     try {
       pending = cg.getPendingFiles?.() ?? [];
@@ -1076,9 +1030,9 @@ export class ToolHandler {
     const inResponse: PendingFile[] = [];
     const elsewhere: PendingFile[] = [];
     for (const p of pending) {
-      // Substring match against the project-relative POSIX path — that's
-      // exactly the format both the watcher and every synapse response
-      // emit, so a plain includes() is sufficient and avoids regex pitfalls.
+      // 对响应内容中的项目相对 POSIX 路径进行子字符串匹配——
+      // 这正是监视器和每个 synapse 响应发出的格式，
+      // 因此简单的 includes() 就足够了，避免了正则的坑。
       if (text.includes(p.path)) inResponse.push(p);
       else elsewhere.push(p);
     }
@@ -1098,35 +1052,33 @@ export class ToolHandler {
   }
 
   /**
-   * Execute a tool by name
+   * 按名称执行工具
    */
   async execute(toolName: string, args: Record<string, unknown>): Promise<ToolResult> {
     try {
-      // Block the first tool call on the engine's post-open reconcile so we
-      // never serve rows for files deleted/edited while no MCP server was
-      // running. The gate is cleared after first await — subsequent calls
-      // pay nothing. Catch-up failures are logged by the engine; we
-      // proceed regardless so a transient sync error never breaks tools.
+      // 阻塞第一次工具调用，等待引擎打开后的对账，
+      // 确保我们不会为在 MCP 服务器未运行期间被删除/编辑的文件返回行。
+      // 门控在首次 await 后清除——后续调用无开销。
+      // 追赶失败由引擎记录；无论如何我们都继续，使瞬时同步错误不会导致工具损坏。
       if (this.catchUpGate) {
         const gate = this.catchUpGate;
         this.catchUpGate = null;
-        try { await gate; } catch { /* engine already logged */ }
+        try { await gate; } catch { /* 引擎已记录 */ }
       }
-      // Honor the optional tool allowlist (SYNAPSE_MCP_TOOLS): a trimmed
-      // surface rejects ablated tools defensively even if a client cached them.
+      // 遵循可选工具白名单（SYNAPSE_MCP_TOOLS）：裁剪后的接口
+      // 会防御性地拒绝已被删除的工具，即使客户端缓存了它们。
       if (!this.isToolAllowed(toolName)) {
         return this.errorResult(`Tool ${toolName} is disabled via SYNAPSE_MCP_TOOLS`);
       }
-      // Cross-cutting input validation. All tools accept an optional
-      // `projectPath` and most accept either `query`, `task`, or
-      // `symbol` — bound their lengths centrally so individual handlers
-      // can stay focused on tool-specific logic.
+      // 横切输入校验。所有工具均接受可选的 `projectPath`，大多数工具接受
+      // `query`、`task` 或 `symbol` 之一——在此集中限制其长度，
+      // 使各处理器能专注于工具特定的逻辑。
       const pathCheck = this.validateOptionalPath(args.projectPath, 'projectPath');
       if (typeof pathCheck === 'object' && pathCheck !== undefined) {
         return pathCheck;
       }
-      // The `path` and `pattern` properties used by synapse_files are
-      // also path-shaped — apply the same cap.
+      // synapse_files 使用的 `path` 和 `pattern` 属性也是路径形态——
+      // 应用相同的上限。
       if (args.path !== undefined) {
         const check = this.validateOptionalPath(args.path, 'path');
         if (typeof check === 'object' && check !== undefined) return check;
@@ -1136,12 +1088,10 @@ export class ToolHandler {
         if (typeof check === 'object' && check !== undefined) return check;
       }
 
-      // Read tools resolve through a single result variable so cross-cutting
-      // notices — worktree-index mismatch (issue #155) and per-file
-      // staleness (issue #403) — can be applied in one place. status embeds
-      // its own verbose worktree warning but still flows through the
-      // staleness wrapper so its pending-files section stays consistent
-      // with what the read tools surface.
+      // 读取工具通过单个 result 变量解析，使横切通知——
+      // worktree/index 不匹配（issue #155）和单文件过期（issue #403）——
+      // 可在一处应用。status 嵌入了自己的详细 worktree 警告，
+      // 但仍流经过期封装器，使其待处理文件节与读取工具一致。
       let result: ToolResult;
       switch (toolName) {
         case 'synapse_search':
@@ -1157,9 +1107,8 @@ export class ToolHandler {
         case 'synapse_node':
           result = await this.handleNode(args); break;
         case 'synapse_status':
-          // status embeds the pending-files list as a first-class section
-          // (see handleStatus), so we skip the auto-banner wrapper here to
-          // avoid duplicating the same info at the top of the response.
+          // status 将待处理文件列表作为一级章节内嵌（参见 handleStatus），
+          // 因此此处跳过自动横幅封装器，避免在响应顶部重复相同信息。
           return await this.handleStatus(args);
         case 'synapse_files':
           result = await this.handleFiles(args); break;
@@ -1169,13 +1118,12 @@ export class ToolHandler {
       const withWorktree = this.withWorktreeNotice(result, args.projectPath as string | undefined);
       return this.withStalenessNotice(withWorktree, args.projectPath as string | undefined);
     } catch (err) {
-      // Expected condition, not a malfunction: answer as a SUCCESS so the
-      // agent keeps trusting the toolset for projects that ARE indexed.
-      // (An isError here teaches session-long abandonment — see NotIndexedError.)
+      // 预期状态，非故障：以成功形式响应，使智能体对已索引的项目
+      // 继续信任工具集。（此处的 isError 会导致整个会话的放弃——参见 NotIndexedError。）
       if (err instanceof NotIndexedError) {
         return this.textResult(err.message);
       }
-      // Security refusal: a clean error, no retry encouragement.
+      // 安全拒绝：干净的错误，不鼓励重试。
       if (err instanceof PathRefusalError) {
         return this.errorResult(err.message);
       }
@@ -1188,7 +1136,7 @@ export class ToolHandler {
   }
 
   /**
-   * Handle synapse_search
+   * 处理 synapse_search
    */
   private async handleSearch(args: Record<string, unknown>): Promise<ToolResult> {
     const query = this.validateString(args.query, 'query');
@@ -1196,9 +1144,9 @@ export class ToolHandler {
 
     const cg = this.getSynapse(args.projectPath as string | undefined);
     const rawKind = args.kind as string | undefined;
-    // The schema enum says 'type' (what agents naturally reach for); the
-    // NodeKind is 'type_alias'. Without the mapping, kind: "type" silently
-    // matched nothing — a filter value we advertise must work.
+    // schema 枚举使用 'type'（智能体自然会用的值）；
+    // NodeKind 是 'type_alias'。没有此映射，kind: "type" 会静默匹配不到任何内容——
+    // 我们公示的过滤器值必须有效。
     const kind = rawKind === 'type' ? 'type_alias' : rawKind;
     const rawLimit = Number(args.limit) || 10;
     const limit = clamp(rawLimit, 1, 100);
@@ -1212,9 +1160,8 @@ export class ToolHandler {
       return this.textResult(`No results found for "${query}"`);
     }
 
-    // Down-rank generated files within the FTS-returned set so a search
-    // for "Send" surfaces the hand-written keeper before .pb.go stubs
-    // that share the name. Stable: only reorders generated vs. not.
+    // 在 FTS 返回集合中降权生成文件，使搜索 "Send" 时
+    // 手写的目标文件排在共享该名称的 .pb.go 桩文件之前。稳定：仅重排生成与非生成文件。
     const ranked = [...results].sort((a, b) => {
       const aGen = isGeneratedFile(a.node.filePath) ? 1 : 0;
       const bGen = isGeneratedFile(b.node.filePath) ? 1 : 0;
@@ -1226,11 +1173,10 @@ export class ToolHandler {
   }
 
   /**
-   * Group symbol matches into DISTINCT DEFINITIONS — one group per
-   * (filePath, qualifiedName), so same-file overloads stay together while
-   * unrelated same-named classes across a monorepo's apps (#764: one
-   * `UserService` per NestJS app) are kept apart. Optionally narrowed by a
-   * `file` path/suffix first.
+   * 将符号匹配分组为不同的定义——每组对应一个
+   *（filePath, qualifiedName）对，使同文件重载保持在一起，
+   * 而单仓库各应用中无关的同名类（#764：每个 NestJS 应用一个 `UserService`）
+   * 保持分离。可先通过 `file` 路径/后缀缩小范围。
    */
   private groupDefinitions(
     nodes: Node[],
@@ -1259,7 +1205,7 @@ export class ToolHandler {
     return { groups: [...byDef.values()], filteredOut };
   }
 
-  /** Section heading for one distinct definition in grouped output. */
+  /** 分组输出中单个不同定义的节标题。 */
   private definitionHeading(group: Node[]): string {
     const head = group[0]!;
     const line = head.startLine ? `:${head.startLine}` : '';
@@ -1267,7 +1213,7 @@ export class ToolHandler {
   }
 
   /**
-   * Handle synapse_callers
+   * 处理 synapse_callers
    */
   private async handleCallers(args: Record<string, unknown>): Promise<ToolResult> {
     const symbol = this.validateString(args.symbol, 'symbol');
@@ -1304,22 +1250,20 @@ export class ToolHandler {
       return { callers, labels };
     };
 
-    // Single definition (or same-file overloads): the familiar flat list.
+    // 单一定义（或同文件重载）：熟悉的平铺列表。
     if (groups.length === 1) {
       const { callers, labels } = collect(groups[0]!);
       if (callers.length === 0) {
         return this.textResult(`No callers found for "${symbol}"${allMatches.note}${filterNote}`);
       }
-      // A successful `file` narrowing makes the multi-symbol aggregation note
-      // stale — suppress it.
+      // 成功的 `file` 缩小使多符号聚合说明失效——抑制它。
       const note = fileFilter && !filteredOut ? '' : allMatches.note;
       const formatted = this.formatNodeList(callers.slice(0, limit), `Callers of ${symbol}`, labels) + note + filterNote;
       return this.textResult(this.truncateOutput(formatted));
     }
 
-    // Multiple DISTINCT definitions (#764): one section per definition so an
-    // agent never mistakes one app's callers for another's. Narrow with
-    // `file` to focus a single definition.
+    // 多个不同定义（#764）：每个定义一节，使智能体不会将一个应用的调用者
+    // 误认为另一个应用的。使用 `file` 聚焦单一定义。
     const lines: string[] = [
       `## Callers of ${symbol} — ${groups.length} distinct definitions (narrow with \`file\`)`,
     ];
@@ -1340,7 +1284,7 @@ export class ToolHandler {
   }
 
   /**
-   * Handle synapse_callees
+   * 处理 synapse_callees
    */
   private async handleCallees(args: Record<string, unknown>): Promise<ToolResult> {
     const symbol = this.validateString(args.symbol, 'symbol');
@@ -1382,14 +1326,13 @@ export class ToolHandler {
       if (callees.length === 0) {
         return this.textResult(`No callees found for "${symbol}"${allMatches.note}${filterNote}`);
       }
-      // A successful `file` narrowing makes the multi-symbol aggregation note
-      // stale — suppress it.
+      // 成功的 `file` 缩小使多符号聚合说明失效——抑制它。
       const note = fileFilter && !filteredOut ? '' : allMatches.note;
       const formatted = this.formatNodeList(callees.slice(0, limit), `Callees of ${symbol}`, labels) + note + filterNote;
       return this.textResult(this.truncateOutput(formatted));
     }
 
-    // Multiple DISTINCT definitions (#764): per-definition sections.
+    // 多个不同定义（#764）：每个定义一节。
     const lines: string[] = [
       `## Callees of ${symbol} — ${groups.length} distinct definitions (narrow with \`file\`)`,
     ];
@@ -1410,7 +1353,7 @@ export class ToolHandler {
   }
 
   /**
-   * Handle synapse_impact
+   * 处理 synapse_impact
    */
   private async handleImpact(args: Record<string, unknown>): Promise<ToolResult> {
     const symbol = this.validateString(args.symbol, 'symbol');
@@ -1450,15 +1393,15 @@ export class ToolHandler {
       return { nodes: mergedNodes, edges: mergedEdges, roots: defNodes.map((n) => n.id) };
     };
 
-    // Single definition (or same-file overloads): the familiar merged report.
+    // 单一定义（或同文件重载）：熟悉的合并报告。
     if (groups.length === 1) {
       const formatted = this.formatImpact(symbol, impactOf(groups[0]!)) + (fileFilter && !filteredOut ? "" : allMatches.note) + filterNote;
       return this.textResult(this.truncateOutput(formatted));
     }
 
-    // Multiple DISTINCT definitions (#764): a blast radius PER definition —
-    // merging unrelated same-named classes (one UserService per monorepo app)
-    // overstated impact and confused agents. Narrow with `file`.
+    // 多个不同定义（#764）：每个定义一个影响半径——
+    // 合并无关的同名类（每个单仓库应用一个 UserService）
+    // 会夸大影响并混淆智能体。使用 `file` 缩小。
     const sections: string[] = [
       `## Impact of ${symbol} — ${groups.length} distinct definitions (each with its own blast radius; narrow with \`file\`)`,
     ];
@@ -1474,10 +1417,10 @@ export class ToolHandler {
   }
 
   /**
-   * Describe a synthesized (dynamic-dispatch) edge for human output: how the
-   * callback was wired up — the bridge static parsing can't see. Returns null
-   * for ordinary static edges. Used by trace + the node trail so a synthesized
-   * hop reads as "registered via onUpdate at App.tsx:3148", not a bare arrow.
+   * 为人类可读输出描述合成（动态分发）边：回调是如何关联的——
+   * 这是静态解析无法看到的桥接。对普通静态边返回 null。
+   * 用于 trace + 节点路径，使合成跳转呈现为
+   * "registered via onUpdate at App.tsx:3148"，而非裸箭头。
    */
   private synthEdgeNote(edge: Edge | null): { label: string; compact: string; registeredAt?: string } | null {
     if (!edge || edge.provenance !== 'heuristic') return null;
@@ -1543,27 +1486,27 @@ export class ToolHandler {
   }
 
   /**
-   * Flow-from-named-symbols: an agent's synapse_explore query is a bag of
-   * symbol names that usually spans the flow it's investigating (e.g.
-   * "PmsProductController getList PmsProductService list PmsProductServiceImpl").
-   * Surface the longest call chain AMONG those named symbols — scoped to what the
-   * agent explicitly named, so (unlike a fuzzy relevance set) there's no
-   * wrong-feature wandering. Rides synthesized edges, so controller→service-
-   * interface→impl shows up. Returns '' if no chain of >=3 nodes exists.
+   * 从命名符号中构建流程：智能体的 synapse_explore 查询是一组符号名称，
+   * 通常跨越其正在调查的流程（例如
+   * "PmsProductController getList PmsProductService list PmsProductServiceImpl"）。
+   * 在这些命名符号之间找出最长的调用链——范围限定于智能体明确命名的内容，
+   * 因此（与模糊相关性集合不同）不会迷失到错误的功能中。
+   * 依赖合成边，因此 controller→service-interface→impl 能呈现出来。
+   * 若不存在 >=3 个节点的链，返回 ''。
    *
-   * Ambiguous tokens (Java `list` → dozens of nodes) are disambiguated by
-   * CO-NAMING: the agent names the class too, so we keep only `list` candidates
-   * whose qualifiedName contains another named token (`PmsProductServiceImpl::list`),
-   * dropping unrelated `OmsOrderService::list`.
+   * 歧义 token（Java 的 `list` → 数十个节点）通过
+   * 共同命名消歧：智能体同时命名了类，因此我们只保留
+   * qualifiedName 中包含另一个命名 token 的 `list` 候选
+   *（`PmsProductServiceImpl::list`），丢弃无关的 `OmsOrderService::list`。
    */
   private buildFlowFromNamedSymbols(cg: Synapse, query: string): { text: string; pathNodeIds: Set<string>; namedNodeIds: Set<string>; uniqueNamedNodeIds: Set<string> } {
     const EMPTY = { text: '', pathNodeIds: new Set<string>(), namedNodeIds: new Set<string>(), uniqueNamedNodeIds: new Set<string>() };
     try {
       const CALLABLE = new Set(['method', 'function', 'component', 'constructor']);
-      // Strip only a REAL file extension (Create.cs → Create); KEEP qualified
-      // names (Class.method / Class::method) — the agent's most precise input,
-      // resolved exactly by findAllSymbols. (The old strip mangled Class.method
-      // into Class, throwing the method away.)
+      // 只剥离真正的文件扩展名（Create.cs → Create）；保留限定名
+      // （Class.method / Class::method）——智能体最精确的输入，
+      // 由 findAllSymbols 精确解析。（旧的剥离方法会将 Class.method
+      // 错误地截断为 Class，丢掉方法名。）
       const FILE_EXT = /\.(?:java|kt|kts|ts|tsx|js|jsx|mjs|cjs|cs|py|go|rb|php|swift|rs|cpp|cc|cxx|c|h|hpp|scala|lua|dart|vue|svelte|astro)$/i;
       const tokens = [...new Set(
         query.split(/[\s,()[\]]+/)
@@ -1571,26 +1514,25 @@ export class ToolHandler {
           .filter((t) => t.length >= 3 && /^[A-Za-z_$][\w$]*(?:(?:::|\.)[\w$]+)*$/.test(t))
       )].slice(0, 16);
       if (tokens.length < 2) return EMPTY;
-      // Pool of name SEGMENTS (Class + method from every token) used to
-      // disambiguate an ambiguous SIMPLE name: keep a candidate only if its
-      // CONTAINER class is itself named in the query.
+      // 名称段池（每个 token 的类名 + 方法名），用于消歧歧义的简单名：
+      // 只保留容器类本身在查询中被命名的候选。
       const segPool = new Set<string>();
       for (const t of tokens) for (const s of t.toLowerCase().split(/::|\./)) if (s) segPool.add(s);
       const named = new Map<string, Node>();
-      // Nodes whose token is SPECIFIC — a (near-)unique callable name (<=3 defs in
-      // the whole graph). These are safe to SPARE a file on: the agent named THIS
-      // method (`getResponseWithInterceptorChain`, 1 def). A hyper-polymorphic name
-      // (`as_sql`, 110 defs across every Expression/Compiler subclass) is NOT here,
-      // so naming it doesn't keep every backend variant full and flood the budget.
+      // 其 token 为特定的节点——整个图中（近）唯一的可调用名称（定义数 <=3）。
+      // 这些节点可以安全地为一个文件保留：智能体命名了 THIS
+      // 方法（`getResponseWithInterceptorChain`，1 个定义）。超多态名称
+      //（`as_sql`，跨每个 Expression/Compiler 子类共 110 个定义）不在此处，
+      // 因此命名它不会让每个后端变体都保留完整正文而淹没预算。
       const uniqueNamedNodeIds = new Set<string>();
-      // token → resolved node ids: drives the token-coverage check that gates
-      // the dynamic-boundary scan (a token is covered when ANY of its nodes
-      // lands on the main chain — overloads off the chain don't count against).
+      // token → 已解析的节点 id：驱动 token 覆盖检查，该检查
+      // 门控动态边界扫描（当某 token 的任意节点落在主链上时即为已覆盖——
+      // 链外的重载不计入未覆盖）。
       const tokenNodes = new Map<string, string[]>();
       for (const t of tokens) {
         const cands = this.findAllSymbols(cg, t).nodes.filter((n) => CALLABLE.has(n.kind));
-        // A qualified or otherwise-specific name (<=3 hits) keeps all; an
-        // ambiguous simple name keeps only candidates whose container is named.
+        // 一个限定名或其他特定名称（命中数 <=3）保留全部；
+        // 歧义的简单名只保留容器在命名中的候选。
         const specific = cands.length <= 3;
         const pick = specific
           ? cands
@@ -1608,10 +1550,10 @@ export class ToolHandler {
         if (named.size > 40) break;
       }
       if (named.size < 2) {
-        // The agent named a flow but only one side resolved (the other end is
-        // anonymous / runtime-registered / not extracted). The resolved side's
-        // body may still hold the dynamic-dispatch site that EXPLAINS the gap —
-        // surface that instead of silently returning nothing.
+        // 智能体命名了一个流程，但只有一侧解析成功（另一端是
+        // 匿名的/运行时注册的/未被提取的）。已解析一侧的正文
+        // 可能仍包含解释这一缺口的动态分发点——
+        // 将其呈现出来，而非静默返回空。
         if (named.size === 0) return EMPTY;
         const boundaries = this.buildDynamicBoundaries(cg, [...named.values()], named);
         if (!boundaries) return EMPTY;
@@ -1620,16 +1562,16 @@ export class ToolHandler {
       }
       const MAX_HOPS = 7;
       let best: Array<{ node: Node; edge: Edge | null }> | null = null;
-      // BFS the full call graph (incl. synth edges) from each named seed, but
-      // only ACCEPT a sink that is also named — both ends anchored to symbols the
-      // agent named, so the chain stays on-topic while bridging intermediates
-      // (e.g. the exact interface overload) that the token resolution missed.
+      // 对完整调用图（含合成边）从每个命名种子进行 BFS，
+      // 但只接受也是命名的汇点——两端都锚定于智能体命名的符号，
+      // 使链保持在主题上，同时桥接 token 解析遗漏的中间节点
+      //（例如确切的接口重载）。
       for (const seed of [...named.values()].slice(0, 8)) {
         const parent = new Map<string, { prev: string | null; edge: Edge | null; node: Node }>();
         parent.set(seed.id, { prev: null, edge: null, node: seed });
         const q: Array<{ id: string; depth: number; streak: number }> = [{ id: seed.id, depth: 0, streak: 0 }];
         let deep: string | null = null, deepDepth = 0;
-        const MAX_BRIDGE = 1; // ≤1 consecutive UNNAMED hop: bridge one missing intermediate, never wander a god-function's fan-out
+        const MAX_BRIDGE = 1; // ≤1 个连续未命名跳：桥接一个缺失的中间节点，不在上帝函数的扇出中迷失
         for (let h = 0; h < q.length && parent.size < 1500; h++) {
           const { id, depth, streak } = q[h]!;
           if (id !== seed.id && named.has(id) && depth > deepDepth) { deep = id; deepDepth = depth; }
@@ -1652,20 +1594,18 @@ export class ToolHandler {
       const hasMain = !!best && best.length >= 3;
       const pathIds = new Set((best ?? []).map((s) => s.node.id));
 
-      // Dynamic-boundary scan (#687) — fires ONLY when the flow the agent
-      // asked about did not fully connect: some token resolved to nodes but
-      // none of them sit on the main chain (or there is no chain at all). A
-      // healthy flow skips this entirely. Scan order: the chain's dead end
-      // first (where the partial flow stops), then the disconnected symbols,
-      // agent-specific (unique-named) ones first.
+      // 动态边界扫描（#687）——仅当智能体询问的流程未完全连通时触发：
+      // 某个 token 解析到了节点，但没有一个节点落在主链上（或根本没有链）。
+      // 健康的流程完全跳过此步。扫描顺序：链的断点优先
+      //（部分流程停止的地方），然后是断开的符号，智能体特定的
+      //（唯一命名的）符号优先。
       let boundaryText = '';
       {
         const uncovered: Node[] = [];
         if (!hasMain) {
-          // No rendered chain — but a 2-node chain still CONNECTS its two
-          // endpoints (e.g. via one synthesized hop, surfaced below as a
-          // dynamic-dispatch link). Only nodes off that short chain are
-          // unexplained breaks worth scanning.
+          // 无已渲染的链——但 2 节点链仍然连接了其两个端点
+          //（例如通过一条合成跳，如下所示为动态分发链接）。
+          // 只有不在该短链上的节点才是值得扫描的未解释断点。
           for (const n of named.values()) if (!pathIds.has(n.id)) uncovered.push(n);
         } else {
           for (const ids of tokenNodes.values()) {
@@ -1682,14 +1622,13 @@ export class ToolHandler {
         }
       }
 
-      // Supplementary: dynamic-dispatch (synthesized) edges incident to a NAMED
-      // symbol — the indirect hops an agent would otherwise grep/Read to
-      // reconstruct ("where do the appended `validators` actually run?"). The
-      // synth edge IS that answer, so surface it even when the OTHER end wasn't
-      // named (e.g. the agent names `validate` but not the `didCompleteTask`
-      // that drains the collection). On-topic by construction: only heuristic
-      // edges touching a symbol the agent named; skipped when the hop already
-      // shows in the main chain.
+      // 补充：与命名符号相关的动态分发（合成）边——
+      // 智能体原本需要 grep/Read 重建的间接跳转
+      //（"附加的 `validators` 实际在哪里运行？"）。
+      // 合成边本身就是答案，因此即使另一端未被命名也要呈现它
+      //（例如智能体命名了 `validate` 但未命名消耗集合的 `didCompleteTask`）。
+      // 构造上在主题内：仅触及智能体命名符号的启发式边；
+      // 当跳转已在主链中时跳过。
       const synthLines: string[] = [];
       const synthSeen = new Set<string>();
       for (const n of named.values()) {
@@ -1697,11 +1636,10 @@ export class ToolHandler {
         for (const { node: other, edge } of [...cg.getCallers(n.id), ...cg.getCallees(n.id)]) {
           if (synthLines.length >= 6) break;
           if (edge.provenance !== 'heuristic' || other.id === n.id) continue;
-          // "Already in the main chain" only applies when a chain RENDERS
-          // (hasMain). A 2-node chain populates pathIds but renders nothing,
-          // so a direct synthesized hop between two named symbols (custom
-          // EventBus emit→handler, #687) was invisible — too short for Flow,
-          // skipped here as in-chain. Surface it.
+          // "已在主链中"只在链已渲染（hasMain）时适用。
+          // 2 节点链会填充 pathIds 但不渲染任何内容，
+          // 因此两个命名符号之间的直接合成跳（自定义 EventBus emit→handler，#687）
+          // 是不可见的——对于 Flow 来说太短，此处作为链内跳被跳过。将其呈现出来。
           if (hasMain && pathIds.has(edge.source) && pathIds.has(edge.target)) continue;
           const src = edge.source === n.id ? n : other;
           const tgt = edge.source === n.id ? other : n;
@@ -1735,11 +1673,10 @@ export class ToolHandler {
       }
       if (boundaryText) out.push(boundaryText);
       out.push('> Full source for these symbols is below — the call flow among them, followed by their bodies.', '');
-      // namedNodeIds = every callable the agent explicitly named (a superset of
-      // the spine). A file holding one is something the agent asked to SEE, so it
-      // must keep full source even if it's an off-spine polymorphic sibling — the
-      // agent named `getResponseWithInterceptorChain` / `SQLCompiler.execute_sql`
-      // as the mechanism, not as an interchangeable leaf. See the skeleton gate.
+      // namedNodeIds = 智能体显式命名的每个可调用符号（主干的超集）。
+      // 持有其中一个的文件是智能体要求查看的，因此即使是非主干的多态兄弟，
+      // 也必须保留完整源码——智能体命名了 `getResponseWithInterceptorChain` /
+      // `SQLCompiler.execute_sql` 作为机制，而非可互换的叶节点。参见骨架化门控。
       return { text: out.join('\n'), pathNodeIds: pathIds, namedNodeIds: new Set(named.keys()), uniqueNamedNodeIds };
     } catch {
       return EMPTY;
@@ -1747,19 +1684,17 @@ export class ToolHandler {
   }
 
   /**
-   * Dynamic-boundary surfacing (#687): when the flow among the agent's named
-   * symbols does not fully connect, scan the disconnected symbols' bodies for
-   * dynamic-dispatch sites (computed member calls, getattr, reflection, typed
-   * message buses, runtime-keyed emits) and ANNOUNCE the boundary — the exact
-   * site, the form, and (when a key is statically visible) candidate targets —
-   * instead of guessing edges. The answer to "how does A reach B" when no
-   * static path exists IS the dispatch site: that's where the flow continues
-   * at runtime. Query-time, deterministic, zero graph mutation; a fully
-   * connected flow never reaches this method.
+   * 动态边界呈现（#687）：当智能体命名符号之间的流程未完全连通时，
+   * 扫描断开符号的正文，查找动态分发点（计算型成员调用、getattr、
+   * 反射、类型化消息总线、运行时键值 emit），并公示边界——
+   * 确切位置、形式，以及（当键在静态上可见时）候选目标——
+   * 而非猜测边。当不存在静态路径时，"A 如何到达 B"的答案
+   * 就是分发点：那是流程在运行时继续的地方。
+   * 查询时执行，确定性，零图变更；完全连通的流程永远不会到达此方法。
    */
   private buildDynamicBoundaries(cg: Synapse, scanList: Node[], named: Map<string, Node>): string {
-    const MAX_NOTES = 4;       // boundary bullets per explore
-    const MAX_SCAN = 8;        // bodies scanned
+      const MAX_NOTES = 4;       // 每次 explore 的边界条目数
+      const MAX_SCAN = 8;        // 扫描的正文数量
     const MAX_TOTAL_CHARS = 200_000;
     let projectRoot: string;
     try { projectRoot = cg.getProjectRoot(); } catch { return ''; }
@@ -1803,12 +1738,11 @@ export class ToolHandler {
   }
 
   /**
-   * Shortlist candidate runtime targets for a dispatch key surfaced by
-   * {@link buildDynamicBoundaries}. Exact conventional names first (`save` →
-   * `onSave`/`handleSave`; `CreateCmd` → `CreateCmdHandler`), then FTS, with a
-   * normalized-containment post-filter (FTS camel-splitting is fuzzier than a
-   * candidate list should be). Symbols the agent already named sort first and
-   * are marked — that's the "you were right, here's the wiring" case.
+   * 为 {@link buildDynamicBoundaries} 呈现的分发键提供候选运行时目标的短列表。
+   * 先是精确的惯例名称（`save` → `onSave`/`handleSave`；
+   * `CreateCmd` → `CreateCmdHandler`），再是 FTS，并带有
+   * 规范化包含的后过滤器（FTS 驼峰分词比候选列表应有的更模糊）。
+   * 智能体已命名的符号排在最前并标记——这是"你说对了，这是连线方式"的情况。
    */
   private boundaryCandidates(cg: Synapse, key: string, keyIsType: boolean, named: Map<string, Node>, selfId: string): string {
     const CALLABLE = new Set(['method', 'function', 'component', 'constructor', 'class']);
@@ -1839,19 +1773,19 @@ export class ToolHandler {
     if (cands.size === 0) {
       return raw >= 12 && key.length < 5 ? `key \`${key}\` is too generic to shortlist (${raw}+ matches)` : '';
     }
-    // A constructor candidate duplicates its class: extractors emit ctors as
-    // METHOD nodes named like the class (C#/Java `Foo::Foo`) — keep the class.
+    // 构造函数候选与其类重复：提取器将构造函数作为
+    // 与类同名的 METHOD 节点生成（C#/Java `Foo::Foo`）——保留类。
     const all = [...cands.values()];
     const classKey = new Set(all.filter((n) => n.kind === 'class').map((n) => `${n.name}|${n.filePath}`));
     const namedNames = new Set([...named.values()].map((n) => n.name));
-    const isNamed = (n: Node) => named.has(n.id) || namedNames.has(n.name); // the flow's named set holds callables only — transfer the mark to the class
+    const isNamed = (n: Node) => named.has(n.id) || namedNames.has(n.name); // 流程命名集合只包含可调用节点——将标记传递给类
     const list = all
       .filter((n) => !(n.kind !== 'class' && classKey.has(`${n.name}|${n.filePath}`)))
       .sort((a, b) => (isNamed(b) ? 1 : 0) - (isNamed(a) ? 1 : 0))
       .slice(0, 4)
       .map((n) => {
-        // Typed-bus convention: the runtime target is the candidate class's
-        // Handle/Execute/Consume method — name the exact node, not just the class.
+        // 类型总线惯例：运行时目标是候选类的
+        // Handle/Execute/Consume 方法——命名确切的节点，而非仅命名类。
         let display = n.qualifiedName || n.name;
         let at = `${n.filePath}:${n.startLine}`;
         if (keyIsType && n.kind === 'class') {
@@ -1862,7 +1796,7 @@ export class ToolHandler {
               .map((e) => { try { return cg.getNode(e.target); } catch { return null; } })
               .find((c): c is Node => !!c && c.kind === 'method' && HANDLER_METHODS.test(c.name));
             if (method) { display = `${n.name}.${method.name}`; at = `${method.filePath}:${method.startLine}`; }
-          } catch { /* class without resolvable members — show the class itself */ }
+          } catch { /* 无可解析成员的类——显示类本身 */ }
         }
         return `\`${display}\` (${at})${isNamed(n) ? ' ← you named this' : ''}`;
       });
@@ -1870,16 +1804,15 @@ export class ToolHandler {
   }
 
   /**
-   * Compact "blast radius" for the entry symbols of an explore result: who
-   * depends on each (callers) and which test files cover it — LOCATIONS ONLY,
-   * no source, so the agent knows what to update / re-verify before editing
-   * without reaching for a separate impact call. Always-on, but skips symbols
-   * that have no dependents (nothing to warn about), and returns '' when none
-   * qualify so a leaf-only exploration stays clean.
+   * explore 结果入口符号的紧凑"影响半径"：谁依赖于每个符号（调用者）
+   * 以及哪些测试文件覆盖它——仅位置，无源码，使智能体在编辑前
+   * 了解需要更新/重新验证的内容，无需额外的 impact 调用。
+   * 始终开启，但跳过没有依赖者的符号（无需警告），
+   * 当无符号符合条件时返回 ''，使纯叶节点探索保持整洁。
    */
   private buildBlastRadiusSection(cg: Synapse, subgraph: Subgraph): string {
-    const ROOT_CAP = 5; // only the symbols the query actually targeted
-    const FILE_CAP = 4; // caller files listed per symbol before "+N more"
+    const ROOT_CAP = 5; // 仅限查询实际针对的符号
+    const FILE_CAP = 4; // 每个符号列出的调用者文件数，超出则显示 "+N more"
     const MEANINGFUL = new Set<string>([
       'function', 'method', 'class', 'interface', 'struct', 'trait', 'protocol',
       'enum', 'type_alias', 'component', 'constant', 'variable', 'property', 'field',
@@ -1902,7 +1835,7 @@ export class ToolHandler {
       for (const c of callers) {
         if (c?.node && !seen.has(c.node.id)) { seen.add(c.node.id); uniq.push(c.node); }
       }
-      if (uniq.length === 0) continue; // no blast radius → nothing to flag
+      if (uniq.length === 0) continue; // 无影响半径 → 无需标记
 
       const callerFiles = [...new Set(uniq.map((n) => rel(n.filePath)))];
       const testFiles = callerFiles.filter((f) => isTestFile(f));
@@ -1930,20 +1863,19 @@ export class ToolHandler {
   }
 
   /**
-   * Graph-connectivity relevance via Random-Walk-with-Restart (personalized
-   * PageRank) from the query's matched SEED nodes over the call/reference graph.
+   * 通过随机游走重启（个性化 PageRank）从查询匹配的种子节点出发，
+   * 在调用/引用图上计算图连通性相关度。
    *
-   * This is the ranking signal text search (FTS/bm25) CANNOT provide, and it's
-   * synapse's home turf: relevance by STRUCTURE, not words. A file whose
-   * symbols are call-connected to the matched cluster accrues walk mass and
-   * ranks high; a lone TEXT match — e.g. `LensSwitcher.swift` matched the word
-   * "switch" from `switchOrganization`, but calls none of `setUser`/`fetchUser`
-   * — gets only its own restart probability and ranks ~0. Immune to the
-   * tokenization trap that fools term matching, deterministic, no embeddings.
+   * 这是文本搜索（FTS/bm25）无法提供的排名信号，也是 synapse 的主场优势：
+   * 基于结构的相关性，而非词语。符号与匹配簇通过调用关联的文件
+   * 积累游走质量并排名靠前；纯文本匹配——例如 `LensSwitcher.swift`
+   * 匹配了 `switchOrganization` 中的词 "switch"，但未调用
+   * `setUser`/`fetchUser` 中的任何一个——仅获得自身的重启概率，排名约为 0。
+   * 对欺骗词项匹配的分词陷阱免疫，确定性，无向量嵌入。
    *
-   * Undirected adjacency (reachability both ways), restart α=0.25 to the seeds,
-   * power iteration to convergence. Bounded to the already-relevant subgraph, so
-   * it's a few hundred nodes × ~25 iterations — negligible cost.
+   * 无向邻接（双向可达），重启 α=0.25 指向种子，
+   * 迭代到收敛。限定在已相关的子图内，因此
+   * 约几百节点 × 约 25 次迭代——可忽略的开销。
    */
   private computeGraphRelevance(
     nodeIds: string[],
@@ -1967,12 +1899,11 @@ export class ToolHandler {
       const j = idx.get(e.target);
       if (i === undefined || j === undefined || i === j) continue;
       adj[i]!.push(j);
-      adj[j]!.push(i); // undirected — reachable either direction
+      adj[j]!.push(i); // 无向——双向可达
     }
 
-    // Restart vector: uniform over seeds present in the candidate set. (Falls
-    // back to uniform-over-all if no seed landed in the set, so we never return
-    // all-zero.)
+    // 重启向量：在候选集中存在的种子上均匀分布。
+    //（若无种子落入集合，回退到全部均匀——确保永远不返回全零。）
     const r = new Array<number>(n).fill(0);
     let rsum = 0;
     for (const id of seedIds) {
@@ -1990,7 +1921,7 @@ export class ToolHandler {
         const si = s[i]!;
         if (si === 0) continue;
         const d = adj[i]!.length;
-        if (d === 0) { next[i]! += si; continue; } // dangling: keep its mass
+        if (d === 0) { next[i]! += si; continue; } // 悬挂节点：保留其质量
         const share = si / d;
         for (const j of adj[i]!) next[j]! += share;
       }
@@ -2001,15 +1932,15 @@ export class ToolHandler {
   }
 
   /**
-   * Handle synapse_explore — deep exploration in a single call
+   * 处理 synapse_explore——单次调用的深度探索
    *
-   * Strategy: find relevant symbols via graph traversal, group by file,
-   * then read contiguous file sections covering all symbols per file.
-   * This replaces multiple synapse_node + Read calls.
+   * 策略：通过图遍历找到相关符号，按文件分组，
+   * 然后读取每个文件中覆盖所有符号的连续区段。
+   * 此方法取代多次 synapse_node + Read 调用。
    *
-   * Output size is adaptive to project file count via
-   * `getExploreOutputBudget` — see #185 for why a fixed 35k cap was a
-   * tax on small projects while earning its keep on large ones.
+   * 输出大小通过 `getExploreOutputBudget` 自适应于项目文件数——
+   * 参见 #185 了解为何固定 35k 上限对小项目是税收
+   * 而对大型项目确实有其价值。
    */
   private async handleExplore(args: Record<string, unknown>): Promise<ToolResult> {
     const query = this.validateString(args.query, 'query');
@@ -2018,9 +1949,8 @@ export class ToolHandler {
     const cg = this.getSynapse(args.projectPath as string | undefined);
     const projectRoot = cg.getProjectRoot();
 
-    // Resolve adaptive output budget from project size. Falls back to the
-    // largest-tier defaults if stats aren't available, which preserves
-    // pre-#185 behavior for callers that hit the rare stats failure.
+    // 从项目规模解析自适应输出预算。若统计不可用，
+    // 回退到最大层级默认值，保留 #185 之前的行为。
     let budget: ExploreOutputBudget;
     try {
       budget = getExploreOutputBudget(cg.getStats().fileCount);
@@ -2029,10 +1959,10 @@ export class ToolHandler {
     }
     const maxFiles = clamp((args.maxFiles as number) || budget.defaultMaxFiles, 1, 20);
 
-    // Step 1: Find relevant context with generous parameters.
-    // Use a large maxNodes budget — explore has its own 35k char output limit
-    // that prevents context bloat, so more nodes just means better coverage
-    // across entry points (especially for large files like Svelte components).
+    // 步骤 1：以宽松参数查找相关上下文。
+    // 使用较大的 maxNodes 预算——explore 有自己的 35k 字符输出限制
+    // 防止上下文膨胀，因此更多节点意味着更好的入口点覆盖
+    //（尤其对于大型文件，如 Svelte 组件）。
     const subgraph = await cg.findRelevantContext(query, {
       searchLimit: 8,
       traversalDepth: 3,
@@ -2044,14 +1974,13 @@ export class ToolHandler {
       return this.textResult(`No relevant code found for "${query}"`);
     }
 
-    // Graph-aware glue: findRelevantContext builds the subgraph from name/text
-    // search, so a method that BRIDGES named symbols — e.g. App.tsx's
-    // triggerRender, which calls the named triggerUpdate — is never a search hit
-    // and gets missed, forcing the agent to Read the file to trace it. Pull in
-    // the callers/callees of the entry (root) nodes, but ONLY those that live in
-    // files the subgraph already surfaces (where the agent reads to fill gaps),
-    // so we add wiring without dragging in unrelated files. These get an
-    // importance boost below so they survive the per-file cluster budget.
+    // 图感知胶合：findRelevantContext 从名称/文本搜索构建子图，
+    // 因此桥接命名符号的方法——例如 App.tsx 的 triggerRender，
+    // 它调用命名的 triggerUpdate——从不是搜索命中，会被遗漏，
+    // 迫使智能体读取文件来追踪它。拉入入口（根）节点的调用者/被调用者，
+    // 但仅限于子图已呈现的文件中的节点（智能体读取来填补空白的文件），
+    // 这样我们添加了连线而不引入无关文件。
+    // 这些节点在下方获得重要性加成，使其能在单文件聚类预算内存活。
     const glueNodeIds = new Set<string>();
     const subgraphFiles = new Set<string>();
     for (const n of subgraph.nodes.values()) subgraphFiles.add(n.filePath);
@@ -2076,15 +2005,13 @@ export class ToolHandler {
       }
     }
 
-    // Named-symbol seeding: findRelevantContext is an FTS/text rank, so a query
-    // that's a BAG of symbol names skewed toward one phase (Alamofire: 5 build
-    // terms, each a high-frequency name, vs 3 validate terms) lets the
-    // lower-frequency names fall below the search cut — their definitions, and
-    // whole files (Validation.swift), never get gathered, so they can never
-    // render and the agent Reads them. Resolve EACH named token to its
-    // substantive definition (skip empty stubs + test files, same relevance the
-    // trace endpoint picker uses) and inject it as an entry, so every symbol the
-    // agent explicitly named is in the subgraph and its file is scored.
+    // 命名符号种子注入：findRelevantContext 是 FTS/文本排名，因此
+    // 由符号名称包组成的查询若偏向某一阶段（Alamofire：5 个 build 术语，
+    // 每个都是高频名称，vs 3 个 validate 术语），低频名称会落在搜索截止线以下——
+    // 它们的定义和整个文件（Validation.swift）永远不会被收集，
+    // 因此无法渲染，智能体只好读取它们。将每个命名 token 解析到其
+    // 实质性定义（跳过空桩 + 测试文件，与 trace 端点选择器相同的相关性）
+    // 并作为入口注入，使智能体明确命名的每个符号都在子图中，且其文件被评分。
     const namedSeedIds = new Set<string>();
     {
       const FILE_EXT = /\.(?:java|kt|kts|ts|tsx|js|jsx|mjs|cjs|cs|py|go|rb|php|swift|rs|cpp|cc|cxx|c|h|hpp|scala|lua|dart|vue|svelte|astro)$/i;
@@ -2096,14 +2023,13 @@ export class ToolHandler {
           .map((t) => t.replace(FILE_EXT, '').trim())
           .filter((t) => t.length >= 3 && /^[A-Za-z_$][\w$]*(?:(?:::|\.)[\w$]+)*$/.test(t))
       )].slice(0, 16);
-      // PascalCase tokens in the query are type/file disambiguators — when the
-      // agent writes "DataRequest task validate", the `task`/`validate` it wants
-      // are DataRequest's, NOT the same-named overloads in Validation.swift /
-      // Concurrency.swift / the abstract base. Used below to bias overloaded
-      // names toward the file/class the query also names. EXCLUDE the project
-      // name (a PascalCase token a user naturally includes) — it names the whole
-      // repo, so biasing toward it just pulls overloads to whichever stack
-      // embeds it, re-burying the rest (#720).
+      // 查询中的 PascalCase token 是类型/文件消歧符——当智能体
+      // 写 "DataRequest task validate" 时，它想要的 `task`/`validate`
+      // 是 DataRequest 的，而非 Validation.swift/Concurrency.swift/抽象基类
+      // 中同名的重载。用于将重载名称偏向查询同时命名的文件/类。
+      // 排除项目名称（用户自然包含的 PascalCase token）——
+      // 它命名整个仓库，因此偏向它只会将重载拉到嵌入它的那个栈，
+      // 重新埋没其余部分（#720）。
       const projectNameTokens = cg.getProjectNameTokens();
       const typeTokens = tokens.filter(
         (o) => /^[A-Z][A-Za-z0-9]{3,}/.test(o) && !projectNameTokens.has(normalizeNameToken(o)),
@@ -2114,22 +2040,22 @@ export class ToolHandler {
           return n.filePath.toLowerCase().includes(lc) || n.qualifiedName.toLowerCase().includes(lc);
         });
       for (const t of tokens) {
-        // Enumerate ALL defs of a bare token via the direct index, not FTS — a
-        // 50+-overload name (tokio `poll`) ranks the wanted def (`Harness::poll`)
-        // below the FTS cut, so findAllSymbols would never see it and the
-        // type-token bias below couldn't pick the harness.rs one. (Same fix as
-        // synapse_node's findSymbolMatches.) Qualified tokens keep findAllSymbols.
+        // 通过直接索引枚举裸 token 的所有定义，而非 FTS——
+        // 50+ 重载名称（tokio `poll`）会将期望的定义（`Harness::poll`）
+        // 排在 FTS 截止线以下，使 findAllSymbols 永远看不到它，
+        // 且下方的类型 token 偏向无法选择 harness.rs 中的那个。
+        //（与 synapse_node 的 findSymbolMatches 相同的修复。）限定 token 保留 findAllSymbols。
         const isQual = /[.\/]|::/.test(t);
         const raw = isQual ? this.findAllSymbols(cg, t).nodes : cg.getNodesByName(t);
         const cands = raw
           .filter((n) => CALLABLE.has(n.kind) && !isTestPath(n.filePath))
           .sort((a, b) => (bodyLines(b) > 1 ? 1 : 0) - (bodyLines(a) > 1 ? 1 : 0) || bodyLines(b) - bodyLines(a));
-        // A specific name (<=3 defs) injects all its defs. An overloaded name
-        // (`validate` = 10, `request` = 44) would flood the subgraph, so inject
-        // only: the overloads whose file/class the query ALSO names (the agent
-        // told us which one it wants — DataRequest's, not Validation.swift's),
-        // capped; else fall back to the single most-substantive def. This is the
-        // explore-side mirror of synapse_node's overload disambiguation.
+        // 特定名称（定义数 <=3）注入其所有定义。重载名称
+        //（`validate` = 10，`request` = 44）会淹没子图，因此仅注入：
+        // 文件/类在查询中也被命名的重载（智能体告诉了我们它想要哪个——
+        // DataRequest 的，而非 Validation.swift 的），加上上限；
+        // 否则回退到唯一最实质性的定义。
+        // 这是 synapse_node 重载消歧的 explore 侧镜像。
         let picks: Node[];
         if (cands.length <= 3) {
           picks = cands;
@@ -2139,21 +2065,20 @@ export class ToolHandler {
         }
         for (const n of picks) {
           if (!subgraph.nodes.has(n.id)) subgraph.nodes.set(n.id, n);
-          // Mark as a named seed EVEN IF the FTS gather already had it — being
-          // "named by the agent" is independent of whether search happened to
-          // surface it, and it drives the +50 score, the gate, and the
-          // named-file sort below. (Previously only NEW injections were marked,
-          // so a named symbol FTS already gathered never sorted to the top.)
+          // 将其标记为命名种子，即使 FTS 收集已经包含了它——
+          // "被智能体命名"独立于搜索是否恰好呈现了它，
+          // 且它驱动 +50 评分、门控，以及下方的命名文件排序。
+          //（此前只有新注入的节点被标记，因此 FTS 已收集的命名符号从不排至顶部。）
           namedSeedIds.add(n.id);
         }
       }
     }
 
-    // Step 2: Group nodes by file, score by relevance
+    // 步骤 2：按文件分组节点，按相关性评分
     const fileGroups = new Map<string, { nodes: Node[]; score: number }>();
     const entryNodeIds = new Set([...subgraph.roots, ...namedSeedIds]);
 
-    // Build a set of nodes directly connected to entry points (depth 1)
+    // 构建与入口点直接连接的节点集合（深度 1）
     const connectedToEntry = new Set<string>();
     for (const edge of subgraph.edges) {
       if (entryNodeIds.has(edge.source)) connectedToEntry.add(edge.target);
@@ -2161,22 +2086,21 @@ export class ToolHandler {
     }
 
     for (const node of subgraph.nodes.values()) {
-      // Skip import/export nodes — they add noise without information
+      // 跳过 import/export 节点——它们增加噪音而无信息
       if (node.kind === 'import' || node.kind === 'export') continue;
-      // SECURITY (#383): never render the on-disk source of a config-leaf
-      // (Spring application.{yml,properties} key) — its line is `key = <secret>`,
-      // so whole-file/cluster rendering here would push secrets into context
-      // unbidden. The key still appears in the flow/symbol listing above.
+      // 安全性（#383）：永远不渲染配置叶节点
+      //（Spring application.{yml,properties} 键）的磁盘源——
+      // 其行是 `key = <secret>`，因此此处的全文件/聚类渲染
+      // 会将密钥不经意地推入上下文。该键仍会出现在上方的流程/符号列表中。
       if (isConfigLeafNode(node)) continue;
 
       const group = fileGroups.get(node.filePath) || { nodes: [], score: 0 };
       group.nodes.push(node);
-      // Score: a NAMED-SEED node (a symbol the agent named that FTS missed, now
-      // injected) is worth far more than a mere reference — its file is where the
-      // answer lives. Without this, an incidental file that name-drops the flow
-      // (Combine.swift references request/task → score 23 from connected nodes)
-      // outranks the file that DEFINES a named symbol (Validation.swift's
-      // `validate` → 10) and steals its render slot. Definition ≫ reference.
+      // 评分：命名种子节点（智能体命名但 FTS 遗漏、现被注入的符号）
+      // 的价值远超一个普通引用——其文件是答案所在的地方。没有此评分，
+      // 偶然提到流程的文件（Combine.swift 引用 request/task → 来自连接节点 23 分）
+      // 会超过定义命名符号的文件（Validation.swift 的 `validate` → 10 分），
+      // 抢占其渲染槽。定义 ≫ 引用。
       if (namedSeedIds.has(node.id)) {
         group.score += 50;
       } else if (entryNodeIds.has(node.id)) {
@@ -2189,14 +2113,14 @@ export class ToolHandler {
       fileGroups.set(node.filePath, group);
     }
 
-    // Only include files that have entry points or nodes directly connected to entry points
+    // 仅包含含有入口点或与入口点直接连接的节点的文件
     let relevantFiles = [...fileGroups.entries()].filter(([, group]) => group.score >= 3);
 
-    // Extract query terms for relevance checking
+    // 提取查询词以进行相关性检查
     const queryTerms = query.toLowerCase().split(/\s+/).filter(t => t.length >= 3);
 
-    // Test/spec/icon/i18n file detector — used both for the pre-sort hard
-    // filter (tiny tier) and the comparator deprioritization (all tiers).
+    // 测试/spec/图标/i18n 文件检测器——用于预排序硬过滤
+    //（极小层级）和比较器降权（所有层级）。
     const isLowValue = (p: string) => {
       const lp = p.toLowerCase();
       return (
@@ -2216,14 +2140,13 @@ export class ToolHandler {
       );
     };
 
-    // Hard-exclude test/spec files (ALL tiers, not just tiny). One slipped test
-    // file dominates the per-file budget on small repos (cobra's `command_test.go`
-    // displaced `args.go`) AND wastes budget on large ones (Django's
-    // `custom_lookups/tests.py` ate ~2.3 KB of the 28 KB cap, crowding out the
-    // SQLCompiler mechanism the agent then Read). A test file almost never answers
-    // an architecture question. Skip when the query itself is about tests — the
-    // legitimate "explore the tests" case — and only cut if ≥2 non-test candidates
-    // remain (else tests are the only signal for this area).
+    // 硬排除测试/spec 文件（所有层级，不仅限于极小层级）。一个漏入的测试
+    // 文件会主导小型仓库的单文件预算（cobra 的 `command_test.go`
+    // 挤掉了 `args.go`），且在大型仓库上也浪费预算（Django 的
+    // `custom_lookups/tests.py` 消耗了 28 KB 上限中的约 2.3 KB，
+    // 挤占了智能体随后读取的 SQLCompiler 机制）。测试文件几乎从不能回答
+    // 架构问题。当查询本身关于测试时跳过——这是合理的"探索测试"情况——
+    // 且仅在还剩 ≥2 个非测试候选时才删除（否则测试是该区域的唯一信号）。
     {
       const queryMentionsTests = /\b(test|tests|testing|spec|verify|verifies)\b/i.test(query);
       if (!queryMentionsTests) {
@@ -2234,10 +2157,10 @@ export class ToolHandler {
       }
     }
 
-    // Secondary signal: how many DISTINCT query terms each file matches (path +
-    // symbol names). Kept only as a tiebreak — the PRIMARY relevance is graph
-    // connectivity below. (Term counting alone tied the real central file with
-    // incidental same-word matches; it's a weak text signal, not the ranker.)
+    // 次要信号：每个文件匹配的不同查询词数量（路径 + 符号名）。
+    // 仅作为决胜信号保留——主要相关性是下方的图连通性。
+    //（单独词项计数将真正的中心文件与偶然的同词匹配并列；
+    // 这是弱文本信号，不是排名器。）
     const uniqueQueryTerms = [...new Set(queryTerms)].filter(t => t.length >= 3);
     const fileTermHits = new Map<string, number>();
     for (const [fp, group] of relevantFiles) {
@@ -2247,12 +2170,12 @@ export class ToolHandler {
       fileTermHits.set(fp, hits);
     }
 
-    // PRIMARY relevance: graph connectivity (Random-Walk-with-Restart from the
-    // matched seeds — see computeGraphRelevance). Aggregate each file's nodes'
-    // walk mass. This is the signal text search lacks: the real cluster
-    // (org-user.storage.ts, call-connected to the matches) accrues mass; a lone
-    // text match (LensSwitcher.swift, matched "switch" but calls nothing in the
-    // flow) gets only its restart probability → ~0, and is dropped by the gate.
+    // 主要相关性：图连通性（从匹配种子出发的随机游走重启——
+    // 参见 computeGraphRelevance）。汇总每个文件节点的游走质量。
+    // 这是文本搜索缺少的信号：真正的簇（org-user.storage.ts，与匹配
+    // 调用连接）积累质量；孤立的文本匹配（LensSwitcher.swift，
+    // 匹配了"switch"但未调用流程中的任何内容）仅获得其重启概率 → ~0，
+    // 被门控过滤掉。
     const nodeRwr = this.computeGraphRelevance(
       [...subgraph.nodes.keys()], subgraph.edges, entryNodeIds,
     );
@@ -2265,11 +2188,11 @@ export class ToolHandler {
     }
     const maxGraph = Math.max(0, ...fileGraphScore.values());
 
-    // Central file(s): the 1-2 most graph-central files that also match the
-    // query textually (so a connected hub-utility with no term match isn't
-    // mistaken for the subject). The heart of the answer — they earn the larger
-    // WHOLE-FILE ceiling below (a god-file central file still exceeds it and
-    // falls to generous full-method sectioning — never a whole dump).
+    // 中心文件：1–2 个图连通性最高且也在文本上匹配查询的文件
+    //（使无词项匹配的连接枢纽工具文件不被误认为主题）。
+    // 答案的核心——它们在下方赢得更大的全文件上限
+    //（上帝文件的中心文件仍会超过该上限，
+    // 回退到宽松的全方法节——永远不全量转储）。
     const centralFiles = new Set(
       [...fileGraphScore.entries()]
         .filter(([fp, g]) => g > 0 && (fileTermHits.get(fp) ?? 0) >= 1)
@@ -2278,30 +2201,27 @@ export class ToolHandler {
         .map(([f]) => f),
     );
 
-    // Files that DEFINE a symbol the agent named (or a subgraph root). These are
-    // the highest-relevance files there are — the agent asked for them by name —
-    // so the connectivity gate below must never drop them, even when their RWR
-    // mass is low (a leaf family file like codec.ts is call-connected to little
-    // but is exactly what the agent queried). Without this protection the gate
-    // prunes a named file and the agent Reads it back.
+    // 定义了智能体命名符号（或子图根）的文件。这些是相关性最高的文件——
+    // 智能体按名称请求了它们——因此下方的连通性门控绝不能删除它们，
+    // 即使其 RWR 质量较低（叶族文件如 codec.ts 与其他文件的调用连接很少，
+    // 但正是智能体查询的内容）。没有此保护，门控会剪掉命名文件，
+    // 智能体只好读回它。
     const entryFiles = new Set<string>();
     for (const id of entryNodeIds) {
       const n = subgraph.nodes.get(id);
       if (n) entryFiles.add(n.filePath);
     }
 
-    // Relevance gate (so the generous budget is a CEILING, not a target): keep a
-    // file only if it is STRUCTURALLY relevant by ANY of:
-    //   - graph score within a fraction of the top (it's on/near the flow), OR
-    //   - central (a query entry-point lives here), OR
-    //   - it DEFINES a symbol the agent named (entryFiles), OR
-    //   - it matches >= 2 DISTINCT named query terms — a strong text signal that
-    //     the agent is asking about this file even when nothing calls it (codec.ts:
-    //     the agent named `encode`/`Codec`/`JsonCodec`, all leaf classes with zero
-    //     RWR mass — graph alone wrongly drops it).
-    // A lone text match on one shared word (LensSwitcher: term=1, g~0) is still
-    // dropped, so the budget never fills with incidental files. Guarded so it
-    // never prunes below 2.
+    // 相关性门控（使宽松的预算成为上限而非目标）：仅保留满足以下任一条件的文件：
+    //   - 图分数在顶部的某个比例内（位于流程上/附近），或
+    //   - 中心文件（查询入口点在此处），或
+    //   - 定义了智能体命名的符号（entryFiles），或
+    //   - 匹配 >= 2 个不同命名查询词——一个强文本信号，
+    //     表明智能体在询问此文件，即使没有任何东西调用它
+    //（codec.ts：智能体命名了 `encode`/`Codec`/`JsonCodec`，
+    //     所有都是 RWR 质量为零的叶类——仅图会错误地删除它）。
+    // 单一共享词的文本匹配（LensSwitcher：词数=1，g~0）仍被删除，
+    // 因此预算不会被偶然文件填满。已保护，从不将文件削减到 2 以下。
     if (maxGraph > 0) {
       const gated = relevantFiles.filter(([fp]) =>
         (fileGraphScore.get(fp) ?? 0) >= maxGraph * 0.06
@@ -2312,15 +2232,14 @@ export class ToolHandler {
       if (gated.length >= 2) relevantFiles = gated;
     }
 
-    // Sort files: graph-central first, then distinct-term match, then the
-    // existing low-value/generated/score tiebreaks.
-    // Files that DEFINE a symbol the agent NAMED. These sort first — ahead of
-    // graph connectivity — because the agent asked for them by name. Without
-    // this, a named leaf override reached only by dynamic dispatch (Alamofire's
-    // `DataRequest.task`/`validate`, low RWR mass) sorts below the high-
-    // connectivity abstract base (`Request.swift`) and the same-named overloads
-    // in other files (`Validation.swift`), falls outside the budget, and the
-    // agent Reads it. The named file is the answer — rank it at the top.
+    // 文件排序：图中心文件优先，然后是不同词项匹配，
+    // 然后是现有的低价值/生成/分数决胜机制。
+    // 定义了智能体命名符号的文件。这些排在最前——优于图连通性——
+    // 因为智能体按名称请求了它们。没有此排序，仅通过动态分发到达的
+    // 命名叶重载（Alamofire 的 `DataRequest.task`/`validate`，低 RWR 质量）
+    // 会排在高连通性抽象基类（`Request.swift`）和其他文件中同名重载
+    //（`Validation.swift`）之下，落在预算之外，智能体只好读取它。
+    // 命名文件就是答案——将其排在最前。
     const namedSeedFiles = new Set<string>();
     for (const id of namedSeedIds) {
       const n = subgraph.nodes.get(id);
@@ -2331,13 +2250,13 @@ export class ToolHandler {
       const aPath = a[0].toLowerCase();
       const bPath = b[0].toLowerCase();
 
-      // Agent-named files first (it asked for a symbol defined here by name).
+      // 智能体命名的文件优先（它按名称请求了此处定义的符号）。
       const aNamed = namedSeedFiles.has(a[0]) ? 1 : 0;
       const bNamed = namedSeedFiles.has(b[0]) ? 1 : 0;
       if (aNamed !== bNamed) return bNamed - aNamed;
 
-      // Graph connectivity is the next key (small epsilon so near-ties fall
-      // through to the text signal rather than coin-flipping on float noise).
+      // 图连通性是下一个关键（小 epsilon 使近似平分回落到
+      // 文本信号，而非在浮点噪音上随机翻转）。
       const aG = fileGraphScore.get(a[0]) ?? 0;
       const bG = fileGraphScore.get(b[0]) ?? 0;
       if (Math.abs(aG - bG) > maxGraph * 0.01) return bG - aG;
@@ -2350,12 +2269,11 @@ export class ToolHandler {
       const bLow = isLowValue(bPath);
       if (aLow !== bLow) return aLow ? 1 : -1;
 
-      // Deprioritize generated source (.pb.go / .pulsar.go / _mocks.go / …) —
-      // the agent rarely needs to see the protobuf scaffold or gomock output
-      // when asking about the actual flow, and dumping their bodies inflates
-      // the response (the cosmos Q3 explore otherwise leads with
-      // `expected_keepers_mocks.go`, displacing the real `tally.go` content
-      // and forcing the agent to Read tally.go anyway).
+      // 降权生成源文件（.pb.go / .pulsar.go / _mocks.go / …）——
+      // 智能体在询问真实流程时很少需要看 protobuf 脚手架或 gomock 输出，
+      // 而转储其正文会使响应膨胀（cosmos Q3 explore 否则会以
+      // `expected_keepers_mocks.go` 打头，挤占真实的 `tally.go` 内容，
+      // 迫使智能体读取 tally.go）。
       const aGen = isGeneratedFile(a[0]);
       const bGen = isGeneratedFile(b[0]);
       if (aGen !== bGen) return aGen ? 1 : -1;
@@ -2364,7 +2282,7 @@ export class ToolHandler {
       return b[1].nodes.length - a[1].nodes.length;
     });
 
-    // Step 3: Build relationship map
+    // 步骤 3：构建关系图
     const lines: string[] = [
       `## Exploration: ${query}`,
       '',
@@ -2372,22 +2290,22 @@ export class ToolHandler {
       '',
     ];
 
-    // Blast radius (always-on, compact): for the entry symbols, who depends on
-    // them + which tests cover them — locations only, no source — so the agent
-    // knows what to update/verify before editing without a separate call.
+    // 影响半径（始终开启，紧凑型）：对于入口符号，谁依赖它们
+    // + 哪些测试覆盖它们——仅位置，无源码——使智能体在编辑前
+    // 了解需要更新/验证的内容，无需单独调用。
     const blastRadius = this.buildBlastRadiusSection(cg, subgraph);
     if (blastRadius) lines.push(blastRadius);
 
-    // Relationship map — show how symbols connect
+    // 关系图——显示符号如何连接
     const significantEdges = subgraph.edges.filter(e =>
-      e.kind !== 'contains' // skip contains — it's implied by file grouping
+      e.kind !== 'contains' // 跳过 contains——文件分组已隐含了它
     );
 
     if (budget.includeRelationships && significantEdges.length > 0) {
       lines.push('### Relationships');
       lines.push('');
 
-      // Group edges by kind for readability
+      // 按类型分组边以提高可读性
       const byKind = new Map<string, Array<{ source: string; target: string }>>();
       for (const edge of significantEdges) {
         const sourceNode = subgraph.nodes.get(edge.source);
@@ -2413,20 +2331,19 @@ export class ToolHandler {
       }
     }
 
-    // Step 4: Read contiguous file sections
-    // Compute the flow spine once — used both to prepend the Flow section (below)
-    // and to gate adaptive source sizing: files on the spine get full source,
-    // off-spine peers skeletonize.
+    // 步骤 4：读取连续文件区段
+    // 一次性计算流程主干——用于在前面添加 Flow 节（下方），
+    // 并门控自适应源码大小：主干上的文件获得完整源码，
+    // 非主干的同类文件进行骨架化。
     const flow = this.buildFlowFromNamedSymbols(cg, query);
 
-    // Polymorphic-sibling detector for adaptive sizing. A class that implements/
-    // extends a supertype shared by >= MIN_SIBLINGS classes is one of many
-    // INTERCHANGEABLE implementations (OkHttp's 14 `: Interceptor` classes —
-    // showing one + the rest as signatures is enough), as opposed to a DISTINCT
-    // pipeline step (Excalidraw's `renderStaticScene`, which shares no supertype and
-    // must stay full or the agent loses real content). Only off-spine sibling files
-    // skeletonize; distinct steps and on-spine files keep full source. Cache
-    // supertype→(has ≥N implementers) so this stays a handful of edge queries.
+    // 自适应大小的多态兄弟检测器。实现/继承共享父类且实现者 >= MIN_SIBLINGS 的类
+    // 是许多可互换实现之一（OkHttp 的 14 个 `: Interceptor` 类——
+    // 显示一个加其余的签名就足够了），而非不同的流程步骤
+    //（Excalidraw 的 `renderStaticScene`，它没有共享父类，
+    // 必须保留完整，否则智能体会丢失真实内容）。
+    // 只有非主干的兄弟文件进行骨架化；不同步骤和主干文件保留完整源码。
+    // 缓存父类→（有 ≥N 个实现者）使其保持为少量边查询。
     const MIN_SIBLINGS = 3;
     const siblingSuper = new Map<string, boolean>();
     const isPolymorphicSibling = (nodes: Node[]): boolean => {
@@ -2445,16 +2362,16 @@ export class ToolHandler {
       return false;
     };
 
-    // A file that DEFINES a polymorphic supertype (a class/interface with ≥
-    // MIN_SIBLINGS implementers) AND co-locates its subclasses is a redundant
-    // "family" file — Django's compiler.py holds `SQLCompiler` + its 4 subclasses
-    // (SQLInsert/Update/Delete/AggregateCompiler) in 2,266 lines. Such files are
-    // huge and read-anyway, so they should STILL skeletonize even when the agent
-    // named a method in them: a full one eats ~6.5K of the explore budget (Django
-    // is pinned at the 28K cap, truncating), starving the sibling files the agent
-    // then Reads. This flag OVERRIDES the named-callable spare below — it does NOT
-    // by itself spare a file. (OkHttp's RealCall implements the `Lockable` mixin
-    // but defines no ≥3-impl supertype, so the named spare keeps it full.)
+    // 定义多态父类的文件（有 >=MIN_SIBLINGS 实现者的类/接口）
+    // 且与其子类并列的是冗余的"族"文件——
+    // Django 的 compiler.py 在 2266 行中包含 `SQLCompiler` 及其 4 个子类
+    //（SQLInsert/Update/Delete/AggregateCompiler）。此类文件
+    // 体量巨大且无论如何都会被读取，因此即使智能体在其中命名了一个方法，
+    // 也应仍然进行骨架化：一个完整文件消耗约 6.5K 的 explore 预算
+    //（Django 被钉在 28K 上限，截断），使智能体随后读取的兄弟文件挨饿。
+    // 此标志会覆盖下方的命名可调用保留——它本身不会保留一个文件。
+    //（OkHttp 的 RealCall 实现了 `Lockable` mixin 但没有定义 ≥3 实现者的父类，
+    // 因此命名保留使其保持完整。）
     const superMany = new Map<string, boolean>();
     const definesPolymorphicSupertype = (nodes: Node[]): boolean => {
       for (const n of nodes) {
@@ -2482,12 +2399,12 @@ export class ToolHandler {
 
     for (const [filePath, group] of sortedFiles) {
       if (filesIncluded >= maxFiles) break;
-      // A file DEFINES a named/spine symbol (the answer) vs merely references the
-      // flow. Past 90% budget, stop pulling INCIDENTAL files — but keep scanning
-      // for necessary ones, which render even past the cap (bounded by maxFiles).
-      // Without this `continue` (was an unconditional `break`), the loop stopped
-      // after the build + validators-exec files and never reached the ranked-in
-      // validate-logic file (Alamofire's Validation.swift).
+      // 文件定义了一个命名/主干符号（答案）vs 仅引用了流程。
+      // 超过 90% 预算后，停止引入非必要文件——但继续扫描必要文件，
+      // 这些文件即使超过上限也会渲染（受 maxFiles 限制）。
+      // 没有此 `continue`（之前是无条件 `break`），循环在
+      // build + validators-exec 文件后停止，从未到达排名靠前的
+      // validate-logic 文件（Alamofire 的 Validation.swift）。
       const fileNecessary = group.nodes.some(n =>
         entryNodeIds.has(n.id) || flow.pathNodeIds.has(n.id) || flow.uniqueNamedNodeIds.has(n.id));
       if (!fileNecessary && totalChars > budget.maxOutputChars * 0.9) continue;
@@ -2505,38 +2422,36 @@ export class ToolHandler {
       const fileLines = fileContent.split('\n');
       const lang = group.nodes[0]?.language || '';
 
-      // Adaptive sizing (SYNAPSE_ADAPTIVE_EXPLORE, default on): collapse a file
-      // to a per-symbol view when it's a redundant member of a polymorphic family.
-      // Engages iff ALL hold:
-      //   1. a flow spine exists,
-      //   2. no symbol in the file is on that spine (it's not the mechanism path),
-      //   3. it IS a polymorphic sibling (≥ MIN_SIBLINGS impls of a shared supertype),
-      //   4. it is NOT SPARED, where a file is spared iff the agent named a
-      //      (near-)UNIQUE callable in it (`getResponseWithInterceptorChain`, 1 def →
-      //      keep RealCall.kt full) UNLESS the file DEFINES the family supertype (a
-      //      base+subclasses "family" file like Django's compiler.py — collapse it).
-      //      Uniqueness matters: `as_sql` has 110 defs across every Compiler/Expression
-      //      subclass; naming it must NOT keep every backend variant + test file full
-      //      and flood the budget. That's why the spare reads uniqueNamedNodeIds.
-      // Within a collapsed file the render is PER-SYMBOL (condition B): a method the
-      // agent NAMED or that's on the spine is shown with its FULL body (so the agent
-      // doesn't Read the file back for it — Django's SQLCompiler.execute_sql/as_sql);
-      // every other symbol is just its signature. So the base mechanism survives while
-      // the file's other ~80 symbols + the redundant subclasses collapse to one line each.
+      // 自适应大小（SYNAPSE_ADAPTIVE_EXPLORE，默认开启）：当文件是多态族的
+      // 冗余成员时，将其折叠为每符号视图。
+      // 当以下所有条件成立时触发：
+      //   1. 存在流程主干，
+      //   2. 文件中没有符号在该主干上（不是机制路径），
+      //   3. 它是多态兄弟（共享父类的 >= MIN_SIBLINGS 实现），
+      //   4. 它未被保留，其中文件被保留当且仅当智能体命名了其中的
+      //      一个（近）唯一的可调用符号（`getResponseWithInterceptorChain`，1 个定义 →
+      //      保持 RealCall.kt 完整），除非文件定义了族父类（
+      //      像 Django 的 compiler.py 这样的 base+子类"族"文件——折叠它）。
+      //      唯一性很重要：`as_sql` 在每个 Compiler/Expression 子类中有 110 个定义；
+      //      命名它绝不能让每个后端变体 + 测试文件保持完整并淹没预算。
+      //      这就是保留读取 uniqueNamedNodeIds 的原因。
+      // 在折叠文件中，渲染是每符号的（条件 B）：智能体命名或在主干上的
+      // 方法显示其完整正文（使智能体不再读取文件来查找它——
+      // Django 的 SQLCompiler.execute_sql/as_sql）；每个其他符号只显示签名。
+      // 因此基本机制得以保留，而文件其他约 80 个符号 + 冗余子类
+      // 各折叠为一行。
       const spareNamed = group.nodes.some(n => flow.uniqueNamedNodeIds.has(n.id));
       const fileDefinesSuper = definesPolymorphicSupertype(group.nodes);
       const spared = spareNamed && !fileDefinesSuper;
       const CALLABLE_BODY = new Set(['method', 'function', 'constructor', 'component']);
       const hasSpineNode = group.nodes.some(n => flow.pathNodeIds.has(n.id));
-      // On-spine god-file: the flow path runs THROUGH this file, but it also holds
-      // many OTHER named methods, and rendering all of them in full blows the
-      // per-file budget and starves the other flow files (Alamofire: the agent
-      // names ~7 Session.swift methods — the build spine PLUS off-path
-      // task/didCompleteTask — far past the whole response budget). Engage the
-      // per-symbol view to keep the SPINE full and collapse the off-path named
-      // methods to signatures. Only when there IS off-path content to shed —
-      // otherwise the spine is irreducible (a sequential flow has no redundancy),
-      // so leave it to the normal full render.
+      // 主干上帝文件：流程路径穿过此文件，但它还包含许多其他命名方法，
+      // 全部完整渲染会超过单文件预算并使其他流程文件挨饿
+      //（Alamofire：智能体命名了约 7 个 Session.swift 方法——
+      // build 主干加上路径外的 task/didCompleteTask——远超整个响应预算）。
+      // 启用每符号视图，保持主干完整并将路径外的命名方法折叠为签名。
+      // 仅当存在可以去除的路径外内容时才启用——
+      // 否则主干不可再简化（顺序流程无冗余），留给正常完整渲染。
       const namedBodyChars = group.nodes
         .filter(n => CALLABLE_BODY.has(n.kind) && (flow.pathNodeIds.has(n.id) || flow.uniqueNamedNodeIds.has(n.id)))
         .reduce((s, n) => s + fileLines.slice(n.startLine - 1, n.endLine).join('\n').length, 0);
@@ -2548,24 +2463,23 @@ export class ToolHandler {
         const syms = group.nodes
           .filter(n => n.kind !== 'import' && n.kind !== 'export' && n.startLine > 0)
           .sort((a, b) => a.startLine - b.startLine);
-        // Pass 1: choose which symbols get a FULL body, by priority, greedily within
-        // a per-file body cap — so one huge family file can't body every named method
-        // and crowd out the other flow files (Django's query.py). A symbol earns a
-        // body if it's on-spine, or UNIQUELY named (`SQLCompiler.execute_sql`), or a
-        // co-named method WHEN this file DEFINES the family supertype (so the base
-        // `SQLCompiler.as_sql` body shows, but the 110 leaf `as_sql` overrides — and
-        // OkHttp's 5 `intercept`s if the agent names `intercept` — stay signatures).
+        // 第 1 轮：按优先级贪婪地在单文件正文上限内选择哪些符号获得完整正文——
+        // 防止一个庞大的族文件将每个命名方法全量展示而挤占其他流程文件
+        //（Django 的 query.py）。符号获得正文若：在主干上，或唯一命名
+        //（`SQLCompiler.execute_sql`），或文件定义了族父类时的共命名方法
+        //（使基础 `SQLCompiler.as_sql` 正文显示，但 110 个叶 `as_sql` 重载——
+        // 以及智能体命名 `intercept` 时 OkHttp 的 5 个 `intercept`——保持签名）。
         const prio = (n: Node) => !CALLABLE_BODY.has(n.kind) ? 99
           : flow.pathNodeIds.has(n.id) ? 0
           : flow.uniqueNamedNodeIds.has(n.id) ? 1
           : (fileDefinesSuper && flow.namedNodeIds.has(n.id)) ? 2 : 99;
-        // One ~250-line WINDOW per file. syms are taken by priority (spine first,
-        // then uniquely-named, then family-base), and the cap applies to ALL of
-        // them — including the spine — so a big-spine god-file (tokio's worker.rs:
-        // run→run_task→next_task→steal_work) can't eat the whole response and
-        // starve the co-flow file (harness.rs's poll). The native agent windows
-        // such a file too (~190 lines at a time), so this mimics, not truncates.
-        // Always emit ≥1 (never an empty section).
+        // 每个文件约 250 行的窗口。符号按优先级获取（主干优先，
+        // 然后唯一命名，然后族基），且上限适用于所有符号——包括主干——
+        // 防止庞大的主干上帝文件（tokio 的 worker.rs：
+        // run→run_task→next_task→steal_work）消耗整个响应并使
+        // 协流文件（harness.rs 的 poll）挨饿。原生智能体窗口也是如此
+        //（每次约 190 行），所以这是模拟，不是截断。
+        // 至少总发出 ≥1（绝不为空节）。
         const bodyCap = budget.maxCharsPerFile * 1.5;
         const bodyIds = new Set<string>();
         let bodyChars = 0;
@@ -2575,11 +2489,9 @@ export class ToolHandler {
           bodyIds.add(n.id);
           bodyChars += sz;
         }
-        // Pass 2: render in line order — full body for chosen symbols, else the
-        // signature line (capped, with a "+N more" tail so the structure map of a
-        // god-file doesn't itself bloat the budget).
-        const skel: string[] = [];
-        let coveredUntil = 0; // skip symbols already inside an emitted body
+        // 第 2 轮：按行序渲染——选中的符号给出完整正文，其余给出签名行
+        //（有上限，带 "+N more" 尾，使上帝文件的结构图不本身膨胀预算）。
+        const skel: string[] = [];        let coveredUntil = 0; // 跳过已在已发出正文内的符号
         let sigCount = 0, sigDropped = 0;
         const SIG_MAX = Math.max(12, budget.maxSymbolsInFileHeader * 2);
         for (const n of syms) {
@@ -2590,8 +2502,8 @@ export class ToolHandler {
             skel.push(exploreLineNumbersEnabled() ? numberSourceLines(body, n.startLine) : body);
             coveredUntil = end;
           } else {
-            // Elide the body, emit the signature. node.startLine can point at a
-            // decorator/annotation, so scan forward for the line that names the symbol.
+            // 省略正文，发出签名。node.startLine 可能指向装饰器/注解，
+            // 因此向前扫描以找到命名该符号的行。
             let lineNo = n.startLine;
             for (let k = 0; k < 4; k++) {
               if ((fileLines[n.startLine - 1 + k] || '').includes(n.name)) { lineNo = n.startLine + k; break; }
@@ -2606,12 +2518,12 @@ export class ToolHandler {
         if (skel.length > 0) {
           const names = [...new Set(group.nodes.filter(n => n.kind !== 'import' && n.kind !== 'export').map(n => n.name))]
             .slice(0, budget.maxSymbolsInFileHeader).join(', ');
-          // Steer the agent to synapse_explore for an elided body — NEVER to
-          // Read. The old "Read for more" / "Read for a full body" tags invited
-          // a Read of the very file just skeletonized; on a central, wanted file
-          // (Session.swift, DataRequest.swift) that fired an over-investigation
-          // spiral (the agent Read the skeletonized file, then kept digging).
-          // CLAUDE.md: explore output must never tell the agent to Read.
+          // 将智能体引导到 synapse_explore 以获取已省略的正文——绝不引导到 Read。
+          // 旧的 "Read for more" / "Read for a full body" 标签会邀请
+          // 对刚刚骨架化的文件进行 Read；对于中心、需要的文件
+          //（Session.swift、DataRequest.swift），这会触发过度调查的螺旋
+          //（智能体读取骨架化文件，然后继续深挖）。
+          // CLAUDE.md：explore 输出绝不能告诉智能体去 Read。
           const tag = bodyIds.size > 0
             ? 'focused (the methods you named in full, the rest as signatures — synapse_explore a signature by name for its body; do NOT Read)'
             : 'skeleton (signatures only — synapse_explore a name for its full body; do NOT Read)';
@@ -2622,26 +2534,26 @@ export class ToolHandler {
         }
       }
 
-      // Whole-file rule: if a relevant file is small enough to afford, return it
-      // ENTIRELY instead of clustering. Clustering exists to tame god-files
-      // (App.tsx ~13k lines); on a ~134-line component a cluster is a lossy
-      // subset of a file the agent will just Read in full anyway — costing a
-      // round-trip and a re-read every later turn. Reserve clustering for files
-      // too big to ship whole. Still bounded by the total maxOutputChars check.
+      // 全文件规则：若相关文件足够小可以承受，则完整返回它，
+      // 而非聚类。聚类的目的是驯服上帝文件
+      //（App.tsx 约 13k 行）；对于约 134 行的组件，聚类是
+      // 智能体无论如何都会完整读取的文件的有损子集——
+      // 每次后续轮次都会花费一次往返和重读。将聚类保留给
+      // 太大而无法完整发送的文件。仍受总 maxOutputChars 检查约束。
       //
-      // CENTRAL files (where the query's entry points live) get a larger — but
-      // bounded — ceiling: they're the heart of the answer, the file(s) the agent
-      // would Read whole, so a genuinely small one comes back whole rather than as
-      // thin clusters. A LARGE central file (the 791-line org-user store) exceeds
-      // the ceiling and falls through to sectioning/clustering below — full method
-      // bodies + signatures — so we never dump (or overflow on) a whole god-file.
+      // 中心文件（查询入口点所在处）获得更大——但有界——的上限：
+      // 它们是答案的核心，是智能体会完整读取的文件，
+      // 因此真正较小的文件会完整返回，而非作为稀薄的聚类。
+      // 大型中心文件（791 行的 org-user store）超过上限，
+      // 回退到下方的分节/聚类——完整方法正文 + 签名——
+      // 因此我们永远不会转储（或溢出）整个上帝文件。
       const isCentralFile = centralFiles.has(filePath);
-      // Central files get a slightly larger whole-file window than peripheral ones,
-      // but a TIGHT one (~1.5× the per-file cap): the native read of a central file
-      // is a ~150–250 line orientation window, NOT the whole file. A flat "whole
-      // central file" both overflowed the inline cap AND starved the co-flow files
-      // (worker.rs ate the budget, dropping harness.rs's poll). A larger central
-      // file falls through to per-method windowing/clustering below.
+      // 中心文件获得比外围文件稍大的全文件窗口，
+      // 但是紧凑的（约 1.5× 单文件上限）：中心文件的原生读取
+      // 是约 150–250 行的定向窗口，而非整个文件。
+      // 一个单纯的"完整中心文件"既溢出了内联上限，
+      // 又使协流文件挨饿（worker.rs 消耗了预算，丢掉了 harness.rs 的 poll）。
+      // 较大的中心文件回退到下方的每方法窗口/聚类。
       const WHOLE_FILE_MAX_LINES = isCentralFile ? 280 : 220;
       const WHOLE_FILE_MAX_CHARS = isCentralFile
         ? Math.min(Math.max(0, budget.maxOutputChars - totalChars - 200), Math.round(budget.maxCharsPerFile * 1.5))
@@ -2659,9 +2571,9 @@ export class ToolHandler {
         const wholeHeader = `#### ${filePath} — ${omitted > 0 ? `${headerNames.join(', ')}, +${omitted} more` : headerNames.join(', ')}`;
 
         if (!fileNecessary && totalChars + wholeSection.length + 200 > budget.maxOutputChars) {
-          // Don't slice a whole file mid-method: an incidental file that doesn't
-          // fit is skipped; a necessary one (below) renders in full. Half a file
-          // forces the Read this is meant to prevent.
+          // 不要从中间切断整个文件：不适合的非必要文件被跳过；
+          // 必要的文件（下方）完整渲染。半个文件会迫使
+          // 本应防止的 Read。
           anyFileTrimmed = true;
           continue;
         }
@@ -2671,33 +2583,32 @@ export class ToolHandler {
         continue;
       }
 
-      // Cluster nearby symbols to avoid reading huge gaps between distant symbols.
-      // Sort by start line, then merge overlapping/adjacent ranges (within the
-      // adaptive gap threshold). Include both node ranges AND edge source
-      // locations so template sections with component usages/calls are
-      // covered (not just script block symbols).
+      // 聚类附近的符号，避免读取相距甚远的符号之间的巨大空隙。
+      // 按起始行排序，然后合并重叠/相邻范围（在
+      // 自适应间隔阈值内）。同时包含节点范围和边源
+      // 位置，使带有组件使用/调用的模板节也被覆盖
+      //（不仅限于脚本块符号）。
       //
-      // Each range carries an `importance` score so we can rank clusters
-      // when the per-file budget forces us to drop some: entry-point nodes
-      // are worth 10, directly-connected nodes 3, peripheral nodes 1, and
-      // bare edge-source lines 2 (less than a connected node but more than
-      // a peripheral one — they hint at a reference but aren't a definition).
-      // Container kinds whose body can span most/all of a file. When such a
-      // node covers most of the file we drop it from the ranges: keeping it
-      // would merge every method inside it into one giant cluster spanning
-      // the whole file, which then tail-trims down to just the container's
-      // opening lines (its header/declarations) and buries the methods the
-      // query actually asked about (#185 follow-up — Session.swift in
-      // Alamofire is the canonical case: the `Session` class spans ~1,400
-      // lines). We want the granular symbols inside, not the envelope.
+      // 每个范围带有 `importance` 分数，以便在单文件预算
+      // 迫使我们删除某些聚类时对其排名：入口点节点
+      // 价值 10，直接连接节点 3，外围节点 1，
+      // 裸边源行 2（少于连接节点但多于外围节点——
+      // 它们暗示引用，但不是定义）。
+      // 正文可能覆盖文件大部分/全部的容器类型。当这样的
+      // 节点覆盖文件大部分时，我们从范围中删除它：保留它
+      // 会将其中每个方法合并成一个跨越整个文件的巨大聚类，
+      // 然后尾部截断到只剩容器的开头行（其头部/声明），
+      // 埋没了查询实际询问的方法（#185 跟进——Alamofire 中
+      // Session.swift 是典型案例：`Session` 类跨越约 1400 行）。
+      // 我们想要其中的细粒度符号，而非外壳。
       const ENVELOPE_KINDS = new Set(['file', 'module', 'class', 'struct', 'interface', 'enum', 'namespace', 'protocol', 'trait', 'component']);
-      // Cluster from this file's gathered nodes PLUS any callable the agent NAMED that
-      // lives here. Explore's relevance gather can miss a named method def in a huge
-      // non-sibling file — Django's query.py is 3,040 lines and `_fetch_all` (L2237)
-      // was gathered only as call-reference edges, never as a def, so it formed no
-      // cluster and the agent Read it back. Inject named defs directly and rank them
-      // ABOVE connected/glue nodes (importance 9) so their cluster wins the per-file
-      // budget — the agent explicitly asked for these symbols.
+      // 从此文件收集的节点加上智能体命名的任何在此处的可调用符号中进行聚类。
+      // Explore 的相关性收集可能错过大型非兄弟文件中的命名方法定义——
+      // Django 的 query.py 有 3040 行，`_fetch_all`（L2237）
+      // 仅作为调用引用边被收集，从未作为定义，因此没有形成聚类，
+      // 智能体只好读取它。直接注入命名定义，并将其重要性排在
+      // 连接/胶合节点之上（重要性 9），使其聚类在单文件预算中胜出——
+      // 智能体明确请求了这些符号。
       const rangeNodes = new Map<string, Node>();
       for (const n of group.nodes) if (n.startLine > 0 && n.endLine > 0) rangeNodes.set(n.id, n);
       for (const id of flow.namedNodeIds) {
@@ -2706,22 +2617,22 @@ export class ToolHandler {
         if (n && n.filePath === filePath && n.startLine > 0 && n.endLine > 0) rangeNodes.set(id, n);
       }
       const ranges: Array<{ start: number; end: number; name: string; kind: string; importance: number }> = [...rangeNodes.values()]
-        // Drop whole-file envelope nodes (containers covering >50% of the file).
+        // 删除全文件外壳节点（覆盖 >50% 文件的容器）。
         .filter(n => !(ENVELOPE_KINDS.has(n.kind) && (n.endLine - n.startLine + 1) > fileLines.length * 0.5))
         .map(n => {
           let importance = 1;
           if (entryNodeIds.has(n.id)) importance = 10;
-          else if (flow.namedNodeIds.has(n.id)) importance = 9; // agent named it → keep its cluster
-          else if (glueNodeIds.has(n.id)) importance = 6; // bridging caller/callee of an entry
+          else if (flow.namedNodeIds.has(n.id)) importance = 9; // 智能体命名它→保留其聚类
+          else if (glueNodeIds.has(n.id)) importance = 6; // 入口点的桥接调用者/被调用者
           else if (connectedToEntry.has(n.id)) importance = 3;
           return { start: n.startLine, end: n.endLine, name: n.name, kind: n.kind, importance };
         });
 
-      // Add edge source locations in this file — captures template references
-      // (component usages, event handlers) that aren't nodes themselves.
-      // Query edges directly from the DB (not just the subgraph) because BFS
-      // traversal may have pruned template reference targets due to node budget.
-      const edgeLines = new Set<string>(); // dedup by "line:name"
+      // 添加此文件中的边源位置——捕获模板引用
+      // （组件使用、事件处理器），这些本身不是节点。
+      // 直接从数据库查询边（不仅限于子图），因为 BFS
+      // 遍历可能因节点预算而剪掉了模板引用目标。
+      const edgeLines = new Set<string>(); // 按 "行:名称" 去重
       for (const node of group.nodes) {
         const outgoing = cg.getOutgoingEdges(node.id);
         for (const edge of outgoing) {
@@ -2729,7 +2640,7 @@ export class ToolHandler {
           const key = `${edge.line}:${edge.target}`;
           if (edgeLines.has(key)) continue;
           edgeLines.add(key);
-          // Look up target name from subgraph first, fall back to edge kind
+          // 先从子图查找目标名称，回退到边类型
           const targetNode = subgraph.nodes.get(edge.target);
           const targetName = targetNode?.name ?? edge.kind;
           ranges.push({ start: edge.line, end: edge.line, name: targetName, kind: edge.kind, importance: 2 });
@@ -2770,36 +2681,34 @@ export class ToolHandler {
       }
       clusters.push(current);
 
-      // Build file section output from clusters, capped by per-file budget.
-      // The pathological case (#185): a file like Session.swift where every
-      // method is adjacent collapses into one cluster spanning the whole
-      // file, and dumping that into the agent's context is most of the
-      // token cost on small projects. We pick clusters in priority order
-      // until the per-file char cap is hit. Truly enormous single clusters
-      // get tail-trimmed with a marker.
+      // 从聚类构建文件节输出，受单文件预算限制。
+      // 病理案例（#185）：像 Session.swift 这样每个方法都相邻的文件
+      // 折叠成一个跨越整个文件的聚类，将其倾倒进智能体上下文
+      // 是小型项目上的大部分 token 开销。我们按优先级顺序
+      // 选取聚类，直到单文件字符上限被触及。真正巨大的单一聚类
+      // 会进行尾部截断并带有标记。
       const contextPadding = 3;
       const withLineNumbers = exploreLineNumbersEnabled();
       const buildSection = (c: { start: number; end: number }): string => {
         const startIdx = Math.max(0, c.start - 1 - contextPadding);
         const endIdx = Math.min(fileLines.length, c.end + contextPadding);
         const slice = fileLines.slice(startIdx, endIdx).join('\n');
-        // startIdx is 0-based, so the slice's first line is line startIdx + 1.
+        // startIdx 是基于 0 的，所以片段的第一行是 startIdx + 1 行。
         return withLineNumbers ? numberSourceLines(slice, startIdx + 1) : slice;
       };
-      // Language-neutral separator (no `//` — not a comment in Python, Ruby,
-      // etc.). With line numbers on, the line-number jump also signals the gap.
+      // 语言中立分隔符（不是 `//`——在 Python、Ruby 等中不是注释）。
+      // 开启行号后，行号跳转也表明了间隙。
       const GAP_MARKER = '\n\n... (gap) ...\n\n';
 
-      // Rank clusters for inclusion under the per-file cap. Entry-point
-      // clusters come first: a cluster containing a query entry point
-      // (importance 10) must outrank a dense block of mere declarations,
-      // otherwise on a large file like Session.swift the top-of-file class
-      // header + property list (many adjacent low-importance nodes, high
-      // density) wins the budget and buries the actual methods the query
-      // asked about (perform/didCreateURLRequest/task live deep in the
-      // file). Within the same importance tier, prefer density (score per
-      // line) so we still favor focused clusters over sprawling ones, then
-      // smaller span as a cheap-to-include tiebreak.
+      // 对单文件上限下的包含聚类进行排名。入口点聚类优先：
+      // 包含查询入口点的聚类（重要性 10）必须优于密集的
+      // 纯声明块，否则在 Session.swift 这样的大文件中，
+      // 文件顶部的类头 + 属性列表（许多相邻的低重要性节点，高密度）
+      // 会赢得预算，埋没查询询问的实际方法
+      //（perform/didCreateURLRequest/task 深藏在文件中）。
+      // 在相同重要性层级内，优先选密度（每行分数），
+      // 我们仍然倾向集中的聚类而非分散的聚类，然后以
+      // 较小的跨度作为包含廉价的决胜。
       const rankedClusters = clusters
         .map((c, i) => ({ idx: i, span: c.end - c.start + 1, c }))
         .sort((a, b) => {
@@ -2811,20 +2720,20 @@ export class ToolHandler {
           return a.span - b.span;
         });
 
-      // Per-file budget is the SMALLER of the per-file cap and what's left of the
-      // total output cap — so selection (which ranks by importance) keeps the
-      // high-importance clusters and drops peripheral ones, instead of the
-      // downstream source-order trim slicing off whatever comes last in the file.
-      // That source-order slice is what cut Django's `_fetch_all` (L2237, importance
-      // 9 — agent-named) when query.py was the last of four big files to be emitted.
+      // 单文件预算是单文件上限与总输出上限剩余量中较小的那个——
+      // 因此选择（按重要性排名）保留高重要性聚类并删除外围聚类，
+      // 而非下游的源序截断切断文件最后的内容。
+      // 那个源序切断正是使 Django 的 `_fetch_all`（L2237，重要性
+      // 9——智能体命名的）被删除的原因，当 query.py 是四个大文件中
+      // 最后发出的时候。
       const fileBudget = Math.min(budget.maxCharsPerFile, Math.max(0, budget.maxOutputChars - totalChars - 200));
       const chosenIndices = new Set<number>();
       let projectedChars = 0;
       for (const rc of rankedClusters) {
         const sectionLen = buildSection(rc.c).length + (chosenIndices.size > 0 ? GAP_MARKER.length : 0);
-        // Always take the top-ranked cluster, even if oversize, so we don't
-        // return an empty file section (agent would then re-Read the file,
-        // negating the savings).
+        // 始终取排名最高的聚类，即使超大，使我们不会
+        // 返回空文件节（智能体随后会重新读取文件，
+        // 抵消节省）。
         if (chosenIndices.size === 0) {
           chosenIndices.add(rc.idx);
           projectedChars += sectionLen;
@@ -2835,7 +2744,7 @@ export class ToolHandler {
         projectedChars += sectionLen;
       }
 
-      // Emit chosen clusters in source order so the file reads top-to-bottom.
+      // 按源序发出选定的聚类，使文件从上到下阅读。
       let fileSection = '';
       const allSymbols: string[] = [];
       for (let i = 0; i < clusters.length; i++) {
@@ -2847,19 +2756,19 @@ export class ToolHandler {
         allSymbols.push(...cluster.symbols);
       }
 
-      // A chosen cluster is a COMPLETE method-range — we never cut through a body.
-      // An oversize single cluster (a long monolithic function) renders in FULL:
-      // half a method is useless (the agent just Reads the rest for the other half),
-      // which is the very fallback explore exists to prevent. A pathological file is
-      // bounded by the per-file cluster SELECTION above + the total hard ceiling.
+      // 选定的聚类是完整的方法范围——我们从不截断正文中间。
+      // 超大的单一聚类（一个长的单体函数）完整渲染：
+      // 半个方法毫无用处（智能体只会为另一半读取其余内容），
+      // 这正是 explore 存在要防止的回退。病理文件受
+      // 上方的单文件聚类选择 + 总硬上限约束。
       if (chosenIndices.size < clusters.length) {
         anyFileTrimmed = true;
       }
 
-      // Dedupe + cap the symbols list shown in the per-file header. Some
-      // files (Session.swift in Alamofire) produced 3.4KB symbol lists
-      // from cluster scoring + edge-source lines, dwarfing the per-file
-      // body cap. Show top names by frequency, with a "+N more" tail.
+      // 去重 + 限制单文件头部显示的符号列表。某些
+      // 文件（Alamofire 中的 Session.swift）从聚类评分 + 边源行
+      // 产生了 3.4KB 的符号列表，远超单文件正文上限。
+      // 按频率显示顶部名称，带 "+N more" 尾部。
       const symbolCounts = new Map<string, number>();
       for (const s of allSymbols) {
         symbolCounts.set(s, (symbolCounts.get(s) ?? 0) + 1);
@@ -2875,20 +2784,19 @@ export class ToolHandler {
         : headerSymbols.join(', ');
       const fileHeader = `#### ${filePath} — ${headerSuffix}`;
 
-      // The total cap bounds INCIDENTAL files only. A file that DEFINES a symbol
-      // the agent named (or that's on the flow spine) renders even when the
-      // nominal total is used up — it's the answer, and the set is bounded by
-      // maxFiles AND by true-spine/named-seeding having already trimmed each file
-      // to its necessary content. A file that merely REFERENCES the flow
-      // (Combine.swift name-drops request/task) is incidental → still capped, so
-      // freed budget never leaks into noise. This is the last god-file layer:
-      // build (Session, true-spined) + validators-exec (Request) + validate
-      // (DataRequest/Validation) all render, instead of the cap dropping whichever
-      // phase the file order happened to put last.
+      // 总上限仅约束非必要文件。定义了智能体命名的符号
+      //（或在流程主干上）的文件即使名义上的总量已用完也会渲染——
+      // 它是答案，且集合由 maxFiles 以及真正主干/命名种子注入
+      // 已将每个文件裁剪到必要内容来约束。仅引用流程的文件
+      //（Combine.swift 提到了 request/task）是非必要的→仍受上限约束，
+      // 释放的预算不会泄漏到噪音中。这是最后的上帝文件层：
+      // build（Session，真正主干）+ validators-exec（Request）+ validate
+      //（DataRequest/Validation）全部渲染，而非上限删除
+      // 文件顺序碰巧排在最后的那个阶段。
       if (!fileNecessary && totalChars + fileSection.length + 200 > budget.maxOutputChars) {
-        // Incidental file that doesn't fit: SKIP it whole — never slice mid-method.
-        // Keep scanning for necessary files (which bypass this cap and render in
-        // full, bounded by the hard ceiling).
+        // 不适合的非必要文件：完整跳过——绝不截断方法中间。
+        // 继续扫描必要文件（绕过此上限并完整渲染，
+        // 受硬上限约束）。
         anyFileTrimmed = true;
         continue;
       }
@@ -2904,9 +2812,9 @@ export class ToolHandler {
       filesIncluded++;
     }
 
-    // Add remaining files as references (from both relevant and peripheral files).
-    // Small projects (per budget) skip this — the relevant story already fits
-    // in the source section, and a trailing pointer list is pure overhead.
+    // 将剩余文件作为引用添加（来自相关和外围文件）。
+    // 小型项目（按预算）跳过此步——相关内容已适合源码节，
+    // 末尾的指针列表纯属开销。
     if (budget.includeAdditionalFiles) {
       const remainingRelevant = sortedFiles.slice(filesIncluded);
       const peripheralFiles = [...fileGroups.entries()]
@@ -2926,10 +2834,10 @@ export class ToolHandler {
       }
     }
 
-    // Add completeness signal so agents know they don't need to re-read these files.
-    // On small projects the budget gates this off — but if we actually had to
-    // trim or drop clusters, surface a brief note so the agent knows it can
-    // still Read for more detail.
+    // 添加完整性信号，使智能体知道无需重新读取这些文件。
+    // 在小型项目上，预算会关闭此功能——但若确实需要
+    // 截断或删除聚类，呈现一条简短说明，使智能体知道
+    // 仍然可以 Read 以获取更多细节。
     if (budget.includeCompletenessSignal) {
       lines.push('');
       lines.push('---');
@@ -2939,7 +2847,7 @@ export class ToolHandler {
       lines.push(`> Some file sections were trimmed for size. For a specific symbol you still need, run another \`synapse_explore\` (or \`synapse_node\`) with its exact name — line-numbered source, cheaper and more complete than Read.`);
     }
 
-    // Add explore budget note based on project size
+    // 根据项目规模添加 explore 预算说明
     if (budget.includeBudgetNote) {
       try {
         const stats = cg.getStats();
@@ -2947,26 +2855,25 @@ export class ToolHandler {
         lines.push('');
         lines.push(`> **Explore budget: ${callBudget} calls for this project (${stats.fileCount.toLocaleString()} files indexed).** Each call covers ~6 files; if your question spans more, spend your remaining calls on the uncovered area BEFORE falling back to Read — another explore is cheaper and more complete than reading those files. Synthesize once you've used ${callBudget}.`);
       } catch {
-        // Stats unavailable — skip budget note
+        // 统计不可用——跳过预算说明
       }
     }
 
-    // Final ceiling — an ABSOLUTE inline cap, not a multiple of the budget. The
-    // render loop renders necessary (named/spine) files even a bit past
-    // maxOutputChars and caps only incidental ones, so this is the last safety.
-    // It MUST stay under the host's inline tool-result limit (~25K chars): above
-    // that the result is externalized to a file the agent Reads back (a 35K
-    // vscode explore did exactly this in the n=4 A/B). So allow a little
-    // necessary overflow above the 24K budget, but hard-stop at 25K — never into
-    // externalize territory.
+    // 最终上限——绝对的内联上限，不是预算的倍数。
+    // 渲染循环在 maxOutputChars 之外渲染必要（命名/主干）文件，
+    // 仅限制非必要文件，因此这是最后的安全措施。
+    // 它必须低于宿主的内联工具结果限制（约 25K 字符）：
+    // 超过该限制，结果将外部化为智能体读回的文件
+    //（35K 的 vscode explore 在 n=4 A/B 中正是这样做的）。
+    // 因此允许在 24K 预算之上有少量必要溢出，但硬停在 25K——
+    // 永远不进入外部化领域。
     const output = flow.text + lines.join('\n');
     const hardCeiling = Math.min(Math.round(budget.maxOutputChars * 1.5), 25000);
     if (output.length > hardCeiling) {
-      // Cut at a FILE-SECTION boundary (the last `#### ` header before the
-      // ceiling) so we drop whole trailing file-sections rather than slicing
-      // through a method body — a half-rendered method just forces the Read this
-      // tool exists to prevent. Fall back to a line boundary only if no section
-      // header sits in the back half (degenerate single-giant-section case).
+      // 在文件节边界（上限前的最后一个 `#### ` 头部）切断，
+      // 以便删除整个尾部文件节，而非截断方法正文中间——
+      // 半渲染的方法只会迫使此工具本应防止的 Read。
+      // 仅在没有节头位于后半部分时回退到行边界（退化的单巨大节情况）。
       const cut = output.slice(0, hardCeiling);
       const lastSection = cut.lastIndexOf('\n#### ');
       const boundary = lastSection > hardCeiling * 0.5 ? lastSection : cut.lastIndexOf('\n');
@@ -2977,11 +2884,11 @@ export class ToolHandler {
   }
 
   /**
-   * Handle synapse_node
+   * 处理 synapse_node
    */
   private async handleNode(args: Record<string, unknown>): Promise<ToolResult> {
     const cg = this.getSynapse(args.projectPath as string | undefined);
-    // Default to false to minimize context usage
+    // 默认为 false 以最小化上下文使用
     const includeCode = args.includeCode === true;
     const fileHint = typeof args.file === 'string' && args.file.trim() ? args.file.trim() : undefined;
     const lineHint = typeof args.line === 'number' && args.line > 0 ? args.line : undefined;
@@ -2990,11 +2897,10 @@ export class ToolHandler {
     const symbolsOnly = args.symbolsOnly === true;
     const symbolRaw = typeof args.symbol === 'string' ? args.symbol.trim() : '';
 
-    // FILE READ MODE: a `file` with no `symbol` reads that file like the Read
-    // tool — its current on-disk source with line numbers, narrowable with
-    // `offset`/`limit` exactly as Read does — PLUS a one-line blast-radius
-    // header (which files depend on it). `symbolsOnly` returns just the
-    // structural map instead. Backed by the index: same bytes Read gives you.
+    // 文件读取模式：无 `symbol` 的 `file` 像 Read 工具一样读取该文件——
+    // 带行号的当前磁盘源，可用 `offset`/`limit` 缩窄，与 Read 完全相同——
+    // 加上一行影响半径头部（哪些文件依赖它）。
+    // `symbolsOnly` 仅返回结构图。由索引支撑：与 Read 给出的字节相同。
     if (!symbolRaw && fileHint) {
       return this.handleFileView(cg, fileHint, { offset, limit, symbolsOnly });
     }
@@ -3007,12 +2913,12 @@ export class ToolHandler {
       return this.textResult(`Symbol "${symbol}" not found in the codebase`);
     }
 
-    // Disambiguate a heavily-overloaded name to a specific definition the caller
-    // pinned by file/line (the `file:line` a trail or another tool showed it) —
-    // so it can fetch e.g. `Harness::poll` at harness.rs:153 out of 50+ `poll`s
-    // instead of Reading. file matches by path suffix/substring; line prefers the
-    // def whose body contains it, else the nearest start. Only narrows (never
-    // empties — if a hint matches nothing it's ignored).
+    // 将重度重载的名称消歧为调用方通过文件/行确定的特定定义
+    //（路径或另一工具显示的 `file:line`）——
+    // 使其能从 50+ 个 `poll` 中获取例如 harness.rs:153 的 `Harness::poll`，
+    // 而非读取文件。file 按路径后缀/子字符串匹配；line 优先选择
+    // 正文包含该行的定义，否则选择最近的起始位置。
+    // 只缩小（从不清空——若提示不匹配任何内容则忽略它）。
     if (matches.length > 1 && (fileHint || lineHint !== undefined)) {
       const norm = (p: string) => p.replace(/\\/g, '/').toLowerCase();
       let narrowed = matches;
@@ -3030,19 +2936,18 @@ export class ToolHandler {
       if (narrowed.length > 0) matches = narrowed;
     }
 
-    // Single definition — the common case.
+    // 单一定义——常见情况。
     if (matches.length === 1) {
       return this.textResult(this.truncateOutput(await this.renderNodeSection(cg, matches[0]!, includeCode)));
     }
 
-    // Multiple definitions share this name — overloads, or same-named methods on
-    // different types (Alamofire `didCompleteTask`/`task`/`validate`, gin
-    // `reset`). Returning ONE forces the agent to guess, and when it guesses
-    // wrong it READS the file to find the right overload — the dominant
-    // synapse_node read cause on Swift/Go. So return them ALL: pack as many
-    // FULL bodies as fit a char budget (the agent gets the one it needs in this
-    // one call, no follow-up parameter to learn), and list any remainder by
-    // file:line so a large overload set can't overflow the per-tool cap.
+    // 多个定义共享此名称——重载，或不同类型上的同名方法
+    //（Alamofire 的 `didCompleteTask`/`task`/`validate`，gin 的 `reset`）。
+    // 仅返回一个会迫使智能体猜测，当猜错时它会读取文件来找到正确的重载——
+    // 这是 Swift/Go 中 synapse_node 读取的主要原因。因此返回全部：
+    // 在字符预算内尽可能打包完整正文（智能体在这一次调用中获得它需要的，
+    // 无需学习后续参数），并将任何剩余的以 file:line 形式列出，
+    // 使大型重载集不会溢出单工具上限。
     const header = `**${matches.length} definitions named "${symbol}"**`;
     if (!includeCode) {
       const list = matches.map((n) => `- \`${n.name}\` (${n.kind}) — ${n.filePath}:${n.startLine}`);
@@ -3051,11 +2956,11 @@ export class ToolHandler {
       ));
     }
 
-    const BODY_BUDGET = 12000; // leaves room under MAX_OUTPUT_LENGTH for the header + list
-    // The CHAR budget is the real limiter — keep the count cap high so a set of
-    // SHORT overloads (Alamofire's 10 `validate` variants, each a few lines) all
-    // render in full rather than relegating the one the agent wanted to a
-    // bodiless list. Only a set of many LARGE bodies hits the char budget first.
+    const BODY_BUDGET = 12000; // 在 MAX_OUTPUT_LENGTH 下留出头部 + 列表的空间
+    // 字符预算是真正的限制器——保持计数上限较高，使一组
+    // 短重载（Alamofire 的 10 个 `validate` 变体，每个只有几行）
+    // 全部完整渲染，而非将智能体想要的那个降为无正文列表。
+    // 只有一组许多大型正文才会先触及字符预算。
     const HARD_CAP = 16;
     const rendered: string[] = [];
     const listed: Node[] = [];
@@ -3063,7 +2968,7 @@ export class ToolHandler {
     for (const n of matches) {
       if (rendered.length >= HARD_CAP) { listed.push(n); continue; }
       const section = await this.renderNodeSection(cg, n, true);
-      // Always emit the first; emit the rest only while within the char budget.
+      // 始终发出第一个；仅在字符预算内发出其余的。
       if (rendered.length === 0 || used + section.length <= BODY_BUDGET) {
         rendered.push(section);
         used += section.length;
@@ -3096,17 +3001,16 @@ export class ToolHandler {
   }
 
   /**
-   * FILE READ MODE: resolve `fileArg` (path or basename) to an indexed file and
-   * read it like the Read tool — its current on-disk source with line numbers,
-   * narrowable with `offset`/`limit` exactly as Read's are — preceded by a
-   * one-line blast-radius header (which files depend on it). `symbolsOnly`
-   * returns just the structural map (symbols + dependents) instead of source.
+   * 文件读取模式：将 `fileArg`（路径或基名）解析为已索引文件，
+   * 像 Read 工具一样读取它——带行号的当前磁盘源，可用 `offset`/`limit`
+   * 精确缩窄，与 Read 完全相同——前面加一行影响半径头部（哪些文件依赖它）。
+   * `symbolsOnly` 仅返回结构图（符号 + 依赖者），而非源码。
    *
-   * Parity goal: the numbered source block is byte-for-byte the shape Read
-   * returns (`<n>\t<line>`, no padding), so the agent treats it as a Read — only
-   * faster (served from the index) and with the blast radius attached. Security:
-   * yaml/properties files are summarized by key, never dumped (#383); reads go
-   * through validatePathWithinRoot (#527).
+   * 奇偶目标：编号源块与 Read 返回的形状字节完全相同
+   *（`<n>\t<line>`，无填充），使智能体将其视为 Read——
+   * 只是更快（由索引提供）且带影响半径。安全性：
+   * yaml/properties 文件按键汇总，从不转储（#383）；
+   * 读取通过 validatePathWithinRoot（#527）进行。
    */
   private async handleFileView(
     cg: Synapse,
@@ -3146,12 +3050,12 @@ export class ToolHandler {
       .sort((a, b) => a.startLine - b.startLine);
     const dependents = cg.getFileDependents(filePath);
 
-    // Compact, one-line blast radius (synapse's value-add over a plain Read).
+    // 紧凑的单行影响半径（synapse 相较于纯 Read 的增值点）。
     const depSummary = dependents.length
       ? `used by ${dependents.length} file${dependents.length === 1 ? '' : 's'}: ${dependents.slice(0, 8).join(', ')}${dependents.length > 8 ? `, +${dependents.length - 8} more` : ''}`
       : 'no other indexed file depends on it';
 
-    // Symbol-map renderer — for symbolsOnly, the config fallback, and read errors.
+    // 符号图渲染器——用于 symbolsOnly、配置回退和读取错误。
     const symbolMap = (heading: string, limit = 200): string[] => {
       const lines: string[] = [heading];
       for (const n of nodes.slice(0, limit)) {
@@ -3162,7 +3066,7 @@ export class ToolHandler {
       return lines;
     };
 
-    // symbolsOnly → the cheap structural overview, no source.
+    // symbolsOnly → 廉价的结构概览，不含源码。
     if (opts.symbolsOnly) {
       const out = [`**${filePath}** — ${nodes.length} symbol${nodes.length === 1 ? '' : 's'}, ${depSummary}`, ''];
       if (nodes.length) out.push(...symbolMap('### Symbols'));
@@ -3171,8 +3075,8 @@ export class ToolHandler {
       return this.textResult(this.truncateOutput(out.join('\n')));
     }
 
-    // SECURITY (#383): never dump a raw config/data file — a yaml/properties
-    // line is `key: <secret>`. Summarize by key and point to a real Read.
+    // 安全性（#383）：绝不转储原始配置/数据文件——yaml/properties 行的格式为
+    // `key: <secret>`。按键汇总并指向真实的 Read 操作。
     if (CONFIG_LEAF_LANGUAGES.has(resolved.language)) {
       const out = [`**${filePath}** — configuration/data file, ${depSummary}`, ''];
       if (nodes.length) out.push(...symbolMap('### Keys (values withheld for safety)'));
@@ -3180,8 +3084,8 @@ export class ToolHandler {
       return this.textResult(this.truncateOutput(out.join('\n')));
     }
 
-    // Read the current bytes from disk through the security chokepoint
-    // (validatePathWithinRoot: blocks `../` traversal and symlink escapes, #527).
+    // 通过安全检查点从磁盘读取当前字节
+    //（validatePathWithinRoot：阻止 `../` 穿越和符号链接逃逸，#527）。
     const abs = validatePathWithinRoot(cg.getProjectRoot(), filePath);
     let content: string | null = null;
     if (abs) {
@@ -3194,16 +3098,15 @@ export class ToolHandler {
       return this.textResult(this.truncateOutput(out.join('\n')));
     }
 
-    // Split exactly as Read does — keep the trailing empty line a final newline
-    // produces (Read numbers it too), so line numbers line up byte-for-byte.
+    // 与 Read 完全相同地拆分——保留末尾换行产生的空行
+    //（Read 也会对它编号），使行号字节完全对应。
     const fileLines = content.split('\n');
     const total = fileLines.length;
 
-    // Read-parity windowing: `offset`/`limit` mean exactly what they do on Read
-    // (1-based start line; max line count). Default: the whole file, capped like
-    // Read at 2000 lines and bounded by a char budget that tracks explore's
-    // proven-safe ~38k response ceiling. Overflow is stated explicitly (Read
-    // paginates too) — never the silent 15k truncateOutput chop.
+    // 与 Read 完全一致的窗口化：`offset`/`limit` 的含义与 Read 中完全相同
+    //（从 1 开始的行号；最大行数）。默认：整个文件，上限与 Read 一样为
+    // 2000 行，并受字符预算约束（跟踪 explore 经过验证的安全上限约 38K 字符）。
+    // 溢出会明确说明（Read 也会分页）——永远不进行静默的 15K truncateOutput 截断。
     const CHAR_BUDGET = 38000;
     const DEFAULT_LIMIT = 2000;
     const offset = Math.max(1, opts.offset ?? 1);
@@ -3214,7 +3117,7 @@ export class ToolHandler {
     const start = offset - 1; // 0-based
     const header = `**${filePath}** — ${total} lines, ${nodes.length} symbol${nodes.length === 1 ? '' : 's'} · ${depSummary}`;
 
-    // Numbered lines, byte-for-byte Read's shape: `<n>\t<line>`, no left-pad.
+    // 编号行，与 Read 输出格式完全相同：`<n>\t<line>`，不左填充。
     const numbered: string[] = [];
     let used = header.length + 8;
     let i = start;
@@ -3234,19 +3137,18 @@ export class ToolHandler {
         `(lines ${offset}–${shownEnd} of ${total} — pass \`offset\`/\`limit\` for another range, or \`synapse_node <symbol>\` for one symbol in full)`,
       );
     }
-    // Self-bounded to CHAR_BUDGET — do NOT route through truncateOutput (15k).
+    // 自行受 CHAR_BUDGET 约束——不要经过 truncateOutput（15K）。
     return this.textResult(out.join('\n'));
   }
 
-  /** Render one symbol: details + (optional) body/outline + its caller/callee trail. */
+  /** 渲染单个符号：详情 + （可选）正文/概要 + 调用者/被调用者路径。 */
   private async renderNodeSection(cg: Synapse, node: Node, includeCode: boolean): Promise<string> {
     let code: string | null = null;
     let outline: string | null = null;
     if (includeCode) {
-      // For container symbols (class/interface/struct/…), the full body is the
-      // sum of every method body — a wall of source. Return a structural outline
-      // (members + signatures + line numbers) instead; leaf symbols return their
-      // full body.
+      // 对于容器符号（class/interface/struct/……），完整正文是每个方法正文之和——
+      // 是一堵源码之墙。改为返回结构概要（成员 + 签名 + 行号）；
+      // 叶节点符号则返回完整正文。
       if (CONTAINER_NODE_KINDS.has(node.kind)) {
         outline = this.buildContainerOutline(cg, node);
       }
@@ -3258,13 +3160,12 @@ export class ToolHandler {
   }
 
   /**
-   * Build the "trail" for a symbol: its direct callees (what it calls) and
-   * callers (what calls it), each with file:line — so synapse_node doubles as
-   * the structural Grep→Read→expand primitive: a spot PLUS where to go next.
-   * Capped to stay cheap. Walk the graph by calling synapse_node on a trail
-   * entry; no Read needed for covered hops. Empty edges on a non-leaf often mean
-   * dynamic dispatch the static graph couldn't resolve — that absence is itself
-   * a signal (read that one hop) rather than a dead end.
+   * 构建符号的"路径"：其直接被调用者（它调用什么）和调用者（什么调用它），
+   * 每项附带 file:line——使 synapse_node 同时充当结构化的 Grep→Read→展开
+   * 原语：一个位置加上后续的跳转方向。上限保持廉价。通过对路径条目调用
+   * synapse_node 来遍历图；已覆盖的跳转无需 Read。非叶节点的空边通常意味着
+   * 静态图无法解析的动态分发——这种缺失本身就是一个信号（读那一跳），
+   * 而非死路。
    */
   private formatTrail(cg: Synapse, node: Node): string {
     const TRAIL_CAP = 12;
@@ -3297,28 +3198,27 @@ export class ToolHandler {
   }
 
   /**
-   * Handle synapse_status
+   * 处理 synapse_status
    */
   private async handleStatus(args: Record<string, unknown>): Promise<ToolResult> {
     let cg = this.getSynapse(args.projectPath as string | undefined);
-    // Same trick as withStalenessNotice — when an explicit projectPath
-    // resolves to the same project as the default session cg, prefer the
-    // default so getPendingFiles() (only populated by the default's watcher)
-    // is non-empty when there are pending edits.
+    // 与 withStalenessNotice 相同的技巧——当显式 projectPath 解析到与默认会话 cg
+    // 相同的项目时，优先使用默认实例，使 getPendingFiles()（仅由默认实例的
+    // 监视器填充）在有待处理编辑时为非空。
     if (this.cg && cg !== this.cg) {
       try {
         if (resolvePath(this.cg.getProjectRoot()) === resolvePath(cg.getProjectRoot())) {
           cg = this.cg;
         }
-      } catch { /* closed instance — leave as is */ }
+      } catch { /* 已关闭的实例——保持原样 */ }
     }
     const stats = cg.getStats();
 
-    // Warn when this index actually belongs to a different git working tree
-    // (e.g. the server resolved up from a nested worktree to the main checkout).
-    // Queries then reflect that tree's branch, not the worktree being edited.
-    // status shows the verbose, multi-line form; the read tools get the compact
-    // one-liner via withWorktreeNotice. Both share the cached detection.
+    // 当此索引实际上属于不同的 git 工作树时发出警告
+    //（例如服务器从嵌套 worktree 向上解析到主检出）。
+    // 此时查询反映的是那棵树的分支，而非正在编辑的 worktree。
+    // status 显示详细的多行形式；读取工具通过 withWorktreeNotice 获取紧凑的单行提示。
+    // 两者共享缓存的检测结果。
     const mismatch = this.worktreeMismatchFor(args.projectPath as string | undefined);
 
     const lines: string[] = [
@@ -3335,14 +3235,14 @@ export class ToolHandler {
       `**Database size:** ${(stats.dbSizeBytes / 1024 / 1024).toFixed(2)} MB`,
     );
 
-    // Surface the active SQLite backend (node:sqlite, Node's built-in real
-    // SQLite — full WAL + FTS5, no native build).
+    // 显示当前活跃的 SQLite 后端（node:sqlite，Node 内置的真实
+    // SQLite——完整的 WAL + FTS5，无需原生构建）。
     lines.push(`**Backend:** node:sqlite (Node built-in) — full WAL + FTS5`);
 
-    // Effective journal mode. 'wal' ⇒ concurrent reads never block on a writer;
-    // anything else ⇒ they can ("database is locked"). node:sqlite supports WAL
-    // everywhere, so a non-wal mode means the filesystem can't (network/
-    // virtualized mounts, WSL2 /mnt). See issue #238.
+    // 有效的日志模式。'wal' ⇒ 并发读取永不阻塞写入；
+    // 其他模式 ⇒ 可能阻塞（"数据库被锁定"）。node:sqlite 在所有平台都支持 WAL，
+    // 因此非 wal 模式意味着文件系统不支持（网络挂载/虚拟化挂载、WSL2 /mnt）。
+    // 参见 issue #238。
     const journalMode = cg.getJournalMode();
     if (journalMode === 'wal') {
       lines.push(`**Journal mode:** wal (concurrent reads safe)`);
@@ -3368,10 +3268,9 @@ export class ToolHandler {
       }
     }
 
-    // Whole-index degradation (#876): when live watching has permanently
-    // stopped, getPendingFiles() is empty (so no "Pending sync" section below)
-    // but the index is frozen — call that out explicitly here, the one place an
-    // agent asks "is the index caught up?".
+    // 全量索引降级（#876）：当实时监视永久停止时，getPendingFiles() 为空
+    //（因此下方无"待处理同步"节），但索引已冻结——在此明确指出，
+    // 这是智能体询问"索引是否最新？"的唯一位置。
     if (cg.isWatcherDegraded()) {
       lines.push(
         '',
@@ -3381,10 +3280,9 @@ export class ToolHandler {
       );
     }
 
-    // Per-file freshness — the inverse of the auto-prepended staleness banner
-    // (issue #403). Surfacing it inside `status` gives the agent a single
-    // place to ask "is the index caught up?" rather than inferring from
-    // banners on other tool calls.
+    // 单文件新鲜度——是自动前置过期横幅（issue #403）的对立面。
+    // 在 `status` 中呈现，为智能体提供一个统一的位置来询问
+    // "索引是否已跟上？"，而无需从其他工具调用的横幅中推断。
     const pending = cg.getPendingFiles();
     if (pending.length > 0) {
       lines.push('', '### Pending sync:');
@@ -3400,7 +3298,7 @@ export class ToolHandler {
   }
 
   /**
-   * Handle synapse_files - get project file structure from the index
+   * 处理 synapse_files——从索引获取项目文件结构
    */
   private async handleFiles(args: Record<string, unknown>): Promise<ToolResult> {
     const cg = this.getSynapse(args.projectPath as string | undefined);
@@ -3410,18 +3308,18 @@ export class ToolHandler {
     const includeMetadata = args.includeMetadata !== false;
     const maxDepth = args.maxDepth != null ? clamp(args.maxDepth as number, 1, 20) : undefined;
 
-    // Get all files from the index
+    // 从索引获取所有文件
     const allFiles = cg.getFiles();
 
     if (allFiles.length === 0) {
       return this.textResult('No files indexed. Run `synapse index` first.');
     }
 
-    // Filter by path prefix. Stored paths are project-relative POSIX (e.g.
-    // "src/foo.ts"), but agents commonly pass project-root variants like "/",
-    // ".", "./", "" or Windows-style "src\foo" — and prefixes with leading
-    // "/", "./" or "\". Normalize all of those before matching so the agent
-    // gets results instead of falling back to Read/Glob (see #426).
+    // 按路径前缀过滤。存储路径是项目相对 POSIX 格式（如 "src/foo.ts"），
+    // 但智能体通常传入项目根目录的变体，如 "/"、"."、"./"、"" 或
+    // Windows 风格的 "src\foo"——以及带前导 "/"、"./" 或 "\" 的前缀。
+    // 在匹配前对所有这些情况进行归一化，使智能体能获得结果，
+    // 而非回退到 Read/Glob（参见 #426）。
     const normalizedFilter = pathFilter
       ? pathFilter
           .replace(/\\/g, '/')
@@ -3433,7 +3331,7 @@ export class ToolHandler {
       ? allFiles.filter(f => f.path === normalizedFilter || f.path.startsWith(normalizedFilter + '/'))
       : allFiles;
 
-    // Filter by glob pattern
+    // 按 glob 模式过滤
     if (pattern) {
       const regex = this.globToRegex(pattern);
       files = files.filter(f => regex.test(f.path));
@@ -3443,7 +3341,7 @@ export class ToolHandler {
       return this.textResult(`No files found matching the criteria.`);
     }
 
-    // Format output
+    // 格式化输出
     let output: string;
     switch (format) {
       case 'flat':
@@ -3462,20 +3360,20 @@ export class ToolHandler {
   }
 
   /**
-   * Convert glob pattern to regex
+   * 将 glob 模式转换为正则表达式
    */
   private globToRegex(pattern: string): RegExp {
     const escaped = pattern
-      .replace(/[.+^${}()|[\]\\]/g, '\\$&')  // Escape special regex chars except * and ?
-      .replace(/\*\*/g, '{{GLOBSTAR}}')       // Temp placeholder for **
-      .replace(/\*/g, '[^/]*')                // * matches anything except /
-      .replace(/\?/g, '[^/]')                 // ? matches single char except /
-      .replace(/\{\{GLOBSTAR\}\}/g, '.*');    // ** matches anything including /
+      .replace(/[.+^${}()|[\]\\]/g, '\\$&')  // 转义特殊正则字符，* 和 ? 除外
+      .replace(/\*\*/g, '{{GLOBSTAR}}')       // ** 的临时占位符
+      .replace(/\*/g, '[^/]*')                // * 匹配除 / 以外的任何内容
+      .replace(/\?/g, '[^/]')                 // ? 匹配除 / 以外的单个字符
+      .replace(/\{\{GLOBSTAR\}\}/g, '.*');    // ** 匹配包括 / 在内的任何内容
     return new RegExp(escaped);
   }
 
   /**
-   * Format files as a flat list
+   * 将文件格式化为平铺列表
    */
   private formatFilesFlat(files: { path: string; language: string; nodeCount: number }[], includeMetadata: boolean): string {
     const lines: string[] = [`## Files (${files.length})`, ''];
@@ -3492,7 +3390,7 @@ export class ToolHandler {
   }
 
   /**
-   * Format files grouped by language
+   * 将文件按语言分组格式化
    */
   private formatFilesGrouped(files: { path: string; language: string; nodeCount: number }[], includeMetadata: boolean): string {
     const byLang = new Map<string, typeof files>();
@@ -3505,7 +3403,7 @@ export class ToolHandler {
 
     const lines: string[] = [`## Files by Language (${files.length} total)`, ''];
 
-    // Sort languages by file count (descending)
+    // 按文件数降序排列语言
     const sortedLangs = [...byLang.entries()].sort((a, b) => b[1].length - a[1].length);
 
     for (const [lang, langFiles] of sortedLangs) {
@@ -3524,14 +3422,14 @@ export class ToolHandler {
   }
 
   /**
-   * Format files as a tree structure
+   * 将文件格式化为树形结构
    */
   private formatFilesTree(
     files: { path: string; language: string; nodeCount: number }[],
     includeMetadata: boolean,
     maxDepth?: number
   ): string {
-    // Build tree structure
+    // 构建树形结构
     interface TreeNode {
       name: string;
       children: Map<string, TreeNode>;
@@ -3553,14 +3451,14 @@ export class ToolHandler {
         }
         current = current.children.get(part)!;
 
-        // If this is the last part, it's a file
+        // 若这是最后一段，则为文件
         if (i === parts.length - 1) {
           current.file = { language: file.language, nodeCount: file.nodeCount };
         }
       }
     }
 
-    // Render tree
+    // 渲染树形结构
     const lines: string[] = [`## Project Structure (${files.length} files)`, ''];
 
     const renderNode = (node: TreeNode, prefix: string, isLast: boolean, depth: number): void => {
@@ -3578,7 +3476,7 @@ export class ToolHandler {
       }
 
       const children = [...node.children.values()];
-      // Sort: directories first, then files, both alphabetically
+      // 排序：目录在前，文件在后，均按字母顺序
       children.sort((a, b) => {
         const aIsDir = a.children.size > 0 && !a.file;
         const bIsDir = b.children.size > 0 && !b.file;
@@ -3599,40 +3497,39 @@ export class ToolHandler {
   }
 
   // =========================================================================
-  // Symbol resolution helpers
+  // 符号解析辅助方法
   // =========================================================================
 
   /**
-   * Find a symbol by name, handling disambiguation when multiple matches exist.
-   * Returns the best match and a note about alternatives if any.
+   * 按名称查找符号，当存在多个匹配时进行消歧。
+   * 返回最佳匹配以及可选的候选说明。
    */
   /**
-   * Check if a node matches a symbol query.
+   * 检查节点是否匹配符号查询。
    *
-   * Accepts simple names (`run`) and three flavors of qualifier:
-   *   - dotted     `Session.request`         (TS/JS/Python)
-   *   - colon-pair `stage_apply::run`        (Rust, C++, Ruby)
-   *   - slash      `configurator/stage_apply` (path-ish)
+   * 接受简单名称（`run`）和三种限定符形式：
+   *   - 点号     `Session.request`         （TS/JS/Python）
+   *   - 双冒号   `stage_apply::run`        （Rust、C++、Ruby）
+   *   - 斜杠     `configurator/stage_apply`（路径形式）
    *
-   * Multi-level qualifiers compose: `crate::configurator::stage_apply::run`
-   * works. Rust path prefixes (`crate`, `super`, `self`) are stripped so
-   * the canonical `crate::module::symbol` form resolves.
+   * 多层限定符可组合：`crate::configurator::stage_apply::run`
+   * 有效。Rust 路径前缀（`crate`、`super`、`self`）会被剥离，
+   * 使规范的 `crate::module::symbol` 形式能够正确解析。
    *
-   * Resolution order, last part must always equal `node.name`:
-   *   1. Suffix-match against `qualifiedName` (handles class-scoped methods
-   *      where the extractor builds the qualified name from the AST stack)
-   *   2. File-path containment (handles file-derived modules in Rust/
-   *      Python — `stage_apply::run` matches a `run` in `stage_apply.rs`)
+   * 解析顺序，最后一段必须始终等于 `node.name`：
+   *   1. 对 `qualifiedName` 进行后缀匹配（处理类范围的方法——
+   *      提取器从 AST 栈构建限定名）
+   *   2. 文件路径包含检查（处理 Rust/Python 的文件派生模块——
+   *      `stage_apply::run` 匹配 `stage_apply.rs` 中的 `run`）
    */
   private matchesSymbol(node: Node, symbol: string): boolean {
-    // Simple name match
+    // 简单名称匹配
     if (node.name === symbol) return true;
-    // File basename match (e.g., "product-card" matches "product-card.liquid")
+    // 文件基名匹配（例如 "product-card" 匹配 "product-card.liquid"）
     if (node.kind === 'file' && node.name.replace(/\.[^.]+$/, '') === symbol) return true;
 
-    // Qualified-name lookups: split on any supported separator. `\w` keeps
-    // identifier chars (incl. `_`) intact; everything else is treated as
-    // a separator we tolerate.
+    // 限定名查找：按任意支持的分隔符拆分。`\w` 保留标识符字符（含 `_`）；
+    // 其他一切均视为可容忍的分隔符。
     if (!/[.\/]|::/.test(symbol)) return false;
     const parts = symbol.split(/::|[./]/).filter((p) => p.length > 0);
     if (parts.length < 2) return false;
@@ -3640,18 +3537,17 @@ export class ToolHandler {
     const lastPart = parts[parts.length - 1]!;
     if (node.name !== lastPart) return false;
 
-    // Stage 1: qualified-name suffix match. The extractor joins the
-    // semantic hierarchy with `::`, so `Session.request` and
-    // `Session::request` both become `Session::request` here.
+    // 阶段 1：限定名后缀匹配。提取器用 `::` 连接语义层次，
+    // 因此 `Session.request` 和 `Session::request` 在此均变为 `Session::request`。
     const colonSuffix = parts.join('::');
     if (node.qualifiedName.includes(colonSuffix)) return true;
 
-    // Stage 2: file-path containment. Rust modules and Python packages
-    // are not in `qualifiedName` — they're encoded in the file path. So
-    // `stage_apply::run` matches a `run` in any file whose path
-    // contains a `stage_apply` segment (with or without an extension).
+    // 阶段 2：文件路径包含检查。Rust 模块和 Python 包
+    // 不在 `qualifiedName` 中——它们编码在文件路径里。因此
+    // `stage_apply::run` 匹配路径中包含 `stage_apply` 段（有无扩展名均可）的
+    // 任意文件中的 `run`。
     //
-    // Filter out Rust path prefixes that have no file-system equivalent.
+    // 过滤掉无文件系统对应物的 Rust 路径前缀。
     const containerHints = parts.slice(0, -1).filter((p) => !RUST_PATH_PREFIXES.has(p));
     if (containerHints.length === 0) return false;
 
@@ -3662,39 +3558,36 @@ export class ToolHandler {
   }
 
   /**
-   * Find ALL definitions matching a name, ranked, so synapse_node can return
-   * every overload instead of guessing one (the wrong guess → a Read). Keepers
-   * rank before generated stubs (.pb.go etc.); stable within a group preserves
-   * FTS order. Returns [] when nothing matches; a qualified lookup that finds no
-   * exact match returns [] rather than a misleading fuzzy file hit (#173); a
-   * bare name with no exact match falls back to the single top fuzzy result.
+   * 查找与名称匹配的所有定义（已排名），使 synapse_node 能返回每个重载
+   * 而非猜测其中一个（猜错 → 触发 Read）。非生成文件排在生成桩文件
+   *（.pb.go 等）之前；组内稳定保留 FTS 顺序。无匹配时返回 []；
+   * 限定名查找若无精确匹配，返回 [] 而非误导性的模糊文件命中（#173）；
+   * 无精确匹配的裸名称回退到单个最高模糊结果。
    */
   private findSymbolMatches(cg: Synapse, symbol: string): Node[] {
     const isQualified = /[.\/]|::/.test(symbol);
 
-    // For a bare name, enumerate EVERY exact-name definition via the direct index
-    // (not FTS, which caps + ranks): tokio's `poll` has 50+ defs and the one the
-    // caller wants (`Harness::poll` at harness.rs:153) ranks below any search cut,
-    // so it could be neither rendered nor pinned by the file/line disambiguator —
-    // and the agent Read it. With the full set, the multi-overload render + the
-    // file/line filter can both reach it.
+    // 对于裸名称，通过直接索引枚举每个精确名称的定义
+    //（非 FTS，FTS 会加上限 + 排名）：tokio 的 `poll` 有 50+ 个定义，
+    // 调用方想要的那个（harness.rs:153 的 `Harness::poll`）排在任何搜索截止线以下，
+    // 因此既无法被渲染，也无法被 file/line 消歧器定位——智能体只好读取文件。
+    // 有了完整集合，多重载渲染 + file/line 过滤器均可到达它。
     if (!isQualified) {
       const exact = cg.getNodesByName(symbol);
       if (exact.length > 0) {
         return [...exact].sort((a, b) => (isGeneratedFile(a.filePath) ? 1 : 0) - (isGeneratedFile(b.filePath) ? 1 : 0));
       }
-      // No exact match — use the single top fuzzy result (e.g. a file basename).
+      // 无精确匹配——使用单个最高模糊结果（例如文件基名）。
       const fuzzy = cg.searchNodes(symbol, { limit: 10 });
       return fuzzy[0] ? [fuzzy[0].node] : [];
     }
 
-    // Qualified lookup (`Session.request`, `stage_apply::run`): FTS + matchesSymbol.
+    // 限定名查找（`Session.request`、`stage_apply::run`）：FTS + matchesSymbol。
     const limit = 50;
     let results = cg.searchNodes(symbol, { limit });
 
-    // FTS strips colons, so `stage_apply::run` searches the literal
-    // `stage_applyrun` and finds nothing. Re-search by the bare last part and
-    // let `matchesSymbol` filter by qualifier.
+    // FTS 会剥离冒号，因此 `stage_apply::run` 搜索字面量 `stage_applyrun`
+    // 并找不到任何内容。改为按裸尾部重搜，让 `matchesSymbol` 按限定符过滤。
     if (isQualified && results.length === 0) {
       const tail = lastQualifierPart(symbol);
       if (tail && tail !== symbol) results = cg.searchNodes(tail, { limit });
@@ -3704,28 +3597,27 @@ export class ToolHandler {
 
     const exactMatches = results.filter((r) => this.matchesSymbol(r.node, symbol));
     if (exactMatches.length === 0) {
-      // No exact match — a qualified lookup must not fall back to a fuzzy file
-      // hit (#173); a bare name may use the single top fuzzy result.
+      // 无精确匹配——限定名查找不得回退到模糊文件命中（#173）；
+      // 裸名称可使用单个最高模糊结果。
       return isQualified ? [] : results[0] ? [results[0].node] : [];
     }
 
-    // Down-rank generated files (.pb.go, .pulsar.go, _grpc.pb.go, …) so a flow
-    // query prefers the keeper implementation over the protobuf-generated stub.
+    // 降权生成文件（.pb.go、.pulsar.go、_grpc.pb.go……），使流程查询
+    // 优先选择手写实现而非 protobuf 生成的桩文件。
     return [...exactMatches]
       .sort((a, b) => (isGeneratedFile(a.node.filePath) ? 1 : 0) - (isGeneratedFile(b.node.filePath) ? 1 : 0))
       .map((r) => r.node);
   }
 
   /**
-   * Find ALL symbols matching a name. Used by callers/callees/impact to aggregate
-   * results across all matching symbols (e.g., multiple classes with an `execute` method).
+   * 查找与名称匹配的所有符号。用于 callers/callees/impact，
+   * 在所有匹配符号上聚合结果（例如多个类中都有 `execute` 方法）。
    */
   private findAllSymbols(cg: Synapse, symbol: string): { nodes: Node[]; note: string } {
     let results = cg.searchNodes(symbol, { limit: 50 });
 
-    // Mirror the fallback in `findSymbol` for qualified queries — FTS
-    // strips colons, so a module-qualified lookup needs a second pass
-    // by the bare last part.
+    // 镜像 `findSymbol` 中限定名查询的回退——FTS 剥离冒号，
+    // 因此模块限定的查找需要按裸尾部进行第二次搜索。
     if (results.length === 0 && /[.\/]|::/.test(symbol)) {
       const tail = lastQualifierPart(symbol);
       if (tail && tail !== symbol) results = cg.searchNodes(tail, { limit: 50 });
@@ -3742,9 +3634,8 @@ export class ToolHandler {
       return { nodes: [node], note: '' };
     }
 
-    // Same generated-file down-rank as findSymbol — keeps callers/callees
-    // /impact aggregation aligned (a query against "Send" returns the
-    // hand-written implementations before the protobuf scaffold).
+    // 与 findSymbol 相同的生成文件降权——保持 callers/callees/impact
+    // 聚合一致（对 "Send" 的查询在 protobuf 脚手架之前返回手写实现）。
     const ranked = [...exactMatches].sort((a, b) => {
       const aGen = isGeneratedFile(a.node.filePath) ? 1 : 0;
       const bGen = isGeneratedFile(b.node.filePath) ? 1 : 0;
@@ -3759,7 +3650,7 @@ export class ToolHandler {
   }
 
   /**
-   * Truncate output if it exceeds the maximum length
+   * 若输出超过最大长度则截断
    */
   private truncateOutput(text: string): string {
     if (text.length <= MAX_OUTPUT_LENGTH) return text;
@@ -3770,7 +3661,7 @@ export class ToolHandler {
   }
 
   // =========================================================================
-  // Formatting helpers (compact by default to reduce context usage)
+  // 格式化辅助方法（默认紧凑，以减少上下文使用量）
   // =========================================================================
 
   private formatSearchResults(results: SearchResult[]): string {
@@ -3779,7 +3670,7 @@ export class ToolHandler {
     for (const result of results) {
       const { node } = result;
       const location = node.startLine ? `:${node.startLine}` : '';
-      // Compact format: one line per result with key info
+      // 紧凑格式：每个结果一行，包含关键信息
       lines.push(`### ${node.name} (${node.kind})`);
       lines.push(`${node.filePath}${location}`);
       if (node.signature) lines.push(`\`${node.signature}\``);
@@ -3794,8 +3685,8 @@ export class ToolHandler {
 
     for (const node of nodes) {
       const location = node.startLine ? `:${node.startLine}` : '';
-      // Compact: just name, kind, location — plus the relationship when it
-      // isn't a plain call (callback registration, instantiation, …).
+      // 紧凑：仅名称、类型、位置——加上非普通调用时的关系说明
+      //（回调注册、实例化……）。
       const label = labels?.get(node.id);
       lines.push(
         `- ${node.name} (${node.kind}) - ${node.filePath}${location}${label ? ` — via ${label}` : ''}`
@@ -3806,10 +3697,9 @@ export class ToolHandler {
   }
 
   /**
-   * Relationship label for a non-`calls` edge in callers/callees lists. A
-   * function-as-value edge (#756) is the high-signal one: `callers(cb)`
-   * showing "via callback registration" tells the agent this is where the
-   * callback is WIRED, not where it's invoked.
+   * callers/callees 列表中非 `calls` 边的关系标签。函数即值边（#756）
+   * 是高信号的那种：`callers(cb)` 显示"via callback registration"
+   * 告知智能体这是回调被连线的地方，而非被调用的地方。
    */
   private edgeLabel(edge: Edge): string | null {
     if (edge.kind === 'calls') return null;
@@ -3823,13 +3713,13 @@ export class ToolHandler {
   private formatImpact(symbol: string, impact: Subgraph): string {
     const nodeCount = impact.nodes.size;
 
-    // Compact format: just list affected symbols grouped by file
+    // 紧凑格式：仅列出按文件分组的受影响符号
     const lines: string[] = [
       `## Impact: "${symbol}" affects ${nodeCount} symbols`,
       '',
     ];
 
-    // Group by file
+    // 按文件分组
     const byFile = new Map<string, Node[]>();
     for (const node of impact.nodes.values()) {
       const existing = byFile.get(node.filePath) || [];
@@ -3839,7 +3729,7 @@ export class ToolHandler {
 
     for (const [file, nodes] of byFile) {
       lines.push(`**${file}:**`);
-      // Compact: inline list
+      // 紧凑：内联列表
       const nodeList = nodes.map(n => `${n.name}:${n.startLine}`).join(', ');
       lines.push(nodeList);
       lines.push('');
@@ -3849,11 +3739,10 @@ export class ToolHandler {
   }
 
   /**
-   * Build a compact structural outline of a container symbol from its
-   * indexed children (methods, fields, properties, …) — name, kind,
-   * line number, and signature — so the agent gets the shape of a class
-   * without the full source of every method. Returns '' when the container
-   * has no indexed children, so the caller can fall back to full source.
+   * 从已索引的子节点（方法、字段、属性……）构建容器符号的紧凑结构概要——
+   * 包含名称、类型、行号和签名——使智能体能了解类的结构，
+   * 而无需获取每个方法的完整源码。当容器没有已索引的子节点时返回 ''，
+   * 使调用方可以回退到完整源码。
    */
   private buildContainerOutline(cg: Synapse, node: Node): string {
     const children = cg.getChildren(node.id)
@@ -3882,7 +3771,7 @@ export class ToolHandler {
       lines.push(`**Signature:** \`${node.signature}\``);
     }
 
-    // Only include docstring if it's short and useful
+    // 仅在文档字符串较短且有用时才包含
     if (node.docstring && node.docstring.length < 200) {
       lines.push('', node.docstring);
     }
@@ -3891,8 +3780,8 @@ export class ToolHandler {
       lines.push('', outline, '',
         `> Structural outline only. Read \`${node.filePath}\` or call synapse_node on a specific member for its body.`);
     } else if (code) {
-      // Line-numbered (cat -n style, like synapse_explore and Read) so the
-      // agent can cite/edit exact lines without re-Reading the file for them.
+      // 行号标注（cat -n 风格，与 synapse_explore 和 Read 一致），
+      // 使智能体无需重新读取文件即可引用/编辑精确行。
       const numbered = node.startLine ? numberSourceLines(code, node.startLine) : code;
       lines.push('', '```' + node.language, numbered, '```');
     }

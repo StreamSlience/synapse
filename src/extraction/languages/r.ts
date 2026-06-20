@@ -3,35 +3,32 @@ import { getNodeText, getChildByField } from '../tree-sitter-helpers';
 import type { LanguageExtractor, ExtractorContext } from '../tree-sitter-types';
 
 /**
- * R language extractor (#828).
+ * R 语言提取器（#828）。
  *
- * R has no declaration syntax — everything is an expression, so every symbol
- * the graph needs arrives through the visitNode hook rather than node-type
- * lists:
+ * R 没有声明语法——一切都是表达式，因此图谱需要的每个符号
+ * 都通过 visitNode 钩子而非节点类型列表到达：
  *
- *   - functions:   `name <- function(x) …` / `name = function(x) …` parse as
- *                  binary_operator(lhs: identifier, rhs: function_definition).
- *                  (`function(x) … -> name` right-assign of a function does
- *                  not survive the grammar's precedence — the `->` binds inside
- *                  the body — and the style is rare; deliberate gap.)
- *   - variables:   top-level assignments only (locals would bloat the graph);
- *                  ALL_CAPS / dotted-caps names extract as constants.
- *   - imports:     `library(x)` / `require(x)` / `requireNamespace("x")` are
- *                  ordinary calls; `source("file.R")` references another file.
- *                  All are claimed so no noise call-edge to `library` remains
- *                  (same pattern as Lua's `require`).
- *   - classes:     S4 `setClass("Name", …)`, R5 `setRefClass("Name", …)`, and
- *                  R6 `R6Class("Name", public = list(m = function() …))` are
- *                  calls too; the class node is named by the first string
- *                  argument and `name = function` entries in its list() args
- *                  extract as methods inside the class scope.
- *   - S4 generics: `setGeneric("name", …)` / `setMethod("name", "Class", fn)`
- *                  extract as functions named by the first string argument.
+ *   - 函数：   `name <- function(x) …` / `name = function(x) …` 解析为
+ *              binary_operator(lhs: identifier, rhs: function_definition)。
+ *              （`function(x) … -> name` 函数的右向赋值在语法的优先级下
+ *              不能保留——`->` 绑定在函数体内部——且该风格罕见；故意留空。）
+ *   - 变量：   仅顶层赋值（局部变量会使图谱膨胀）；
+ *              ALL_CAPS / 带点大写名称提取为常量。
+ *   - 导入：   `library(x)` / `require(x)` / `requireNamespace("x")` 是
+ *              普通调用；`source("file.R")` 引用项目中的另一个文件。
+ *              所有这些都被声明，以避免对 `library` 产生噪音调用边
+ *              （与 Lua 的 `require` 相同模式）。
+ *   - 类：     S4 `setClass("Name", …)`、R5 `setRefClass("Name", …)` 和
+ *              R6 `R6Class("Name", public = list(m = function() …))` 也是调用；
+ *              类节点以第一个字符串参数命名，其 list() 参数中的
+ *              `name = function` 条目作为方法提取到类作用域中。
+ *   - S4 泛型：`setGeneric("name", …)` / `setMethod("name", "Class", fn)`
+ *              以第一个字符串参数命名，提取为函数。
  *
- * Calls themselves go through the generic call extraction (`call` nodes with a
- * `function` field). Namespaced `pkg::fn(…)` keeps its qualified text;
- * `obj$method(…)` extracts under its full text (resolution of `$`-dispatch is
- * a known gap — R's S3 dispatch is runtime by design).
+ * 调用本身通过通用调用提取（`call` 节点含 `function` 字段）处理。
+ * 命名空间限定的 `pkg::fn(…)` 保留其限定文本；
+ * `obj$method(…)` 以全文提取（`$` 分发的解析是已知的空白——
+ * R 的 S3 分发在运行时通过设计实现）。
  */
 
 const ASSIGN_LEFT = new Set(['<-', '<<-', '=']);
@@ -39,10 +36,10 @@ const ASSIGN_RIGHT = new Set(['->', '->>']);
 const IMPORT_FNS = new Set(['library', 'require', 'requireNamespace', 'loadNamespace']);
 const CLASS_FNS = new Set(['setClass', 'setRefClass', 'R6Class', 'ggproto']);
 const GENERIC_FNS = new Set(['setGeneric', 'setMethod']);
-/** ALL_CAPS or DOTTED.CAPS top-level assignment → constant. */
+/** ALL_CAPS 或 DOTTED.CAPS 顶层赋值 → 常量。 */
 const CONSTANT_NAME = /^[A-Z][A-Z0-9._]*$/;
 
-/** The call's callee name when it is a bare identifier or `pkg::fn` (→ `fn`). */
+/** 调用的被调用方名称，当它是裸标识符或 `pkg::fn`（→ `fn`）时。 */
 function calleeName(call: SyntaxNode, source: string): string | null {
   const fn = getChildByField(call, 'function');
   if (!fn) return null;
@@ -54,7 +51,7 @@ function calleeName(call: SyntaxNode, source: string): string | null {
   return null;
 }
 
-/** First positional argument's value node of a call. */
+/** 调用的第一个位置参数的值节点。 */
 function firstArgValue(call: SyntaxNode): SyntaxNode | null {
   const args = getChildByField(call, 'arguments');
   if (!args) return null;
@@ -66,7 +63,7 @@ function firstArgValue(call: SyntaxNode): SyntaxNode | null {
   return null;
 }
 
-/** Text of a string node's content, or an identifier's text. */
+/** 字符串节点内容的文本，或标识符的文本。 */
 function literalOrIdentifier(node: SyntaxNode | null, source: string): string | null {
   if (!node) return null;
   if (node.type === 'identifier') return getNodeText(node, source);
@@ -80,7 +77,7 @@ function literalOrIdentifier(node: SyntaxNode | null, source: string): string | 
   return null;
 }
 
-/** Emit one `name = function(…)` argument entry as a method in the current scope. */
+/** 将一个 `name = function(…)` 参数条目作为方法触发到当前作用域中。 */
 function emitMethodArg(entry: SyntaxNode, ctx: ExtractorContext): void {
   const entryName = getChildByField(entry, 'name');
   const entryValue = getChildByField(entry, 'value');
@@ -98,14 +95,13 @@ function emitMethodArg(entry: SyntaxNode, ctx: ExtractorContext): void {
 }
 
 /**
- * Extract a class call's methods. Two shapes:
- *  - inside list() arguments — R5 `methods = list(deposit = function(x) …)`,
- *    R6 `public = list(…)` / `private = list(…)`;
- *  - DIRECT named function arguments — ggproto's style:
- *    `ggproto("GeomPoint", Geom, draw_panel = function(…) …)`.
- * Also records the parent class as an `extends` reference: ggproto's second
- * positional identifier argument, R6's `inherit = Parent`, S4's
- * `contains = "Parent"`.
+ * 提取类调用的方法。两种形式：
+ *  - list() 参数内部——R5 `methods = list(deposit = function(x) …)`，
+ *    R6 `public = list(…)` / `private = list(…)`；
+ *  - 直接命名函数参数——ggproto 的风格：
+ *    `ggproto("GeomPoint", Geom, draw_panel = function(…) …)`。
+ * 同时将父类记录为 `extends` 引用：ggproto 的第二个位置标识符参数、
+ * R6 的 `inherit = Parent`、S4 的 `contains = "Parent"`。
  */
 function extractClassMembers(classCall: SyntaxNode, classId: string, ctx: ExtractorContext): void {
   const args = getChildByField(classCall, 'arguments');
@@ -118,7 +114,7 @@ function extractClassMembers(classCall: SyntaxNode, classId: string, ctx: Extrac
     const value = getChildByField(arg, 'value');
     if (!argName) {
       positional++;
-      // ggproto("Name", Parent, …) — the 2nd positional identifier is the parent.
+      // ggproto("Name", Parent, …)——第 2 个位置标识符是父类。
       if (positional === 2 && value?.type === 'identifier') {
         ctx.addUnresolvedReference({
           fromNodeId: classId,
@@ -131,7 +127,7 @@ function extractClassMembers(classCall: SyntaxNode, classId: string, ctx: Extrac
       continue;
     }
     const argNameText = getNodeText(argName, ctx.source);
-    // R6 `inherit = Parent` / S4 `contains = "Parent"`.
+    // R6 `inherit = Parent` / S4 `contains = "Parent"`。
     if ((argNameText === 'inherit' || argNameText === 'contains') && value) {
       const parent = literalOrIdentifier(value, ctx.source);
       if (parent) {
@@ -145,12 +141,12 @@ function extractClassMembers(classCall: SyntaxNode, classId: string, ctx: Extrac
       }
       continue;
     }
-    // Direct named function argument (ggproto methods).
+      // 直接命名函数参数（ggproto 方法）。
     if (value?.type === 'function_definition') {
       emitMethodArg(arg, ctx);
       continue;
     }
-    // list(…) of named function arguments (R5/R6 methods).
+    // list(…) 中的命名函数参数（R5/R6 方法）。
     if (value?.type === 'call' && calleeName(value, ctx.source) === 'list') {
       const listArgs = getChildByField(value, 'arguments');
       if (!listArgs) continue;
@@ -163,16 +159,16 @@ function extractClassMembers(classCall: SyntaxNode, classId: string, ctx: Extrac
 }
 
 export const rExtractor: LanguageExtractor = {
-  functionTypes: [], // named functions are assignments — handled in visitNode
+  functionTypes: [], // 命名函数是赋值——在 visitNode 中处理
   classTypes: [],
   methodTypes: [],
   interfaceTypes: [],
   structTypes: [],
   enumTypes: [],
   typeAliasTypes: [],
-  importTypes: [], // library()/require()/source() are calls — handled in visitNode
+  importTypes: [], // library()/require()/source() 是调用——在 visitNode 中处理
   callTypes: ['call'],
-  variableTypes: [], // top-level assignments — handled in visitNode
+  variableTypes: [], // 顶层赋值——在 visitNode 中处理
   nameField: 'name',
   bodyField: 'body',
   paramsField: 'parameters',
@@ -184,11 +180,11 @@ export const rExtractor: LanguageExtractor = {
       const fname = calleeName(node, source);
       if (!fname) return false;
 
-      // library(dplyr) / require(stats) / requireNamespace("jsonlite") —
-      // and source("helpers.R"), which references another file in the project.
+      // library(dplyr) / require(stats) / requireNamespace("jsonlite") ——
+      // 以及 source("helpers.R")，它引用项目中的另一个文件。
       if (IMPORT_FNS.has(fname) || fname === 'source') {
         const mod = literalOrIdentifier(firstArgValue(node), source);
-        if (!mod) return true; // dynamic argument — nothing to record, still not a call edge
+        if (!mod) return true; // 动态参数——无需记录，也不产生调用边
         const imp = ctx.createNode('import', mod, node, {
           signature: getNodeText(node, source).trim().slice(0, 100),
         });
@@ -224,8 +220,8 @@ export const rExtractor: LanguageExtractor = {
       if (GENERIC_FNS.has(fname)) {
         const name = literalOrIdentifier(firstArgValue(node), source);
         if (!name) return false;
-        // The implementing function_definition, when present (setMethod always,
-        // setGeneric usually via the def= argument).
+        // 其中包含 function_definition 的实现（setMethod 始终有，
+        // setGeneric 通常通过 def= 参数有）。
         const args = getChildByField(node, 'arguments');
         let impl: SyntaxNode | null = null;
         if (args) {
@@ -248,7 +244,7 @@ export const rExtractor: LanguageExtractor = {
         return true;
       }
 
-      return false; // ordinary call — generic extraction records the edge
+      return false; // 普通调用——通用提取记录该边
     }
 
     if (node.type === 'binary_operator') {
@@ -257,13 +253,12 @@ export const rExtractor: LanguageExtractor = {
       const lhs = getChildByField(node, 'lhs');
       const rhs = getChildByField(node, 'rhs');
 
-      // name <- function(…) / name = function(…)   (any scope — nested
-      // functions extract inside their enclosing function's scope). The body
-      // is walked through ctx.visitNode, NOT ctx.visitFunctionBody: the body
-      // walker doesn't consult this hook, and in R every nested definition is
-      // an assignment expression that only this hook can recognize. visitNode
-      // dispatches calls and the hook alike, with the function on the scope
-      // stack so attribution is right.
+      // name <- function(…) / name = function(…)（任意作用域——嵌套
+      // 函数在其外层函数的作用域内提取）。函数体通过 ctx.visitNode 遍历，
+      // 而非 ctx.visitFunctionBody：函数体遍历器不调用此钩子，
+      // 而在 R 中，每个嵌套定义都是只有此钩子才能识别的赋值表达式。
+      // visitNode 在函数位于作用域栈上时分发调用和钩子，
+      // 确保归属正确。
       if (ASSIGN_LEFT.has(op) && lhs?.type === 'identifier' && rhs?.type === 'function_definition') {
         const params = getChildByField(rhs, 'parameters');
         const fn = ctx.createNode('function', getNodeText(lhs, source), node, {
@@ -278,14 +273,13 @@ export const rExtractor: LanguageExtractor = {
         return true;
       }
 
-      // Top-level value assignments → variable/constant. Locals are skipped
-      // deliberately (graph bloat); the initializer is still visited so its
-      // calls and nested definitions extract.
+      // 顶层值赋值 → variable/constant。局部变量故意跳过
+      //（图谱膨胀）；初始化器仍被访问，以便提取其调用和嵌套定义。
       const topLevel = node.parent?.type === 'program';
       if (topLevel && ASSIGN_LEFT.has(op) && lhs?.type === 'identifier' && rhs) {
-        // `Account <- setRefClass("Account", …)` is the CLASS definition idiom
-        // (same for R6Class / setClass / setGeneric) — the call hook makes the
-        // class/function node; a twin variable node would just be noise.
+        // `Account <- setRefClass("Account", …)` 是类定义的惯用法
+        //（R6Class / setClass / setGeneric 同理）——调用钩子创建
+        // class/function 节点；重复的 variable 节点只是噪音。
         const rhsCallee = rhs.type === 'call' ? calleeName(rhs, source) : null;
         if (!rhsCallee || (!CLASS_FNS.has(rhsCallee) && !GENERIC_FNS.has(rhsCallee))) {
           const name = getNodeText(lhs, source);
@@ -294,7 +288,7 @@ export const rExtractor: LanguageExtractor = {
         ctx.visitNode(rhs);
         return true;
       }
-      // value -> name / value ->> name (right assign)
+      // value -> name / value ->> name（右向赋值）
       if (topLevel && ASSIGN_RIGHT.has(op) && rhs?.type === 'identifier' && lhs) {
         const name = getNodeText(rhs, source);
         ctx.createNode(CONSTANT_NAME.test(name) ? 'constant' : 'variable', name, node, {});

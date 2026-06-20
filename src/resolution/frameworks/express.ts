@@ -1,7 +1,7 @@
 /**
- * Express/Node.js Framework Resolver
+ * Express/Node.js 框架解析器
  *
- * Handles Express and general Node.js patterns.
+ * 处理 Express 及通用 Node.js 模式。
  */
 
 import { Node } from '../../types';
@@ -15,8 +15,8 @@ function extractTailIdent(expr: string): string | null {
 }
 
 /**
- * Index of the delimiter matching the one at `open`, skipping string/template
- * literals so a `)` or `}` inside a string doesn't throw off the balance.
+ * `open` 处定界符所匹配的另一半定界符的索引，跳过字符串/模板
+ * 字面量，避免字符串内的 `)` 或 `}` 打乱括号平衡计数。
  */
 function matchDelim(s: string, open: number, oc: string, cc: string): number {
   let depth = 0;
@@ -34,8 +34,8 @@ function matchDelim(s: string, open: number, oc: string, cc: string): number {
   return -1;
 }
 
-// Express res/req methods + common JS builtins — calls to these inside a handler
-// body are framework/noise, not the business flow we want to surface as route edges.
+// Express res/req 方法 + 常见 JS 内建函数——handler 函数体内对这些方法的调用
+// 属于框架噪声，不是我们希望作为路由边暴露的业务流程。
 const RESERVED_CALLS = new Set([
   'json', 'jsonp', 'send', 'sendStatus', 'sendFile', 'status', 'end', 'redirect',
   'render', 'set', 'get', 'header', 'type', 'format', 'attachment', 'download',
@@ -52,7 +52,7 @@ export const expressResolver: FrameworkResolver = {
   languages: ['javascript', 'typescript'],
 
   detect(context: ResolutionContext): boolean {
-    // Check for Express in package.json
+    // 检查 package.json 中是否包含 Express
     const packageJson = context.readFile('package.json');
     if (packageJson) {
       try {
@@ -62,11 +62,11 @@ export const expressResolver: FrameworkResolver = {
           return true;
         }
       } catch {
-        // Invalid JSON
+        // JSON 格式错误
       }
     }
 
-    // Check for common Express patterns
+    // 检查常见的 Express 模式
     const allFiles = context.getAllFiles();
     for (const file of allFiles) {
       if (
@@ -85,7 +85,7 @@ export const expressResolver: FrameworkResolver = {
   },
 
   resolve(ref: UnresolvedRef, context: ResolutionContext): ResolvedRef | null {
-    // Pattern 1: Middleware references
+    // 模式 1：Middleware 引用
     if (isMiddlewareName(ref.referenceName)) {
       const result = resolveMiddleware(ref.referenceName, context);
       if (result) {
@@ -98,7 +98,7 @@ export const expressResolver: FrameworkResolver = {
       }
     }
 
-    // Pattern 2: Controller method references
+    // 模式 2：Controller 方法引用
     const controllerMatch = ref.referenceName.match(/^(\w+)Controller\.(\w+)$/);
     if (controllerMatch) {
       const [, controller, method] = controllerMatch;
@@ -113,7 +113,7 @@ export const expressResolver: FrameworkResolver = {
       }
     }
 
-    // Pattern 3: Service/helper references
+    // 模式 3：Service/helper 引用
     const serviceMatch = ref.referenceName.match(/^(\w+)(Service|Helper|Utils?)\.(\w+)$/);
     if (serviceMatch) {
       const [, name, suffix, method] = serviceMatch;
@@ -138,9 +138,9 @@ export const expressResolver: FrameworkResolver = {
     const now = Date.now();
     const lang = detectLanguage(filePath);
     const safe = stripCommentsForRegex(content, lang);
-    // Match the route head up to the first arg: (app|router).METHOD('/path',
-    // (NOT the whole call — handlers are often inline arrows whose `)`/`{}` the
-    // old single-regex couldn't span, so inline-handler routes connected to nothing.)
+    // 匹配路由头部直到第一个参数：(app|router).METHOD('/path',
+    // （不匹配整个调用——handler 通常是内联箭头函数，其 `)`/`{}` 无法用
+    // 旧的单正则跨越，导致内联 handler 路由无法连接任何节点。）
     const head = /\b(app|router)\.(get|post|put|patch|delete|all|use)\s*\(\s*['"]([^'"]+)['"]\s*,/g;
     let match: RegExpExecArray | null;
     while ((match = head.exec(safe)) !== null) {
@@ -163,18 +163,18 @@ export const expressResolver: FrameworkResolver = {
       };
       nodes.push(routeNode);
 
-      // The full argument list = balanced parens from the route call's open paren.
+      // 完整参数列表 = 从路由调用开括号起的括号平衡匹配结果。
       const openParen = safe.indexOf('(', match.index);
       const closeParen = openParen >= 0 ? matchDelim(safe, openParen, '(', ')') : -1;
       const args = closeParen > openParen ? safe.slice(openParen + 1, closeParen) : '';
       const arrowAt = args.indexOf('=>');
 
       if (arrowAt >= 0) {
-        // Inline arrow handler (`router.post('/x', async (req,res) => {…})`). The
-        // arrow is anonymous, so its body — the actual request→service flow — would
-        // be lost. Attribute the body's calls to the route node as `calls` edges so
-        // `trace(route, service)` connects. Body = balanced `{…}` after `=>`, or the
-        // single-expression tail for `=> expr` arrows.
+        // 内联箭头 handler（`router.post('/x', async (req,res) => {…})`）。
+        // 箭头函数是匿名的，因此其函数体——实际的 request→service 流程——会丢失。
+        // 将函数体内的调用归属到路由节点作为 `calls` 边，以便
+        // `trace(route, service)` 能够连通。函数体 = `=>` 之后的平衡 `{…}`，
+        // 或 `=> expr` 箭头的单表达式尾部。
         const afterArrow = args.slice(arrowAt + 2);
         const braceAt = afterArrow.indexOf('{');
         let body = afterArrow;
@@ -200,7 +200,7 @@ export const expressResolver: FrameworkResolver = {
           });
         }
       } else {
-        // Named handler: the LAST comma-separated arg (earlier ones are middleware).
+        // 具名 handler：最后一个逗号分隔的参数（前面的参数是 middleware）。
         const parts = args.split(',').map((s) => s.trim()).filter(Boolean);
         const last = parts[parts.length - 1];
         const handlerName = last ? extractTailIdent(last) : null;
@@ -222,7 +222,7 @@ export const expressResolver: FrameworkResolver = {
 };
 
 /**
- * Check if a name looks like middleware
+ * 判断名称是否看起来像 middleware
  */
 function isMiddlewareName(name: string): boolean {
   const middlewarePatterns = [
@@ -244,13 +244,13 @@ function isMiddlewareName(name: string): boolean {
 }
 
 /**
- * Resolve middleware reference using name-based lookup
+ * 使用基于名称的查询解析 middleware 引用
  */
 function resolveMiddleware(
   name: string,
   context: ResolutionContext
 ): string | null {
-  // Try exact name first
+  // 先尝试精确名称匹配
   const candidates = context.getNodesByName(name);
   const match = candidates.find((n) =>
     n.name.toLowerCase() === name.toLowerCase() ||
@@ -258,7 +258,7 @@ function resolveMiddleware(
   );
   if (match) return match.id;
 
-  // Try without Middleware suffix
+  // 尝试去掉 Middleware 后缀
   const baseName = name.replace(/Middleware$/i, '');
   if (baseName !== name) {
     const baseCandidates = context.getNodesByName(baseName);
@@ -274,14 +274,14 @@ function resolveMiddleware(
 }
 
 /**
- * Resolve controller method using name-based lookup
+ * 使用基于名称的查询解析 controller 方法引用
  */
 function resolveControllerMethod(
   controller: string,
   method: string,
   context: ResolutionContext
 ): string | null {
-  // Look for the method name directly
+  // 直接查找方法名
   const methodCandidates = context.getNodesByName(method);
   const methodNodes = methodCandidates.filter(
     (n) => (n.kind === 'method' || n.kind === 'function') &&
@@ -290,7 +290,7 @@ function resolveControllerMethod(
 
   if (methodNodes.length > 0) return methodNodes[0]!.id;
 
-  // Fall back: look for controller class, then find the method in its file
+  // 回退：查找 controller 类，再在其文件中找到该方法
   const controllerName = controller + 'Controller';
   const controllerCandidates = context.getNodesByName(controllerName);
   for (const ctrl of controllerCandidates) {
@@ -305,14 +305,14 @@ function resolveControllerMethod(
 }
 
 /**
- * Resolve service/helper method using name-based lookup
+ * 使用基于名称的查询解析 service/helper 方法引用
  */
 function resolveServiceMethod(
   serviceName: string,
   method: string,
   context: ResolutionContext
 ): string | null {
-  // Look for the method in files matching the service name
+  // 在文件名匹配 service 名称的文件中查找该方法
   const methodCandidates = context.getNodesByName(method);
   const stripped = serviceName.replace(/(Service|Helper|Utils?)$/i, '').toLowerCase();
   const methodNodes = methodCandidates.filter(
@@ -326,7 +326,7 @@ function resolveServiceMethod(
 }
 
 /**
- * Detect language from file extension
+ * 从文件扩展名检测语言
  */
 function detectLanguage(filePath: string): 'typescript' | 'javascript' {
   if (filePath.endsWith('.ts') || filePath.endsWith('.tsx')) {

@@ -1,8 +1,7 @@
 ﻿/**
- * Synapse Utilities
+ * Synapse 工具函数
  *
- * Common utility functions for memory management, concurrency, batching,
- * and security validation.
+ * 用于内存管理、并发控制、批处理和安全校验的通用工具函数。
  *
  * @module utils
  *
@@ -10,20 +9,20 @@
  * ```typescript
  * import { Mutex, processInBatches, MemoryMonitor, validatePathWithinRoot } from 'synapse';
  *
- * // Use mutex for concurrent safety
+ * // 使用 mutex 保证并发安全
  * const mutex = new Mutex();
  * await mutex.withLock(async () => {
  *   await performCriticalOperation();
  * });
  *
- * // Process items in batches to manage memory
+ * // 批量处理条目以管理内存
  * const results = await processInBatches(items, 100, async (item) => {
  *   return await processItem(item);
  * });
  *
- * // Monitor memory usage
+ * // 监控内存使用
  * const monitor = new MemoryMonitor(512, (usage) => {
- *   console.warn(`Memory usage exceeded 512MB: ${usage / 1024 / 1024}MB`);
+ *   console.warn(`内存使用超过 512MB：${usage / 1024 / 1024}MB`);
  * });
  * monitor.start();
  * ```
@@ -33,12 +32,12 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 // ============================================================
-// SECURITY UTILITIES
+// 安全工具函数
 // ============================================================
 
 /**
- * Sensitive system directories that should never be used as project roots.
- * Checked on all platforms; non-applicable paths are harmlessly skipped.
+ * 不应用作项目根目录的敏感系统目录。
+ * 在所有平台上检查；不适用的路径会被无害地跳过。
  */
 const SENSITIVE_PATHS = new Set([
   '/', '/etc', '/usr', '/bin', '/sbin', '/var', '/tmp', '/dev', '/proc', '/sys',
@@ -47,28 +46,26 @@ const SENSITIVE_PATHS = new Set([
 ]);
 
 /**
- * Config "languages" whose nodes are pure key/value DATA lifted from a config
- * file (e.g. Spring `application.{yml,properties}`), not source code.
+ * 来自配置"语言"的节点，是从配置文件中提取的纯键/值数据
+ * （例如 Spring `application.{yml,properties}`），而非源代码。
  */
 export const CONFIG_LEAF_LANGUAGES: ReadonlySet<string> = new Set(['yaml', 'properties']);
 
 /**
- * A config-leaf node is a single key lifted out of a pure config/data file —
- * `kind: 'constant'` in a {@link CONFIG_LEAF_LANGUAGES} language. Its on-disk
- * line is `key = <value>`, and that value is routinely a secret (DB password,
- * API key, JDBC URL with embedded creds). Synapse must surface the KEY only
- * and never read/return the value, or it pushes secrets into agent context
- * unbidden — the value isn't needed for resolution, and an agent that genuinely
- * needs it can read the file directly. (#383)
+ * 配置叶节点是从纯配置/数据文件中提取的单个键——
+ * 在 {@link CONFIG_LEAF_LANGUAGES} 语言中 `kind: 'constant'`。其磁盘上的行是
+ * `key = <value>`，而该值通常是机密（DB 密码、API 密钥、带嵌入凭证的 JDBC URL）。
+ * Synapse 必须只呈现键，绝不读取/返回值，否则会将机密未经提示地推入智能体上下文——
+ * 解析不需要该值，真正需要它的智能体可以直接读取文件。(#383)
  */
 export function isConfigLeafNode(node: { kind: string; language?: string }): boolean {
   return node.kind === 'constant' && !!node.language && CONFIG_LEAF_LANGUAGES.has(node.language);
 }
 
 /**
- * Whether `child` is `parent` itself or sits underneath it. Case-insensitive on
- * Windows — NTFS is case-insensitive, and realpathSync can hand back a different
- * case than the lexical root, which would otherwise false-reject a valid file.
+ * `child` 是否就是 `parent` 本身或位于其下方。在 Windows 上不区分大小写——
+ * NTFS 不区分大小写，realpathSync 返回的大小写可能与词法根不同，
+ * 否则会错误地拒绝一个合法文件。
  */
 function isWithinDir(child: string, parent: string): boolean {
   let c = child;
@@ -81,41 +78,38 @@ function isWithinDir(child: string, parent: string): boolean {
 }
 
 /**
- * Validate that a file path stays within the project root, resolving symlinks.
+ * 校验文件路径是否在项目根目录内，同时解析符号链接。
  *
- * Two layers: a cheap lexical check that catches `../` traversal, then a
- * realpath check that catches symlink escapes — an in-repo symlink whose
- * logical path is inside the root but whose real target points outside it
- * (issue #527). A symlink that stays within the root is still allowed, so
- * legitimate in-tree symlinks keep working. Both content-serving read sinks
- * (synapse_node `includeCode`, synapse_explore source) go through here, so
- * this is the chokepoint that keeps out-of-root file contents from leaking.
+ * 两层检查：先做廉价的词法检查以捕获 `../` 路径遍历，
+ * 再做 realpath 检查以捕获符号链接逃逸——即仓库内符号链接的
+ * 逻辑路径在根目录内，但真实目标指向根目录外的情况（issue #527）。
+ * 仍在根目录内的符号链接依然允许，因此合法的树内符号链接可以正常工作。
+ * 两个内容服务读取汇聚点（synapse_node `includeCode`、synapse_explore source）
+ * 都经过此处，因此这是防止根目录外文件内容泄露的关口。
  *
- * @param projectRoot - The project root directory
- * @param filePath - The (relative or absolute) file path to validate
- * @returns The resolved absolute path (realpath when it exists), or null if it
- *   escapes the root
+ * @param projectRoot - 项目根目录
+ * @param filePath - 待校验的（相对或绝对）文件路径
+ * @returns 解析后的绝对路径（存在时为 realpath），若逃出根目录则返回 null
  */
 export function validatePathWithinRoot(projectRoot: string, filePath: string): string | null {
   const resolved = path.resolve(projectRoot, filePath);
   const normalizedRoot = path.resolve(projectRoot);
 
-  // 1. Lexical containment — cheap, catches `../` traversal.
+  // 1. 词法包含检查——廉价，可捕获 `../` 路径遍历。
   if (!isWithinDir(resolved, normalizedRoot)) {
     return null;
   }
 
-  // 2. Symlink-aware containment — resolve symlinks on both sides and re-check,
-  //    so an in-repo symlink whose real target escapes the root is rejected.
+  // 2. 感知符号链接的包含检查——在两侧解析符号链接后重新检查，
+  //    以拒绝真实目标逃出根目录的仓库内符号链接。
   try {
     const realRoot = fs.realpathSync(normalizedRoot);
     const realResolved = fs.realpathSync(resolved);
     return isWithinDir(realResolved, realRoot) ? realResolved : null;
   } catch (err) {
-    // ENOENT: the path doesn't exist yet (a file about to be written, or an
-    // index entry for a since-deleted file) — no symlink to follow, and the
-    // lexical check already passed, so allow the lexical path. Any other
-    // resolution failure (ELOOP, EACCES, …) is treated as unsafe → reject.
+    // ENOENT：路径尚不存在（即将写入的文件，或已删除文件的索引条目）——
+    // 没有符号链接可跟随，词法检查已通过，因此允许词法路径。任何其他
+    // 解析失败（ELOOP、EACCES 等）视为不安全 → 拒绝。
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
       return resolved;
     }
@@ -124,24 +118,23 @@ export function validatePathWithinRoot(projectRoot: string, filePath: string): s
 }
 
 /**
- * Validate that a path is a safe project root directory.
+ * 校验路径是否为安全的项目根目录。
  *
- * Rejects sensitive system directories and ensures the path is
- * a real, existing directory. Used at MCP and API entry points
- * to prevent arbitrary directory access.
+ * 拒绝敏感系统目录，并确保路径是真实存在的目录。
+ * 在 MCP 和 API 入口点使用，以防止任意目录访问。
  *
- * @param dirPath - The path to validate
- * @returns An error message if invalid, or null if valid
+ * @param dirPath - 待校验的路径
+ * @returns 无效时返回错误信息，有效时返回 null
  */
 export function validateProjectPath(dirPath: string): string | null {
   const resolved = path.resolve(dirPath);
 
-  // Block sensitive system directories
+  // 阻止敏感系统目录
   if (SENSITIVE_PATHS.has(resolved) || SENSITIVE_PATHS.has(resolved.toLowerCase())) {
     return `Refusing to operate on sensitive system directory: ${resolved}`;
   }
 
-  // Also block common sensitive home subdirectories
+  // 同时阻止常见的敏感家目录子目录
   const homeDir = require('os').homedir();
   const sensitiveHomeDirs = ['.ssh', '.gnupg', '.aws', '.config'];
   for (const dir of sensitiveHomeDirs) {
@@ -151,7 +144,7 @@ export function validateProjectPath(dirPath: string): string | null {
     }
   }
 
-  // Verify it's a real directory
+  // 验证它是真实目录
   try {
     const stats = fs.statSync(resolved);
     if (!stats.isDirectory()) {
@@ -165,8 +158,8 @@ export function validateProjectPath(dirPath: string): string | null {
 }
 
 /**
- * Safely parse JSON with a fallback value.
- * Prevents crashes from corrupted database metadata.
+ * 安全解析 JSON，使用回退值。
+ * 防止因数据库元数据损坏而崩溃。
  */
 export function safeJsonParse<T>(value: string, fallback: T): T {
   try {
@@ -177,43 +170,43 @@ export function safeJsonParse<T>(value: string, fallback: T): T {
 }
 
 /**
- * Clamp a numeric value to a range.
- * Used to enforce sane limits on MCP tool inputs.
+ * 将数值夹在指定范围内。
+ * 用于对 MCP 工具输入强制实施合理限制。
  */
 export function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
 /**
- * Normalize a file path to use forward slashes.
- * Fixes Windows backslash paths so glob matching works consistently.
+ * 将文件路径标准化为使用正斜杠。
+ * 修正 Windows 反斜杠路径，使 glob 匹配保持一致。
  */
 export function normalizePath(filePath: string): string {
   return filePath.replace(/\\/g, '/');
 }
 
 /**
- * Cross-process file lock using a lock file with PID tracking.
+ * 使用锁文件和 PID 跟踪的跨进程文件锁。
  *
- * Prevents multiple processes (e.g., git hooks, CLI, MCP server) from
- * writing to the same database simultaneously.
+ * 防止多个进程（例如 git hooks、CLI、MCP 服务器）
+ * 同时向同一数据库写入。
  */
 export class FileLock {
   private lockPath: string;
   private held = false;
 
-  /** Locks older than this are considered stale regardless of PID status */
-  private static readonly STALE_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes
+  /** 超过此时间的锁无论 PID 状态如何都视为过期 */
+  private static readonly STALE_TIMEOUT_MS = 2 * 60 * 1000; // 2 分钟
 
   constructor(lockPath: string) {
     this.lockPath = lockPath;
   }
 
   /**
-   * Acquire the lock. Throws if the lock is held by another live process.
+   * 获取锁。若锁被另一个存活进程持有则抛出异常。
    */
   acquire(): void {
-    // Check for existing lock
+    // 检查现有锁
     if (fs.existsSync(this.lockPath)) {
       try {
         const content = fs.readFileSync(this.lockPath, 'utf-8').trim();
@@ -221,7 +214,7 @@ export class FileLock {
         const stat = fs.statSync(this.lockPath);
         const lockAge = Date.now() - stat.mtimeMs;
 
-        // Treat locks older than the timeout as stale, regardless of PID
+        // 将超时的锁视为过期，无论 PID 如何
         if (lockAge < FileLock.STALE_TIMEOUT_MS && !isNaN(pid) && this.isProcessAlive(pid)) {
           throw new Error(
             `Synapse database is locked by another process (PID ${pid}). ` +
@@ -229,24 +222,24 @@ export class FileLock {
           );
         }
 
-        // Stale lock (dead process or timed out) - remove it
+        // 过期锁（进程已死亡或超时）——移除它
         fs.unlinkSync(this.lockPath);
       } catch (err) {
         if (err instanceof Error && err.message.includes('locked by another')) {
           throw err;
         }
-        // Other errors reading lock file - try to remove it
+        // 其他读取锁文件的错误——尝试删除它
         try { fs.unlinkSync(this.lockPath); } catch { /* ignore */ }
       }
     }
 
-    // Write our PID to the lock file using exclusive create flag
+    // 使用排他创建标志将 PID 写入锁文件
     try {
       fs.writeFileSync(this.lockPath, String(process.pid), { flag: 'wx' });
       this.held = true;
     } catch (err: any) {
       if (err.code === 'EEXIST') {
-        // Race condition: another process grabbed the lock between our check and write
+        // 竞争条件：另一个进程在我们检查和写入之间抢占了锁
         throw new Error(
           'Synapse database is locked by another process. ' +
           `If this is stale, run 'synapse unlock' or delete ${this.lockPath}`
@@ -257,24 +250,24 @@ export class FileLock {
   }
 
   /**
-   * Release the lock
+   * 释放锁
    */
   release(): void {
     if (!this.held) return;
     try {
-      // Only remove if we still own it (check PID)
+      // 仅在仍归我们所有时移除（检查 PID）
       const content = fs.readFileSync(this.lockPath, 'utf-8').trim();
       if (parseInt(content, 10) === process.pid) {
         fs.unlinkSync(this.lockPath);
       }
     } catch {
-      // Lock file already gone - that's fine
+      // 锁文件已消失——没问题
     }
     this.held = false;
   }
 
   /**
-   * Execute a function while holding the lock
+   * 持锁执行函数
    */
   withLock<T>(fn: () => T): T {
     this.acquire();
@@ -286,7 +279,7 @@ export class FileLock {
   }
 
   /**
-   * Execute an async function while holding the lock
+   * 持锁执行异步函数
    */
   async withLockAsync<T>(fn: () => Promise<T>): Promise<T> {
     this.acquire();
@@ -298,7 +291,7 @@ export class FileLock {
   }
 
   /**
-   * Check if a process is still running
+   * 检查进程是否仍在运行
    */
   private isProcessAlive(pid: number): boolean {
     try {
@@ -311,13 +304,13 @@ export class FileLock {
 }
 
 /**
- * Process items in batches to manage memory
+ * 批量处理条目以管理内存
  *
- * @param items - Array of items to process
- * @param batchSize - Number of items per batch
- * @param processor - Function to process each item
- * @param onBatchComplete - Optional callback after each batch
- * @returns Array of results
+ * @param items - 待处理的条目数组
+ * @param batchSize - 每批的条目数
+ * @param processor - 处理每个条目的函数
+ * @param onBatchComplete - 每批完成后的可选回调
+ * @returns 结果数组
  */
 export async function processInBatches<T, R>(
   items: T[],
@@ -338,7 +331,7 @@ export async function processInBatches<T, R>(
       onBatchComplete(Math.min(i + batchSize, items.length), items.length);
     }
 
-    // Allow GC between batches
+    // 允许批次间进行 GC
     if (global.gc) {
       global.gc();
     }
@@ -348,16 +341,16 @@ export async function processInBatches<T, R>(
 }
 
 /**
- * Simple mutex lock for preventing concurrent operations
+ * 用于防止并发操作的简单 mutex 锁
  */
 export class Mutex {
   private locked = false;
   private waitQueue: Array<() => void> = [];
 
   /**
-   * Acquire the lock
+   * 获取锁
    *
-   * @returns A release function to call when done
+   * @returns 完成后调用的释放函数
    */
   async acquire(): Promise<() => void> {
     while (this.locked) {
@@ -378,7 +371,7 @@ export class Mutex {
   }
 
   /**
-   * Execute a function while holding the lock
+   * 持锁执行函数
    */
   async withLock<T>(fn: () => Promise<T> | T): Promise<T> {
     const release = await this.acquire();
@@ -390,7 +383,7 @@ export class Mutex {
   }
 
   /**
-   * Check if the lock is currently held
+   * 检查锁当前是否被持有
    */
   isLocked(): boolean {
     return this.locked;
@@ -398,9 +391,9 @@ export class Mutex {
 }
 
 /**
- * Chunked file reader for large files
+ * 大文件分块读取器
  *
- * Reads a file in chunks to avoid loading entire file into memory.
+ * 分块读取文件，避免将整个文件加载到内存中。
  */
 export async function* readFileInChunks(
   filePath: string,
@@ -422,11 +415,11 @@ export async function* readFileInChunks(
 }
 
 /**
- * Debounce a function
+ * 对函数进行防抖处理
  *
- * @param fn - Function to debounce
- * @param delay - Delay in milliseconds
- * @returns Debounced function
+ * @param fn - 待防抖的函数
+ * @param delay - 延迟时间（毫秒）
+ * @returns 防抖后的函数
  */
 export function debounce<T extends (...args: unknown[]) => unknown>(
   fn: T,
@@ -446,11 +439,11 @@ export function debounce<T extends (...args: unknown[]) => unknown>(
 }
 
 /**
- * Throttle a function
+ * 对函数进行节流处理
  *
- * @param fn - Function to throttle
- * @param limit - Minimum time between calls in milliseconds
- * @returns Throttled function
+ * @param fn - 待节流的函数
+ * @param limit - 两次调用之间的最短间隔时间（毫秒）
+ * @returns 节流后的函数
  */
 export function throttle<T extends (...args: unknown[]) => unknown>(
   fn: T,
@@ -481,10 +474,10 @@ export function throttle<T extends (...args: unknown[]) => unknown>(
 }
 
 /**
- * Estimate memory usage of an object (rough approximation)
+ * 估算对象的内存占用（粗略估计）
  *
- * @param obj - Object to measure
- * @returns Approximate size in bytes
+ * @param obj - 待测量的对象
+ * @returns 近似大小（字节）
  */
 export function estimateSize(obj: unknown): number {
   const seen = new WeakSet();
@@ -524,7 +517,7 @@ export function estimateSize(obj: unknown): number {
 }
 
 /**
- * Memory monitor for tracking usage during operations
+ * 用于在操作期间追踪内存使用的内存监控器
  */
 export class MemoryMonitor {
   private checkInterval: ReturnType<typeof setInterval> | null = null;
@@ -541,7 +534,7 @@ export class MemoryMonitor {
   }
 
   /**
-   * Start monitoring memory usage
+   * 开始监控内存使用
    */
   start(intervalMs: number = 1000): void {
     this.stop();
@@ -559,7 +552,7 @@ export class MemoryMonitor {
   }
 
   /**
-   * Stop monitoring
+   * 停止监控
    */
   stop(): void {
     if (this.checkInterval) {
@@ -569,14 +562,14 @@ export class MemoryMonitor {
   }
 
   /**
-   * Get peak memory usage in bytes
+   * 获取峰值内存使用量（字节）
    */
   getPeakUsage(): number {
     return this.peakUsage;
   }
 
   /**
-   * Get current memory usage in bytes
+   * 获取当前内存使用量（字节）
    */
   getCurrentUsage(): number {
     return process.memoryUsage().heapUsed;

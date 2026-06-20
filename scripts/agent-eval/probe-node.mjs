@@ -1,6 +1,6 @@
 ﻿#!/usr/bin/env node
-// Probe synapse_node (with trail) against an index using the built dist.
-// Usage: node probe-node.mjs <repo-with-.synapse> <symbol> [code]
+// 使用已构建的 dist 对索引执行 synapse_node（含调用链）的探针测试。
+// 用法：node probe-node.mjs <repo-with-.synapse> <symbol> [code]
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 

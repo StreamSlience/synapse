@@ -3,15 +3,14 @@ import { writeSync } from 'fs';
 import { getGlyphs } from './glyphs';
 import type { ShimmerWorkerMessage } from './types';
 
-// Write directly to fd 1 (stdout) instead of writeStdout().
-// In Node.js worker threads, process.stdout is proxied through the main
-// thread's event loop — so if the main thread is blocked (e.g. SQLite),
-// stdout writes from the worker queue up and the animation freezes.
-// fs.writeSync(1, ...) is a direct kernel syscall that bypasses this.
+// 直接写入 fd 1（stdout），而非通过 writeStdout()。
+// 在 Node.js 工作线程中，process.stdout 经由主线程事件循环代理——
+// 若主线程阻塞（如 SQLite），工作线程的 stdout 写入会排队，动画随之冻结。
+// fs.writeSync(1, ...) 是直接调用内核的系统调用，可绕过此限制。
 //
-// Side effect: bypasses Node's TTY-aware encoding conversion on Windows,
-// so UTF-8 bytes hit the console raw and mojibake on OEM codepages.
-// `getGlyphs()` returns ASCII fallbacks on Windows to avoid this (#168).
+// 副作用：在 Windows 上绕过了 Node 的 TTY 感知编码转换，
+// UTF-8 字节直接到达控制台，在 OEM 代码页下会出现乱码。
+// `getGlyphs()` 在 Windows 上返回 ASCII 回退字形以规避此问题（#168）。
 function writeStdout(s: string): void {
   writeSync(1, s);
 }
@@ -66,7 +65,7 @@ function renderBar(frame: number, filled: number, empty: number): string {
   return bar;
 }
 
-// Mutable state
+// 可变状态
 let currentMessage = '';
 let currentPercent = -1;
 let currentCount = 0;
@@ -105,7 +104,7 @@ function finishPhase(): void {
   currentCount = 0;
 }
 
-// Render loop — independent of main thread
+// 渲染循环——独立于主线程运行
 const tickInterval = setInterval(render, 50);
 
 parentPort!.on('message', (msg: ShimmerWorkerMessage) => {

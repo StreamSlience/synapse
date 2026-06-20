@@ -1,14 +1,14 @@
 ﻿#!/usr/bin/env bash
-# With/without A/B (and optional interactive) eval for a synapse version on a
-# repo. Codegraph is the ONLY variable: both arms launch claude with
-# --strict-mcp-config — with = synapse-only MCP (pointed at $CG_BIN),
-# without = empty MCP. Built-in Read/Grep/Bash stay available in both arms.
+# 针对某个代码库上某个 synapse 版本的有/无 A/B 对比（及可选的交互式）评估。
+# Codegraph 是唯一变量：两组均以 --strict-mcp-config 启动 claude——
+# with 组 = 仅 synapse MCP（指向 $CG_BIN），without 组 = 空 MCP。
+# 内置的 Read/Grep/Bash 在两组中均可用。
 #
-# Usage: run-all.sh <repo-path> "<question>" [headless|tmux|all]
-# Env:   CG_BIN          synapse binary (default: command -v synapse)
-#        AGENT_EVAL_OUT  output dir (default: /tmp/agent-eval)
-#        MODEL / EFFORT  claude model/effort (default: sonnet / high — the
-#                        standing A/B policy; see CLAUDE.md, don't raise)
+# 用法：run-all.sh <repo-path> "<question>" [headless|tmux|all]
+# 环境变量：CG_BIN          synapse 二进制（默认：command -v synapse）
+#           AGENT_EVAL_OUT  输出目录（默认：/tmp/agent-eval）
+#           MODEL / EFFORT  claude 模型/努力程度（默认：sonnet / high——
+#                           既定 A/B 策略；参见 CLAUDE.md，不得调高）
 set -uo pipefail
 
 REPO="${1:?usage: run-all.sh <repo-path> \"<question>\" [headless|tmux|all]}"
@@ -23,7 +23,7 @@ mkdir -p "$OUT"
 [ -d "$REPO/.synapse" ] || { echo "no .synapse index at $REPO — index it first"; exit 1; }
 case "$MODE" in headless|tmux|all) ;; *) echo "mode must be headless|tmux|all (got '$MODE')"; exit 1;; esac
 
-# MCP config files (path form avoids inline-JSON quoting through tmux).
+# MCP 配置文件（路径形式避免通过 tmux 传递内联 JSON 的引号问题）。
 cat > "$OUT/mcp-synapse.json" <<JSON
 {"mcpServers":{"synapse":{"command":"$CG_BIN","args":["serve","--mcp","--path","$REPO"]}}}
 JSON
@@ -34,7 +34,7 @@ echo "###### repo:      $REPO"
 echo "###### question:  $Q"
 echo
 
-# Headless arm: claude -p with stream-json -> exact tool sequence + tokens/cost.
+# 无头模式：claude -p 使用 stream-json -> 精确工具序列 + token/费用。
 headless() {
   local label="$1" cfg="$2"
   echo "############################## HEADLESS [$label] ##############################"

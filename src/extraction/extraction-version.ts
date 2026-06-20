@@ -1,24 +1,20 @@
-﻿/**
- * Extraction version
+/**
+ * 提取版本
  *
- * A monotonically-increasing integer that identifies the *shape and depth* of
- * what the extractor writes into the graph. Unlike `CURRENT_SCHEMA_VERSION`
- * (which tracks the SQLite table layout and is migrated in place), this tracks
- * the EXTRACTED CONTENT — node kinds, edges, synthesizers, resolver coverage.
+ * 一个单调递增的整数，用于标识提取器写入图中的*内容形态与深度*。
+ * 与 `CURRENT_SCHEMA_VERSION`（跟踪 SQLite 表结构并就地迁移）不同，
+ * 此版本跟踪的是已提取内容——节点类型、边、合成器、解析器覆盖范围。
  *
- * When an index was built by an older engine whose `EXTRACTION_VERSION` is
- * below the running engine's, the data on disk is structurally fine but
- * *stale*: it's missing whatever a newer extractor would now produce. A schema
- * migration can't backfill that — only a re-index can. So this is the signal
- * `synapse status` uses to recommend a re-index, and the reason `synapse
- * upgrade` reminds users to refresh their projects.
+ * 当索引由旧版引擎构建，且其 `EXTRACTION_VERSION` 低于当前运行引擎时，
+ * 磁盘上的数据在结构上是完好的，但已*过时*：它缺少新版提取器现在
+ * 能够产出的内容。Schema 迁移无法回填这些内容——只有重新索引才行。
+ * 因此，这是 `synapse status` 用来建议重新索引的信号，也是 `synapse
+ * upgrade` 提醒用户刷新项目的原因。
  *
- * BUMP THIS when a release changes extraction output enough that existing
- * indexes should be rebuilt to benefit — e.g. a new language/framework
- * extractor, a new dynamic-dispatch synthesizer, a new node/edge kind, or a
- * resolver fix that materially changes which edges exist. Do NOT bump for
- * pure bug fixes, CLI/UX changes, or schema-only migrations. Over-bumping
- * turns the re-index hint into noise — keep it honest (see CLAUDE.md, "Honesty
- * in the product is load-bearing").
+ * 当某次发布对提取输出的改动足以让现有索引应当重建以获益时，请递增此值——
+ * 例如新增语言/框架提取器、新的动态分发合成器、新的节点/边类型，或
+ * 实质性改变了哪些边存在的解析器修复。纯粹的 bug 修复、CLI/UX 变更
+ * 或纯 schema 迁移则不应递增。过度递增会让重建提示变成噪音——请保持诚实
+ * （参见 CLAUDE.md 中的"产品诚信是承重墙"）。
  */
 export const EXTRACTION_VERSION = 24;

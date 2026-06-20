@@ -1,23 +1,20 @@
 /**
- * Expo Modules framework — close the JS → native flow for Expo SDK packages.
+ * Expo Modules 框架——为 Expo SDK 包打通 JS → 原生的调用流程。
  *
- * Expo Modules use a Swift / Kotlin DSL distinct from the React Native legacy
- * bridge. Each native module is a class extending `Module` whose
- * `definition()` body declares the JS surface via literal `Name(...)`,
- * `Function(...)`, `AsyncFunction(...)`, `Property(...)`, and `View {...}`
- * calls. Tree-sitter parses these as ordinary call_expressions with trailing
- * closures, so the JS-visible methods don't exist as named symbol nodes by
- * default — `Camera.takePictureAsync(...)` on the JS side has nothing to
- * resolve to.
+ * Expo Modules 使用一套独立于 React Native 旧版 bridge 的 Swift / Kotlin DSL。
+ * 每个原生模块是一个继承自 `Module` 的类，其 `definition()` 函数体通过
+ * `Name(...)`、`Function(...)`、`AsyncFunction(...)`、`Property(...)` 和
+ * `View {...}` 字面量调用来声明 JS 可见的接口。Tree-sitter 将这些解析为
+ * 带尾随闭包的普通 call_expression，因此 JS 可见的方法默认不会以具名符号节点
+ * 的形式存在——JS 端的 `Camera.takePictureAsync(...)` 没有任何节点可以解析到。
  *
- * This framework extractor walks the file source for those declarative
- * literals and emits method nodes named `takePictureAsync` /
- * `notificationAsync` / `width` / etc., attributed to the Swift / Kotlin
- * file. The standard name-matcher then resolves JS `Foo.takePictureAsync(...)`
- * to them via the existing `obj.method` → method-name path — no separate
- * resolve() branch needed.
+ * 此框架提取器遍历文件源码中的这些声明式字面量，生成命名为
+ * `takePictureAsync` / `notificationAsync` / `width` 等的方法节点，
+ * 归属到对应的 Swift / Kotlin 文件。标准名称匹配器随后通过已有的
+ * `obj.method` → 方法名路径，将 JS 端的 `Foo.takePictureAsync(...)` 解析到
+ * 这些节点——无需单独的 resolve() 分支。
  *
- * Real-world shape (expo-haptics):
+ * 真实示例（expo-haptics）：
  *
  *   public class HapticsModule: Module {
  *     public func definition() -> ModuleDefinition {
@@ -28,15 +25,14 @@
  *     }
  *   }
  *
- * Kotlin Module declarations are the same DSL (the API mirrors Swift).
+ * Kotlin Module 声明使用相同的 DSL（API 与 Swift 镜像对应）。
  *
- * Anti-goals (deferred):
- * - The trailing-closure BODY is not extracted as the method's body — it
- *   remains attributed to `definition()` in the existing extraction. Future
- *   work could synthesize a body-range for richer `trace` output, but the
- *   reachability (which is the bridge's main value) is already complete.
- * - `View { ... }` blocks expose JSX prop bindings; that overlaps with
- *   Fabric (Phase 6) and is left to that phase.
+ * 非目标（延后处理）：
+ * - 尾随闭包的函数体不会被提取为方法体——它仍归属于现有提取中的 `definition()`。
+ *   未来工作可以为更丰富的 `trace` 输出合成函数体范围，但可达性
+ *   （这是 bridge 的核心价值）已经完整。
+ * - `View { ... }` 块暴露 JSX prop 绑定；这与 Fabric（第 6 阶段）重叠，
+ *   留待该阶段处理。
  */
 import type { Node } from '../../types';
 import {
@@ -45,58 +41,54 @@ import {
 } from '../types';
 
 /**
- * Match `Function("name")`, `AsyncFunction("name")`, or `Property("name")`
- * at the start of an expression (line-anchored after optional whitespace).
- * The trailing closure that follows isn't captured — we just need the name
- * literal that becomes the JS-visible method.
+ * 匹配 `Function("name")`、`AsyncFunction("name")` 或 `Property("name")`，
+ * 表达式开头（可选空白后行首锚定）。不捕获后续的尾随闭包——我们只需要
+ * 成为 JS 可见方法的名称字面量。
  *
- * NOTE: the regex deliberately requires the open paren to live on the same
- * line as the keyword, which matches every real Expo Module declaration
- * style. Multi-line `AsyncFunction(\n"x"\n)` forms aren't a real shape in
- * the SDK; if any appear we'd extend the regex.
+ * 注意：正则故意要求开括号与关键字在同一行，这与所有真实 Expo Module
+ * 声明风格一致。多行 `AsyncFunction(\n"x"\n)` 形式在 SDK 中不是真实写法；
+ * 若有出现再扩展正则。
  *
- * The optional `<…>` covers Kotlin's GENERIC-typed declarations
- * (`AsyncFunction<Float>("getBatteryLevelAsync")`, `AsyncFunction<Int, String>(…)`)
- * — without it, every Android Expo Module method was silently dropped, so a JS
- * callsite resolved only to the iOS Swift impl and never the Android one.
+ * 可选的 `<…>` 覆盖 Kotlin 的泛型类型声明
+ * （`AsyncFunction<Float>("getBatteryLevelAsync")`、`AsyncFunction<Int, String>(…)`）
+ * ——不加此项，所有 Android Expo Module 方法都会被静默丢弃，导致 JS 调用点
+ * 只能解析到 iOS Swift 实现而无法解析到 Android 实现。
  */
 const EXPO_DECL_RE =
   /\b(Function|AsyncFunction|Property|Constants)\s*(?:<[^(]*>)?\s*\(\s*["']([A-Za-z_][A-Za-z0-9_]*)["']/g;
 
 /**
- * Match the module name literal `Name("ExpoX")`. Used to enrich each emitted
- * method's qualifiedName so the same JS callsite to `Foo.fn` doesn't ambiguate
- * across multiple Expo modules in a monorepo.
+ * 匹配模块名称字面量 `Name("ExpoX")`。用于丰富每个生成方法的 qualifiedName，
+ * 使 monorepo 中多个 Expo 模块的相同 JS 调用点 `Foo.fn` 不会产生歧义。
  */
 const EXPO_MODULE_NAME_RE = /\bName\s*\(\s*["']([A-Za-z_][A-Za-z0-9_]*)["']/;
 
 /**
- * Heuristic class-name match — used as a fallback if `Name(...)` literal
- * isn't found. Detects `class XxxModule: Module` (Swift) or
- * `class XxxModule : Module` (Kotlin / with whitespace tolerance).
+ * 启发式类名匹配——在未找到 `Name(...)` 字面量时作为回退。
+ * 检测 `class XxxModule: Module`（Swift）或
+ * `class XxxModule : Module`（Kotlin / 允许空白）。
  */
 const EXPO_CLASS_RE =
   /\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*Module\b/;
 
 /**
- * Detect whether a file is plausibly an Expo Module — looking for both
- * the `: Module` inheritance and at least one declarative `Function(...)`
- * / `AsyncFunction(...)` / `Property(...)` / `Name(...)` literal. Any one
- * of those alone produces too many false positives (random Swift code can
- * have `class X: Module` for unrelated reasons).
+ * 检测文件是否可能是 Expo Module——同时查找 `: Module` 继承关系以及至少一个
+ * 声明式 `Function(...)` / `AsyncFunction(...)` / `Property(...)` / `Name(...)`
+ * 字面量。任一单独信号都会产生过多误判（随机 Swift 代码可能因无关原因包含
+ * `class X: Module`）。
  */
 function isExpoModuleSource(source: string): boolean {
   if (!EXPO_CLASS_RE.test(source)) return false;
-  // Reset lastIndex defensively; EXPO_DECL_RE has the `g` flag.
+  // 防御性重置 lastIndex；EXPO_DECL_RE 带有 `g` 标志。
   EXPO_DECL_RE.lastIndex = 0;
   return EXPO_DECL_RE.test(source);
 }
 
 /**
- * Extract Expo Module method declarations from a Swift / Kotlin source
- * file. Each `Function("X") { … }` / `AsyncFunction("X") { … }` /
- * `Property("X") { … }` literal becomes a method node named `X`,
- * attributed to the file at the line of the literal.
+ * 从 Swift / Kotlin 源文件中提取 Expo Module 方法声明。
+ * 每个 `Function("X") { … }` / `AsyncFunction("X") { … }` /
+ * `Property("X") { … }` 字面量都会生成一个命名为 `X` 的方法节点，
+ * 归属到该文件的字面量所在行。
  */
 function extractExpoMethods(filePath: string, source: string, language: 'swift' | 'kotlin'): Node[] {
   if (!isExpoModuleSource(source)) return [];
@@ -104,8 +96,8 @@ function extractExpoMethods(filePath: string, source: string, language: 'swift' 
 
   const nameMatch = source.match(EXPO_MODULE_NAME_RE);
   const classMatch = source.match(EXPO_CLASS_RE);
-  // Prefer the explicit `Name("X")` literal — that's the JS-visible
-  // module name. Class name is the fallback.
+  // 优先使用显式的 `Name("X")` 字面量——那是 JS 可见的模块名。
+  // 类名作为回退。
   const moduleName = nameMatch?.[1] ?? classMatch?.[1] ?? 'ExpoModule';
 
   const now = Date.now();
@@ -115,11 +107,11 @@ function extractExpoMethods(filePath: string, source: string, language: 'swift' 
   while ((m = EXPO_DECL_RE.exec(source)) !== null) {
     const kind = m[1]!;
     const methodName = m[2]!;
-    // Compute line number from match index.
+    // 从匹配索引计算行号。
     const before = source.slice(0, m.index);
     const startLine = before.split('\n').length;
-    // Avoid duplicates if the same method literal appears twice in one
-    // file (e.g., declared and re-declared inside a `View {...}` block).
+    // 若同一文件中相同方法字面量出现两次（例如在 `View {...}` 块中
+    // 声明并重新声明），则去重。
     const dedupKey = `${methodName}:${startLine}`;
     if (seenAtLine.has(dedupKey)) continue;
     seenAtLine.add(dedupKey);
@@ -133,9 +125,8 @@ function extractExpoMethods(filePath: string, source: string, language: 'swift' 
       filePath,
       language,
       startLine,
-      // We don't extract the closure body's end-line — use the literal's
-      // line as a single-line range. trace/explore still surfaces the
-      // declaration site, which is the main user-visible signal.
+      // 不提取闭包函数体的结束行——使用字面量的行作为单行范围。
+      // trace/explore 仍会展示声明位置，这是用户可见的主要信号。
       endLine: startLine,
       startColumn,
       endColumn: startColumn + kind.length + 2 + methodName.length + 2,
@@ -154,9 +145,8 @@ export const expoModulesResolver: FrameworkResolver = {
   languages: ['swift', 'kotlin'],
 
   /**
-   * Detect Expo Modules by looking at the project's package.json or
-   * a small scan of source files for the `: Module` + declarative-DSL
-   * markers. Either signal suffices.
+   * 通过查看项目的 package.json 或对源文件进行少量扫描来检测 Expo Modules，
+   * 寻找 `: Module` + 声明式 DSL 标志。任一信号即可。
    */
   detect(context) {
     const pkg = context.readFile('package.json');
@@ -174,9 +164,8 @@ export const expoModulesResolver: FrameworkResolver = {
   },
 
   /**
-   * Per-file extraction — the orchestrator invokes this for every
-   * `.swift` / `.kt` file in the project. We only emit nodes when the
-   * file looks like an Expo Module; otherwise return empty.
+   * 逐文件提取——编排器对项目中的每个 `.swift` / `.kt` 文件调用此方法。
+   * 仅当文件看起来像 Expo Module 时才生成节点；否则返回空结果。
    */
   extract(filePath, source): FrameworkExtractionResult {
     const language = filePath.endsWith('.kt') ? 'kotlin' : 'swift';
@@ -187,10 +176,9 @@ export const expoModulesResolver: FrameworkResolver = {
   },
 
   /**
-   * No bespoke resolution needed — the synthetic method nodes emitted by
-   * `extract()` get picked up by the standard name-matcher when a JS
-   * callsite like `Foo.takePictureAsync(args)` resolves. Returning null
-   * here is correct.
+   * 无需专门的解析逻辑——`extract()` 生成的合成方法节点在 JS 调用点
+   * （如 `Foo.takePictureAsync(args)`）解析时会被标准名称匹配器捕获。
+   * 此处返回 null 是正确的。
    */
   resolve() {
     return null;

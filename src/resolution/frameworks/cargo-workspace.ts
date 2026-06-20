@@ -1,10 +1,9 @@
 /**
- * Cargo Workspace Resolver Helper
+ * Cargo 工作区解析器辅助工具
  *
- * Parses a project's root Cargo.toml and member crate manifests to
- * build a crate-name -> member-directory map. Used by the Rust
- * resolver to resolve `use crate_name::...` references that point
- * into workspace member crates.
+ * 解析项目根目录的 Cargo.toml 及成员 crate 的清单文件，
+ * 构建 crate 名称 -> 成员目录的映射表。供 Rust 解析器
+ * 用于解析指向工作区成员 crate 的 `use crate_name::...` 引用。
  */
 
 import picomatch from 'picomatch';
@@ -215,11 +214,11 @@ function expandMembers(members: string[], context: ResolutionContext): string[] 
 }
 
 /**
- * Build a map from crate-name aliases to workspace member directory paths.
- * Example: "mytool-core" and "mytool_core" -> "crates/mytool-core"
+ * 构建从 crate 名称别名到工作区成员目录路径的映射表。
+ * 示例："mytool-core" 和 "mytool_core" -> "crates/mytool-core"
  *
- * Supports glob members (e.g. `members = ["crates/*"]`) via picomatch
- * when the context exposes `listDirectories`.
+ * 当上下文暴露 `listDirectories` 时，通过 picomatch 支持
+ * glob 成员（例如 `members = ["crates/*"]`）。
  */
 export function getCargoWorkspaceCrateMap(context: ResolutionContext): Map<string, string> {
   const result = new Map<string, string>();

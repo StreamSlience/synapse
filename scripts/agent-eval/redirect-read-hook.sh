@@ -1,27 +1,25 @@
 ﻿#!/usr/bin/env bash
-# PreToolUse(Read) REDIRECT hook — prototype for A/B (P1: get agents off Read and
-# onto synapse_node during implementation, not just for Q&A).
+# PreToolUse(Read) 重定向 hook——A/B 原型（P1：不仅用于 Q&A，也在实现阶段
+# 让 agent 脱离 Read、转向 synapse_node）。
 #
-# When the agent Reads a SOURCE file, deny it and steer to synapse_node's
-# file-view, which (as of the Lever-1 change) returns the WHOLE file verbatim
-# WITH line numbers — imports, top-level code, comments and all — PLUS the file's
-# blast radius, in one call. That output is a strict superset of Read, so the
-# redirect is lossless: the agent loses nothing by taking it, and gains who-
-# depends-on-this for the edit it's about to make.
+# 当 agent Read 某个源文件时，拒绝并引导至 synapse_node 的文件视图：
+# 该视图（自 Lever-1 变更起）会带行号地逐字返回整个文件——
+# imports、顶层代码、注释等全部包含——再加上文件的影响半径，一次调用全搞定。
+# 该输出是 Read 的严格超集，因此重定向是无损的：agent 不会损失任何内容，
+# 还能额外获取「谁依赖此文件」的信息，为即将进行的编辑做好准备。
 #
-# Differs from block-read-hook.sh (which steers to explore/node-by-symbol): this
-# names the FILE-VIEW path explicitly (file:"<base>" + includeCode:true), the
-# 1:1 Read replacement we're trying to get picked during implementation.
+# 与 block-read-hook.sh（引导至 explore/按符号查 node）的区别：
+# 本 hook 明确指定文件视图路径（file:"<base>" + includeCode:true），
+# 即我们希望在实现阶段被采用的 1:1 Read 替代方案。
 #
-# Non-source files (configs, docs, lockfiles, .env) pass through to a real Read.
-# A redirect to a file synapse hasn't indexed SELF-CORRECTS: the file-view
-# replies "No indexed file matches … Read it directly", so a just-created file
-# never dead-ends — the agent Reads it on the next turn.
+# 非源文件（配置、文档、锁文件、.env）直接放行，走真实的 Read。
+# 重定向到 synapse 未索引的文件时会自我修正：文件视图会回复
+# "No indexed file matches … Read it directly"，因此刚创建的文件
+# 永远不会死路——agent 会在下一轮直接 Read 它。
 #
-# Wire via:  claude ... --settings <settings-with-this-as-PreToolUse(Read)>
-# Eval artifact only. The production version is an indexed-aware `synapse`
-# subcommand (cross-platform — no bash/jq — and queries the index so it never
-# bounces a new/un-indexed file), wired opt-in by the installer.
+# 接入方式：claude ... --settings <将本文件设为 PreToolUse(Read) 的 settings>
+# 仅限评估使用。生产版本是感知索引的 `synapse` 子命令（跨平台——无 bash/jq 依赖——
+# 查询索引以确保新文件/未索引文件不会被拒绝），通过安装器按需接入。
 set -uo pipefail
 input="$(cat)"
 fp="$(printf '%s' "$input" | jq -r '.tool_input.file_path // empty' 2>/dev/null)"

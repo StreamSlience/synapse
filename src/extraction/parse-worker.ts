@@ -1,8 +1,8 @@
 /**
- * Parse Worker
+ * 解析 Worker
  *
- * Runs tree-sitter parsing in a separate thread so the main thread
- * stays unblocked and the UI animation renders smoothly.
+ * 在独立线程中运行 tree-sitter 解析，使主线程保持不阻塞，
+ * UI 动画可以流畅渲染。
  */
 
 import { parentPort } from 'worker_threads';
@@ -10,24 +10,20 @@ import { extractFromSource } from './tree-sitter';
 import { detectLanguage, loadGrammarsForLanguages, resetParser } from './grammars';
 import type { Language, ExtractionResult } from '../types';
 
-// Emscripten prints `Aborted()` (and a follow-up RuntimeError diag
-// line) directly to stderr when WASM aborts — before the JS catch
-// runs. Worker stderr is inherited by the parent, so each crash leaks
-// a noise line to the user's terminal even though the JS layer
-// already handles the failure cleanly. Filter these specific lines
-// out at the source. Real diagnostic output (anything we log
-// ourselves) goes through console.* / parentPort and is unaffected.
+// Emscripten 在 WASM 中止时会直接向 stderr 打印 `Aborted()`（以及后续
+// 的 RuntimeError 诊断行）——早于 JS catch 执行。Worker 的 stderr 由父
+// 进程继承，因此每次崩溃都会向用户终端泄露一行噪声，尽管 JS 层已经
+// 干净地处理了该失败。在源头过滤掉这些特定行。真正的诊断输出（我们
+// 自己记录的任何内容）通过 console.* / parentPort 传递，不受影响。
 //
-// Caveats deliberately accepted:
-//   - Per-call match: each `write()` call is matched in isolation.
-//     If Emscripten ever splits `Aborted(` across two write()s (it
-//     doesn't today — synchronous abort prints the whole line at
-//     once via libc puts) the first fragment would leak. Buffering
-//     across calls would add complexity for a hypothetical case.
-//   - Substring exactness: the prefix `Aborted(` is the literal
-//     Emscripten signature. Any user code that legitimately writes
-//     a stderr line starting with that prefix would also be filtered;
-//     in practice no real diagnostic does.
+// 已刻意接受的注意事项：
+//   - 逐次调用匹配：每次 `write()` 调用独立匹配。
+//     若 Emscripten 将 `Aborted(` 拆分到两次 write() 调用中（目前不会
+//     ——同步中止通过 libc puts 一次性打印整行），第一个片段会泄露。
+//     跨调用缓冲会为假设情况增加复杂性。
+//   - 子串精确性：前缀 `Aborted(` 是 Emscripten 的字面签名。任何用户
+//     代码若合法地向 stderr 写入以该前缀开头的行也会被过滤；实践中
+//     没有真正的诊断信息会这样做。
 {
   const realWrite = process.stderr.write.bind(process.stderr);
   process.stderr.write = ((
@@ -40,10 +36,9 @@ import type { Language, ExtractionResult } from '../types';
       s.startsWith('Aborted(') ||
       s.includes('Build with -sASSERTIONS for more info')
     ) {
-      // Honour the Writable stream contract: callbacks must always
-      // fire even when the write is suppressed, or upstream code
-      // waiting on the drain signal would hang. Both overload forms
-      // are handled (`(chunk, cb)` and `(chunk, encoding, cb)`).
+      // 遵守 Writable 流契约：即使写入被抑制，回调也必须始终触发，
+      // 否则等待 drain 信号的上游代码会挂起。两种重载形式都已处理
+      // （`(chunk, cb)` 和 `(chunk, encoding, cb)`）。
       if (typeof encoding === 'function') encoding();
       else if (cb) cb();
       return true;
@@ -65,7 +60,7 @@ parentPort!.on('message', async (msg: { type: string; id?: number; filePath?: st
       const language = detectLanguage(filePath!, content);
       const result: ExtractionResult = extractFromSource(filePath!, content!, language, frameworkNames);
 
-      // Periodic parser reset to reclaim WASM heap memory
+      // 定期重置 parser 以回收 WASM 堆内存
       const count = (parseCounts.get(language) ?? 0) + 1;
       parseCounts.set(language, count);
       if (count % PARSER_RESET_INTERVAL === 0) {
@@ -76,9 +71,8 @@ parentPort!.on('message', async (msg: { type: string; id?: number; filePath?: st
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
 
-      // WASM memory errors leave the module in a corrupted state — all
-      // subsequent parses would also fail (cascading failures). Crash the
-      // worker so the main thread spawns a fresh one with a clean heap.
+      // WASM 内存错误会使模块进入损坏状态——后续所有解析也会失败
+      // （级联故障）。崩溃 worker，使主线程生成一个拥有干净堆的新 worker。
       if (message.includes('memory access out of bounds') || message.includes('out of memory')) {
         process.exit(1);
       }

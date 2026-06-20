@@ -4,37 +4,37 @@ import { TreeSitterExtractor } from './tree-sitter';
 import { isLanguageSupported } from './grammars';
 
 /**
- * RazorExtractor — extracts code relationships from ASP.NET Razor (`.cshtml`)
- * and Blazor (`.razor`) markup.
+ * RazorExtractor——从 ASP.NET Razor（`.cshtml`）和 Blazor（`.razor`）标记中
+ * 提取代码关系。
  *
- * Markup-driven code-behind, view-models, components, and DTOs are referenced
- * only from markup the engine otherwise doesn't parse, so they look like nothing
- * depends on them. This extractor links the markup → the C# types it names:
+ * 标记驱动的 code-behind、视图模型、组件和 DTO 仅从标记中被引用，而引擎
+ * 本身并不解析这些标记，因此它们看起来没有任何依赖。本提取器将标记链接到
+ * 其所命名的 C# 类型：
  *
- *  - `@model Foo` / `@inherits Bar<Foo>`  → the view-model / base type (.cshtml + .razor)
- *  - `@inject IService svc`               → the injected service type
- *  - `@typeof(MainLayout)`                → the referenced type
- *  - `<MyComponent .../>` (Blazor only)   → the component class (.razor or `.cs : ComponentBase`)
- *  - `<Grid TItem="CatalogItem">`         → the generic type argument
+ *  - `@model Foo` / `@inherits Bar<Foo>`  → 视图模型 / 基类型（.cshtml + .razor）
+ *  - `@inject IService svc`               → 注入的服务类型
+ *  - `@typeof(MainLayout)`                → 引用的类型
+ *  - `<MyComponent .../>` （仅 Blazor）  → 组件类（.razor 或 `.cs : ComponentBase`）
+ *  - `<Grid TItem="CatalogItem">`         → 泛型类型参数
  *
- * Risk mitigations (see docs/design/template-markup-parser.md):
- *  - Only PascalCase (`[A-Z]`-initial) tags are treated as components — HTML
- *    elements are lowercase, so they never match. Known Blazor framework
- *    components are skipped (they aren't in-repo, so a ref would just dangle).
- *  - Exactly ONE `component` node per file; component tags become `references`
- *    EDGES, never nodes — no per-tag node explosion.
- *  - Emitted refs are ordinary by-name `references` resolved by the name-matcher;
- *    `razor` shares the `dotnet` language family with `csharp` (name-matcher.ts)
- *    so the cross-family gate doesn't drop them.
- *  - `.cshtml`/`.razor` are registered in grammars.ts so they're indexed.
+ * 风险缓解措施（见 docs/design/template-markup-parser.md）：
+ *  - 只有 PascalCase（大写字母开头）标签才被视为组件——HTML 元素为小写，
+ *    因此永远不会匹配。已知的 Blazor 框架组件会被跳过（它们不在代码库中，
+ *    因此引用只会悬空）。
+ *  - 每个文件恰好生成一个 `component` 节点；组件标签成为 `references` 边，
+ *    而非节点——不会因标签而节点爆炸。
+ *  - 生成的引用是普通的按名 `references`，由名称匹配器解析；
+ *    `razor` 与 `csharp` 共享 `dotnet` 语言族（name-matcher.ts），
+ *    因此跨族门控不会丢弃它们。
+ *  - `.cshtml`/`.razor` 已在 grammars.ts 中注册，因此会被索引。
  *
- * Out of scope (data-flow / low-value): `asp-for`/`th:field` property-string
- * bindings; the C# inside `@code { }` / `@{ }` blocks (noisy regex on embedded C#).
+ * 超出范围（数据流 / 低价值）：`asp-for`/`th:field` 属性字符串绑定；
+ * `@code { }` / `@{ }` 块中的 C#（嵌入式 C# 的噪声正则）。
  */
 
 /**
- * Blazor framework-provided components — invoked by the runtime, not defined
- * in-repo, so a reference to them would never resolve. Skip to avoid dangling refs.
+ * Blazor 框架提供的组件——由运行时调用，不在代码库中定义，
+ * 因此对它们的引用永远无法解析。跳过以避免悬空引用。
  */
 const BLAZOR_BUILTIN_COMPONENTS = new Set([
   'Router', 'Found', 'NotFound', 'RouteView', 'AuthorizeRouteView', 'LayoutView',
@@ -65,15 +65,14 @@ export class RazorExtractor {
     try {
       const componentId = this.createComponentNode().id;
       this.extractDirectives(componentId);
-      // Blazor component tags only — `.cshtml` uses HTML + tag helpers, not
-      // PascalCase component elements.
+      // 仅限 Blazor 组件标签——`.cshtml` 使用 HTML + 标签助手，
+      // 而非 PascalCase 组件元素。
       if (this.filePath.toLowerCase().endsWith('.razor')) {
         this.extractComponentTags(componentId);
       }
-      // Delegate the C# in `@code { }` / `@functions { }` / `@{ }` blocks to the
-      // C# tree-sitter extractor (the Blazor analog of Svelte's <script> block) —
-      // this is where component logic uses services/DTOs, so it covers the types
-      // referenced only from component code.
+      // 将 `@code { }` / `@functions { }` / `@{ }` 块中的 C# 委托给
+      // C# tree-sitter 提取器（相当于 Blazor 版的 Svelte <script> 块）——
+      // 这里是组件逻辑使用服务/DTO 的地方，因此涵盖了仅从组件代码中引用的类型。
       this.processCodeBlocks(componentId);
     } catch (error) {
       this.errors.push({
@@ -113,16 +112,16 @@ export class RazorExtractor {
     return node;
   }
 
-  /** Last `.`-segment (`App.ViewModels.RegisterModel` → `RegisterModel`). */
+  /** 最后一个 `.` 分段（`App.ViewModels.RegisterModel` → `RegisterModel`）。 */
   private lastSegment(s: string): string {
     const i = s.lastIndexOf('.');
     return i >= 0 ? s.slice(i + 1) : s;
   }
 
   /**
-   * Split a type expression into the capitalized type names it contains — base
-   * type plus any generic arguments (`Bar<Foo, Baz>` → `Bar`, `Foo`, `Baz`),
-   * each reduced to its last namespace segment. Lowercase/keyword tokens drop out.
+   * 将类型表达式拆分为其包含的大写类型名——基类型加上所有泛型参数
+   * （`Bar<Foo, Baz>` → `Bar`、`Foo`、`Baz`），每个名称均缩减为最后一个
+   * 命名空间分段。小写/关键字词元会被丢弃。
    */
   private typeNames(expr: string): string[] {
     const out: string[] = [];
@@ -149,13 +148,13 @@ export class RazorExtractor {
     const lines = this.source.split('\n');
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i]!;
-      // `@model Foo` / `@inherits Bar<Foo>` — directive followed by a type.
+      // `@model Foo` / `@inherits Bar<Foo>` — 指令后跟类型。
       const dir = line.match(/^\s*@(?:model|inherits)\s+([A-Za-z_][\w.]*(?:\s*<[^>]+>)?)/);
       if (dir) for (const t of this.typeNames(dir[1]!)) this.pushRef(componentId, t, i + 1, 0);
-      // `@inject IService name` — the type is the first token, a name follows.
+      // `@inject IService name` — 类型是第一个词元，名称跟在后面。
       const inj = line.match(/^\s*@inject\s+([A-Za-z_][\w.]*(?:\s*<[^>]+>)?)\s+[A-Za-z_]/);
       if (inj) for (const t of this.typeNames(inj[1]!)) this.pushRef(componentId, t, i + 1, 0);
-      // `@typeof(X)` anywhere on the line.
+      // `@typeof(X)` 出现在行中的任何位置。
       for (const m of line.matchAll(/@typeof\(\s*([A-Za-z_][\w.]*)\s*\)/g)) {
         const seg = this.lastSegment(m[1]!);
         if (/^[A-Z]/.test(seg)) this.pushRef(componentId, seg, i + 1, m.index ?? 0);
@@ -165,8 +164,8 @@ export class RazorExtractor {
 
   private extractComponentTags(componentId: string): void {
     const lines = this.source.split('\n');
-    // PascalCase opening / self-closing tags. Closing tags (`</Foo>`) start with
-    // `</` and are skipped. HTML elements are lowercase → never match.
+    // PascalCase 开标签 / 自闭合标签。闭合标签（`</Foo>`）以 `</` 开头，
+    // 会被跳过。HTML 元素为小写，永远不会匹配。
     const tagRe = /<([A-Z][A-Za-z0-9_]*)\b([^>]*)>/g;
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i]!;
@@ -175,7 +174,7 @@ export class RazorExtractor {
         const name = m[1]!;
         if (BLAZOR_BUILTIN_COMPONENTS.has(name)) continue;
         this.pushRef(componentId, name, i + 1, m.index + 1);
-        // Generic component type arg: `<Grid TItem="CatalogItem">`.
+        // 泛型组件类型参数：`<Grid TItem="CatalogItem">`。
         for (const t of (m[2] || '').matchAll(/\bT[A-Za-z]*\s*=\s*"([A-Za-z_][\w.]*)"/g)) {
           const seg = this.lastSegment(t[1]!);
           if (/^[A-Z]/.test(seg)) this.pushRef(componentId, seg, i + 1, 0);
@@ -185,9 +184,9 @@ export class RazorExtractor {
   }
 
   /**
-   * Find the matching `}` for the `{` at `openIdx`, skipping string literals and
-   * comments so a brace inside `"{"` / `// }` doesn't throw off the count.
-   * Returns the index of the closing brace, or -1 if unbalanced.
+   * 查找 `openIdx` 处 `{` 对应的 `}`，跳过字符串字面量和注释，
+   * 避免 `"{"` / `// }` 中的花括号干扰计数。
+   * 返回闭合花括号的索引，若不平衡则返回 -1。
    */
   private matchBrace(src: string, openIdx: number): number {
     let depth = 0;
@@ -221,7 +220,7 @@ export class RazorExtractor {
     return -1;
   }
 
-  /** `@code { … }` / `@functions { … }` (Blazor) and `@{ … }` (Razor) C# blocks. */
+  /** `@code { … }` / `@functions { … }`（Blazor）和 `@{ … }`（Razor）C# 块。 */
   private extractCodeBlocks(): Array<{ content: string; lineOffset: number }> {
     const blocks: Array<{ content: string; lineOffset: number }> = [];
     const re = /@(?:code|functions)\b\s*\{|@\{/g;
@@ -232,7 +231,7 @@ export class RazorExtractor {
       const close = this.matchBrace(this.source, openIdx);
       if (close < 0) continue;
       const content = this.source.slice(openIdx + 1, close);
-      // newlines before the content's first char → 0-indexed line of content start
+      // 内容第一个字符前的换行数 → 内容开始处的 0 索引行号
       const lineOffset = (this.source.slice(0, openIdx + 1).match(/\n/g) || []).length;
       blocks.push({ content, lineOffset });
       re.lastIndex = close;
@@ -241,13 +240,12 @@ export class RazorExtractor {
   }
 
   /**
-   * Delegate each `@code`/`@functions`/`@{` block's C# to the tree-sitter C#
-   * extractor and attribute the block's external references (service/DTO calls,
-   * `new X()`, type uses) to the component. The block is wrapped in a synthetic
-   * class so tree-sitter parses the component's fields/methods in a class context
-   * (a Blazor `@code` body compiles into the component's partial class). We keep
-   * only the dependency references — coverage just needs the edges to external
-   * types, not per-member nodes. Degrades gracefully if the C# grammar isn't loaded.
+   * 将每个 `@code`/`@functions`/`@{` 块的 C# 委托给 tree-sitter C# 提取器，
+   * 并将块的外部引用（服务/DTO 调用、`new X()`、类型使用）归属到组件。
+   * 块被包裹在合成类中，使 tree-sitter 在类上下文中解析组件的字段/方法
+   * （Blazor `@code` 体会编译进组件的 partial 类）。我们只保留依赖引用——
+   * 覆盖只需要到外部类型的边，不需要每个成员节点。若 C# grammar 未加载
+   * 则优雅降级。
    */
   private processCodeBlocks(componentId: string): void {
     if (!isLanguageSupported('csharp')) return;
@@ -261,10 +259,10 @@ export class RazorExtractor {
           'csharp'
         ).extract();
       } catch {
-        continue; // grammar not loaded / parse failure — skip this block
+        continue; // grammar 未加载 / 解析失败——跳过此块
       }
-      // The synthetic wrapper adds one line before the block content; map ref
-      // lines back to the .razor file (display only — coverage is line-agnostic).
+      // 合成包裹在块内容前添加了一行；将引用行号映射回 .razor 文件
+      // （仅用于显示——覆盖与行号无关）。
       for (const ref of result.unresolvedReferences) {
         this.unresolvedReferences.push({
           ...ref,

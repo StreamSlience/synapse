@@ -1,15 +1,14 @@
 ﻿/**
- * Interactive daemon manager — the logic behind `synapse daemon` / `daemons`.
+ * 交互式守护进程管理器 — `synapse daemon` / `daemons` 背后的逻辑。
  *
- * Kept separate from the CLI (which owns the @clack/prompts wiring) so the
- * selection/stop loop is unit-testable with a fake `select`: no TTY, no clack,
- * no real daemons. The CLI passes the real clack `select`/`isCancel` plus the
- * registry's list/stop functions.
+ * 与 CLI（负责 @clack/prompts 接线）分开，是为了让选择/停止循环
+ * 可以用假 `select` 进行单元测试：无需 TTY、无需 clack、无需真实守护进程。
+ * CLI 会传入真实的 clack `select`/`isCancel` 以及注册表的 list/stop 函数。
  */
 import * as path from 'path';
 import type { DaemonRecord, StopResult } from './daemon-registry';
 
-/** Sentinel option values (not real roots, so they can't collide with a project path). */
+/** 哨兵选项值（不是真实根目录，因此不会与项目路径冲突）。 */
 export const STOP_ALL = '__stop_all__';
 export const CANCEL = '__cancel__';
 
@@ -19,7 +18,7 @@ export interface PickItem {
   hint?: string;
 }
 
-/** Compact uptime: `45s`, `12m`, `3h 5m`. */
+/** 紧凑运行时长：`45s`、`12m`、`3h 5m`。 */
 export function formatUptime(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
   if (s < 60) return `${s}s`;
@@ -30,9 +29,9 @@ export function formatUptime(ms: number): string {
 }
 
 /**
- * Build the ordered, UI-ready option list: the current project's daemon first
- * (so it's the auto-selected default), the rest newest-first, then "Stop all"
- * (only when there's more than one) and "Cancel".
+ * 构建有序的、可供 UI 使用的选项列表：当前项目的守护进程排在最前面
+ * （作为自动选中的默认项），其余按最新优先排列，最后是"全部停止"
+ * （仅当有多个时显示）和"取消"。
  */
 export function buildPickItems(daemons: DaemonRecord[], cwdRoot: string | null, now: number): PickItem[] {
   const cwd = cwdRoot != null ? path.resolve(cwdRoot) : null;
@@ -64,21 +63,21 @@ export interface PickerDeps {
   list: () => DaemonRecord[];
   stop: (root: string) => Promise<StopResult>;
   stopAll: () => Promise<StopResult[]>;
-  /** Realpath'd root of the current project's daemon, or null. */
+  /** 当前项目守护进程的 realpath 根目录，若无则为 null。 */
   cwdRoot: string | null;
   now: () => number;
-  /** Render the picker; returns the chosen value or a cancel sentinel. */
+  /** 渲染选择器；返回所选值或取消哨兵。 */
   select: (opts: { message: string; options: PickItem[]; initialValue: string }) => Promise<unknown>;
   isCancel: (v: unknown) => boolean;
-  /** Per-action note (e.g. "Stopped daemon …"). */
+  /** 每次操作的提示（如"已停止守护进程 …"）。 */
   note: (msg: string) => void;
-  /** Final line + teardown (clack outro). */
+  /** 最终提示行 + 收尾（clack outro）。 */
   done: (msg: string) => void;
 }
 
 /**
- * Pick a daemon → stop it → re-prompt with what's left, until the user cancels
- * (Esc / Ctrl-C / "Cancel"), picks "Stop all", or nothing remains.
+ * 选择一个守护进程 → 停止它 → 用剩余的守护进程重新提示，直到用户取消
+ * （Esc / Ctrl-C / "取消"）、选择"全部停止"或没有守护进程剩余。
  */
 export async function runDaemonPicker(deps: PickerDeps): Promise<void> {
   for (;;) {
@@ -111,7 +110,7 @@ export async function runDaemonPicker(deps: PickerDeps): Promise<void> {
     const result = await deps.stop(String(choice));
     const forced = result.outcome === 'kill' ? ', forced' : '';
     deps.note(`Stopped daemon (pid ${result.pid}${forced}) — ${choice}`);
-    // Loop: the next iteration re-lists; if more remain it re-prompts, otherwise
-    // the top-of-loop empty check prints "All daemons stopped."
+    // 循环：下次迭代重新列出；若还有守护进程则重新提示，否则
+    // 循环顶部的空检查会打印"所有守护进程已停止"。
   }
 }

@@ -1,6 +1,6 @@
 ﻿#!/usr/bin/env node
-// Probe synapse_context (with call-paths) against an index using the built dist.
-// Usage: node probe-context.mjs <repo-with-.synapse> <task words...>
+// 使用已构建的 dist 对索引执行 synapse_context（含调用路径）的探针测试。
+// 用法：node probe-context.mjs <repo-with-.synapse> <task words...>
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 

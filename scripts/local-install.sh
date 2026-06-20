@@ -1,11 +1,10 @@
 ﻿#!/usr/bin/env bash
-# Build the current branch and link it as the global `synapse` for
-# hands-on testing. Replaces any existing global install for as long
-# as the symlink is in place.
+# 构建当前分支并将其链接为全局 `synapse`，用于手动测试。
+# 在符号链接存在期间替换任何已有的全局安装。
 #
-# Usage:
-#   ./scripts/local-install.sh           # build + link
-#   ./scripts/local-install.sh --undo    # unlink + restore the published version
+# 用法：
+#   ./scripts/local-install.sh           # 构建 + 链接
+#   ./scripts/local-install.sh --undo    # 取消链接 + 恢复已发布版本
 
 set -euo pipefail
 

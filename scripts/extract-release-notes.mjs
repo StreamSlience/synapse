@@ -1,21 +1,18 @@
 #!/usr/bin/env node
 /**
- * Extract a release-notes block from CHANGELOG.md for a given version
- * (or unwrap text supplied on stdin), then join hard-wrapped paragraphs.
+ * 从 CHANGELOG.md 中提取指定版本的发布说明块
+ *（或展开 stdin 传入的文本），然后合并硬换行段落。
  *
- * Why: GitHub renders release-note Markdown with GFM hard breaks, so
- * every `\n` becomes `<br>`. The CHANGELOG is hard-wrapped at ~75
- * chars for readable diffs, which then renders as awkward visible
- * line breaks on the release page. This script joins indented
- * continuation lines into a single line per bullet so the GFM
- * renderer produces clean paragraphs.
+ * 原因：GitHub 用 GFM 硬换行渲染发布说明，每个 `\n` 都会变成 `<br>`。
+ * CHANGELOG 为了使 diff 可读而在约 75 个字符处硬换行，这在发布页面上
+ * 会渲染成令人尴尬的可见换行。本脚本将缩进的续行合并为每个条目一行，
+ * 使 GFM 渲染器产生干净的段落。
  *
- * Repo-level CHANGELOG.md viewing is unaffected (CommonMark treats
- * newlines as spaces there).
+ * 仓库级 CHANGELOG.md 的查看不受影响（CommonMark 在那里将换行视为空格）。
  *
- * Usage:
- *   extract-release-notes.mjs <version>     # read CHANGELOG.md
- *   extract-release-notes.mjs --stdin       # read from stdin (any text)
+ * 用法：
+ *   extract-release-notes.mjs <version>     # 读取 CHANGELOG.md
+ *   extract-release-notes.mjs --stdin       # 从 stdin 读取（任意文本）
  */
 
 import { readFileSync } from 'fs';
@@ -44,13 +41,12 @@ if (arg === '--stdin') {
   block = lines.slice(start, after === -1 ? lines.length : after);
 }
 
-// Track a stack of `{ indent: number }` frames so a continuation line
-// can attach to the right ancestor. Handles the post-nested-list
-// continuation pattern:
+// 追踪 `{ indent: number }` 帧的栈，使续行能附加到正确的祖先节点。
+// 处理嵌套列表后的续行模式：
 //
-//     - top-level
-//         - nested
-//       back to top-level  <- 2-space indent, joins the top-level bullet
+//     - 顶层
+//         - 嵌套
+//       回到顶层  <- 2 空格缩进，合并到顶层条目
 const out = [];
 let buf = '';
 let stack = [];
@@ -67,16 +63,16 @@ function leadingSpaces(s) {
   return m ? m[1].length : 0;
 }
 
-// Bullets: `-`, `*`, `digit.` only. `+` is intentionally excluded — the
-// CHANGELOG uses literal `+` inline (`config + instructions`) and we
-// don't want to misread those as nested bullets.
+// 条目符号仅限 `-`、`*`、`数字.`。`+` 被有意排除——
+// CHANGELOG 行内使用字面 `+`（如 `config + instructions`），
+// 不希望将其误识别为嵌套条目。
 const listItemRe = /^(\s*)([-*]|\d+\.)\s+/;
 const fenceRe = /^\s*```/;
 
 let inFence = false;
 
 for (const line of block) {
-  // Fenced code blocks: pass through verbatim, no joining.
+  // 围栏代码块：原样透传，不合并。
   if (fenceRe.test(line)) {
     flushBuf();
     stack = [];

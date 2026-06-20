@@ -3,13 +3,12 @@ import { getNodeText, getChildByField } from '../tree-sitter-helpers';
 import type { LanguageExtractor } from '../tree-sitter-types';
 
 /**
- * A Rust function's declared return type, normalized to the bare type a chained
- * `Foo::new().bar()` could be called on (the #645/#608 mechanism). Reads the
- * `return_type` field: `-> Self` yields the marker `self` (resolved to the impl's
- * own type at resolution time, like PHP's `self`/`static`); a concrete `-> Foo` /
- * `-> FooBuilder` its name; a reference (`&Foo`) is unwrapped; generics are reduced
- * to the base type (`Vec<Foo>` → `Vec`); primitives / unit / tuple yield undefined.
- * Stdlib types that aren't in the graph simply fail the later existence check.
+ * Rust 函数的声明返回类型，规范化为可用于链式调用 `Foo::new().bar()`
+ * 的裸类型（#645/#608 机制）。读取 `return_type` 字段：
+ * `-> Self` 返回标记 `self`（在解析时解析为 impl 自身的类型，类似 PHP 的 `self`/`static`）；
+ * 具体的 `-> Foo` / `-> FooBuilder` 返回其名称；引用（`&Foo`）被解包；
+ * 泛型缩减为基类型（`Vec<Foo>` → `Vec`）；基本类型 / unit / tuple 返回 undefined。
+ * 不在图中的标准库类型在后续存在性检查中自然失败。
  */
 function extractRustReturnType(node: SyntaxNode, source: string): string | undefined {
   let rt = getChildByField(node, 'return_type');
@@ -33,18 +32,17 @@ function extractRustReturnType(node: SyntaxNode, source: string): string | undef
 }
 
 export const rustExtractor: LanguageExtractor = {
-  // `function_signature_item` is a trait method DECLARATION (`fn render(&self);`,
-  // no body). Extracting it makes a trait's method set first-class, which
-  // impl-navigation and trait-dispatch synthesis need (a struct's method set is
-  // matched against the trait's).
+  // `function_signature_item` 是 trait 方法声明（`fn render(&self);`，无函数体）。
+  // 提取它使 trait 的方法集成为一等公民，这是 impl 导航和 trait 分发合成所需要的
+  //（结构体的方法集与 trait 的方法集进行匹配）。
   functionTypes: ['function_item', 'function_signature_item'],
-  classTypes: [], // Rust has impl blocks
+  classTypes: [], // Rust 有 impl 块
   methodTypes: ['function_item', 'function_signature_item'],
   interfaceTypes: ['trait_item'],
   structTypes: ['struct_item'],
   enumTypes: ['enum_item'],
   enumMemberTypes: ['enum_variant'],
-  typeAliasTypes: ['type_item'], // Rust type aliases
+  typeAliasTypes: ['type_item'], // Rust 类型别名
   importTypes: ['use_declaration'],
   callTypes: ['call_expression'],
   variableTypes: ['let_declaration', 'const_item', 'static_item'],
@@ -78,27 +76,27 @@ export const rustExtractor: LanguageExtractor = {
         return child.text.includes('pub') ? 'public' : 'private';
       }
     }
-    return 'private'; // Rust defaults to private
+    return 'private'; // Rust 默认为 private
   },
   getReceiverType: (node, source) => {
-    // Walk up the tree-sitter AST to find a parent impl_item
+    // 沿 tree-sitter AST 向上查找父 impl_item
     let parent = node.parent;
     while (parent) {
       if (parent.type === 'impl_item') {
-        // For `impl Type { ... }` — the type is a direct type_identifier child
-        // For `impl Trait for Type { ... }` — the type is the LAST type_identifier
-        // (the first is part of the trait path)
+        // 对于 `impl Type { ... }` — 类型是直接的 type_identifier 子节点
+        // 对于 `impl Trait for Type { ... }` — 类型是最后一个 type_identifier
+        //（第一个是 trait 路径的一部分）
         const children = parent.namedChildren;
-        // Find all direct type_identifier children (not nested in scoped paths)
+        // 查找所有直接的 type_identifier 子节点（不嵌套在 scoped 路径中）
         const typeIdents = children.filter(
           (c: SyntaxNode) => c.type === 'type_identifier'
         );
         if (typeIdents.length > 0) {
-          // Last type_identifier is always the implementing type
+          // 最后一个 type_identifier 始终是实现类型
           const typeNode = typeIdents[typeIdents.length - 1]!;
           return source.substring(typeNode.startIndex, typeNode.endIndex);
         }
-        // Handle generic types: impl<T> MyStruct<T> { ... }
+        // 处理泛型类型：impl<T> MyStruct<T> { ... }
         const genericType = children.find(
           (c: SyntaxNode) => c.type === 'generic_type'
         );
@@ -120,7 +118,7 @@ export const rustExtractor: LanguageExtractor = {
   extractImport: (node, source) => {
     const importText = source.substring(node.startIndex, node.endIndex).trim();
 
-    // Helper to get the root crate/module from a scoped path
+    // 帮助函数：从 scoped 路径获取根 crate/module
     const getRootModule = (scopedNode: SyntaxNode): string => {
       const firstChild = scopedNode.namedChild(0);
       if (!firstChild) return source.substring(scopedNode.startIndex, scopedNode.endIndex);
@@ -135,7 +133,7 @@ export const rustExtractor: LanguageExtractor = {
       return source.substring(firstChild.startIndex, firstChild.endIndex);
     };
 
-    // Find the use argument (scoped_use_list or scoped_identifier)
+    // 查找 use 参数（scoped_use_list 或 scoped_identifier）
     const useArg = node.namedChildren.find((c: SyntaxNode) =>
       c.type === 'scoped_use_list' ||
       c.type === 'scoped_identifier' ||
