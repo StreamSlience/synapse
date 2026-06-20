@@ -1,26 +1,26 @@
 {
-  "_comment": "Test corpus for /agent-eval. Add entries freely. size: Small (<~150 files), Medium (~150-1500), Large (>~1500). 'question' is a representative architectural question that exercises cross-file understanding.",
+  "_comment": "/agent-eval 的测试语料库。可随意添加条目。size: Small（文件数 <~150）、Medium（~150–1500）、Large（>~1500）。'question' 是一个有代表性的架构问题，用于考察跨文件理解能力。",
   "TypeScript": [
     {
       "name": "ky",
       "repo": "https://github.com/sindresorhus/ky",
       "size": "Small",
       "files": "~25",
-      "question": "How does ky implement request retries and timeouts?"
+      "question": "ky 是如何实现请求重试和超时的？"
     },
     {
       "name": "excalidraw",
       "repo": "https://github.com/excalidraw/excalidraw",
       "size": "Medium",
       "files": "~600",
-      "question": "How does Excalidraw render and update canvas elements?"
+      "question": "Excalidraw 是如何渲染和更新画布元素的？"
     },
     {
       "name": "vscode",
       "repo": "https://github.com/microsoft/vscode",
       "size": "Large",
       "files": "~10000",
-      "question": "How does the extension host communicate with the main process?"
+      "question": "扩展宿主是如何与主进程通信的？"
     }
   ],
   "JavaScript": [
@@ -29,7 +29,7 @@
       "repo": "https://github.com/expressjs/express",
       "size": "Small",
       "files": "~50",
-      "question": "How does Express route a request through its middleware stack?"
+      "question": "Express 是如何将请求路由经过其中间件栈的？"
     }
   ],
   "Go": [
@@ -38,28 +38,28 @@
       "repo": "https://github.com/spf13/cobra",
       "size": "Small",
       "files": "~50",
-      "question": "How does cobra parse commands and flags?"
+      "question": "cobra 是如何解析命令和标志的？"
     },
     {
       "name": "gin",
       "repo": "https://github.com/gin-gonic/gin",
       "size": "Medium",
       "files": "~150",
-      "question": "How does gin route requests through its middleware chain?"
+      "question": "gin 是如何将请求路由经过其中间件链的？"
     },
     {
       "name": "terraform",
       "repo": "https://github.com/hashicorp/terraform",
       "size": "Large",
       "files": "~4000",
-      "question": "How does Terraform build and walk the resource dependency graph?"
+      "question": "Terraform 是如何构建和遍历资源依赖图的？"
     },
     {
       "name": "cosmos-sdk",
       "repo": "https://github.com/cosmos/cosmos-sdk",
       "size": "Large",
       "files": "~5000",
-      "question": "How does a bank module MsgSend message reach the account balance update? Trace the cross-module call path from the bank keeper's Send handler through to the account/balance store update."
+      "question": "bank 模块的 MsgSend 消息是如何到达账户余额更新的？请追踪从 bank keeper 的 Send 处理器到账户/余额存储更新的跨模块调用路径。"
     }
   ],
   "Python": [
@@ -68,21 +68,21 @@
       "repo": "https://github.com/pallets/click",
       "size": "Small",
       "files": "~60",
-      "question": "How does click parse command-line arguments into commands?"
+      "question": "click 是如何将命令行参数解析为命令的？"
     },
     {
       "name": "flask",
       "repo": "https://github.com/pallets/flask",
       "size": "Medium",
       "files": "~90",
-      "question": "How does Flask dispatch a request to a view function?"
+      "question": "Flask 是如何将请求分发到视图函数的？"
     },
     {
       "name": "django",
       "repo": "https://github.com/django/django",
       "size": "Large",
       "files": "~2700",
-      "question": "How does Django's ORM build and execute a query from a QuerySet?"
+      "question": "Django 的 ORM 是如何从 QuerySet 构建并执行查询的？"
     }
   ],
   "Rust": [
@@ -91,21 +91,21 @@
       "repo": "https://github.com/clap-rs/clap",
       "size": "Medium",
       "files": "~200",
-      "question": "How does clap parse arguments against a derived command definition?"
+      "question": "clap 是如何根据派生的命令定义来解析参数的？"
     },
     {
       "name": "tokio",
       "repo": "https://github.com/tokio-rs/tokio",
       "size": "Large",
       "files": "~700",
-      "question": "How does tokio schedule and run async tasks on its runtime?"
+      "question": "tokio 是如何在其运行时上调度和运行异步任务的？"
     },
     {
       "name": "deno",
       "repo": "https://github.com/denoland/deno",
       "size": "Large",
       "files": "~1500",
-      "question": "How does Deno load and execute a TypeScript module?"
+      "question": "Deno 是如何加载和执行 TypeScript 模块的？"
     }
   ],
   "Java": [
@@ -114,21 +114,21 @@
       "repo": "https://github.com/google/gson",
       "size": "Medium",
       "files": "~200",
-      "question": "How does Gson serialize an object to JSON?"
+      "question": "Gson 是如何将对象序列化为 JSON 的？"
     },
     {
       "name": "okhttp",
       "repo": "https://github.com/square/okhttp",
       "size": "Medium",
       "files": "~640",
-      "question": "How does OkHttp process a request through its interceptor chain?"
+      "question": "OkHttp 是如何将请求经过其拦截器链进行处理的？"
     },
     {
       "name": "guava",
       "repo": "https://github.com/google/guava",
       "size": "Large",
       "files": "~3000",
-      "question": "How does Guava's CacheBuilder build and configure a cache?"
+      "question": "Guava 的 CacheBuilder 是如何构建和配置缓存的？"
     }
   ],
   "Kotlin": [
@@ -137,14 +137,14 @@
       "repo": "https://github.com/InsertKoinIO/koin",
       "size": "Medium",
       "files": "~300",
-      "question": "How does Koin resolve and inject dependencies?"
+      "question": "Koin 是如何解析和注入依赖的？"
     },
     {
       "name": "leakcanary",
       "repo": "https://github.com/square/leakcanary",
       "size": "Medium",
       "files": "~250",
-      "question": "How does LeakCanary detect and analyze a memory leak?"
+      "question": "LeakCanary 是如何检测和分析内存泄漏的？"
     }
   ],
   "Swift": [
@@ -153,7 +153,7 @@
       "repo": "https://github.com/Alamofire/Alamofire",
       "size": "Small",
       "files": "~100",
-      "question": "How does Alamofire build, send, and validate a request?"
+      "question": "Alamofire 是如何构建、发送和验证请求的？"
     }
   ],
   "C#": [
@@ -162,14 +162,14 @@
       "repo": "https://github.com/serilog/serilog",
       "size": "Medium",
       "files": "~250",
-      "question": "How does Serilog route a log event to its sinks?"
+      "question": "Serilog 是如何将日志事件路由到各个 sink 的？"
     },
     {
       "name": "jellyfin",
       "repo": "https://github.com/jellyfin/jellyfin",
       "size": "Large",
       "files": "~2500",
-      "question": "How does Jellyfin scan and identify items in a media library?"
+      "question": "Jellyfin 是如何扫描并识别媒体库中的条目的？"
     }
   ],
   "Ruby": [
@@ -178,14 +178,14 @@
       "repo": "https://github.com/sinatra/sinatra",
       "size": "Small",
       "files": "~60",
-      "question": "How does Sinatra match a request to a route handler?"
+      "question": "Sinatra 是如何将请求匹配到路由处理器的？"
     },
     {
       "name": "discourse",
       "repo": "https://github.com/discourse/discourse",
       "size": "Large",
       "files": "~3000",
-      "question": "How does Discourse create and render a new post?"
+      "question": "Discourse 是如何创建和渲染新帖子的？"
     }
   ],
   "PHP": [
@@ -194,14 +194,14 @@
       "repo": "https://github.com/slimphp/Slim",
       "size": "Small",
       "files": "~80",
-      "question": "How does Slim handle a request through its middleware?"
+      "question": "Slim 是如何通过其中间件处理请求的？"
     },
     {
       "name": "laravel",
       "repo": "https://github.com/laravel/framework",
       "size": "Large",
       "files": "~3000",
-      "question": "How does Laravel resolve and dispatch a route to a controller?"
+      "question": "Laravel 是如何解析路由并将其分发到控制器的？"
     }
   ],
   "C": [
@@ -210,7 +210,7 @@
       "repo": "https://github.com/redis/redis",
       "size": "Large",
       "files": "~600",
-      "question": "How does Redis parse and dispatch a client command?"
+      "question": "Redis 是如何解析并分发客户端命令的？"
     }
   ],
   "C++": [
@@ -219,14 +219,14 @@
       "repo": "https://github.com/nlohmann/json",
       "size": "Small",
       "files": "~100",
-      "question": "How does nlohmann::json parse a JSON string into a value?"
+      "question": "nlohmann::json 是如何将 JSON 字符串解析为值的？"
     },
     {
       "name": "grpc",
       "repo": "https://github.com/grpc/grpc",
       "size": "Large",
       "files": "~3000",
-      "question": "How does gRPC dispatch an incoming RPC to its handler?"
+      "question": "gRPC 是如何将传入的 RPC 分发到其处理器的？"
     }
   ],
   "Dart": [
@@ -235,7 +235,7 @@
       "repo": "https://github.com/flutter/flutter",
       "size": "Large",
       "files": "~6000",
-      "question": "How does Flutter build and lay out a widget tree?"
+      "question": "Flutter 是如何构建和布局 widget 树的？"
     }
   ],
   "Svelte": [
@@ -244,7 +244,7 @@
       "repo": "https://github.com/huntabyte/shadcn-svelte",
       "size": "Medium",
       "files": "~600",
-      "question": "How do shadcn-svelte components compose and apply their styling?"
+      "question": "shadcn-svelte 的组件是如何组合并应用其样式的？"
     }
   ],
   "Lua": [
@@ -253,21 +253,21 @@
       "repo": "https://github.com/nvim-lualine/lualine.nvim",
       "size": "Small",
       "files": "~120",
-      "question": "How does lualine assemble and render its statusline sections and components?"
+      "question": "lualine 是如何组装并渲染其状态栏各节和组件的？"
     },
     {
       "name": "telescope.nvim",
       "repo": "https://github.com/nvim-telescope/telescope.nvim",
       "size": "Medium",
       "files": "~80",
-      "question": "How does Telescope wire a picker to its finder, sorter, and previewer?"
+      "question": "Telescope 是如何将 picker 与其 finder、sorter 和 previewer 连接起来的？"
     },
     {
       "name": "kong",
       "repo": "https://github.com/Kong/kong",
       "size": "Large",
       "files": "~1330",
-      "question": "How does Kong execute plugins across a request's lifecycle phases?"
+      "question": "Kong 是如何在请求生命周期的各个阶段执行插件的？"
     }
   ],
   "Luau": [
@@ -276,21 +276,21 @@
       "repo": "https://github.com/Sleitnick/Knit",
       "size": "Small",
       "files": "~10",
-      "question": "How does Knit register services and expose them to clients?"
+      "question": "Knit 是如何注册 service 并将其暴露给客户端的？"
     },
     {
       "name": "vide",
       "repo": "https://github.com/centau/vide",
       "size": "Small",
       "files": "~40",
-      "question": "How does vide track reactive sources and re-run effects when state changes?"
+      "question": "vide 是如何追踪响应式数据源并在状态变化时重新运行 effect 的？"
     },
     {
       "name": "Fusion",
       "repo": "https://github.com/dphfox/Fusion",
       "size": "Medium",
       "files": "~115",
-      "question": "How does Fusion build and update its reactive UI graph from state objects?"
+      "question": "Fusion 是如何从状态对象构建并更新其响应式 UI 图的？"
     }
   ],
   "Objective-C": [
@@ -299,21 +299,21 @@
       "repo": "https://github.com/SnapKit/Masonry",
       "size": "Small",
       "files": "~50",
-      "question": "How does Masonry build and activate Auto Layout constraints from its block DSL?"
+      "question": "Masonry 是如何通过其 block DSL 构建并激活 Auto Layout 约束的？"
     },
     {
       "name": "FMDB",
       "repo": "https://github.com/ccgus/fmdb",
       "size": "Medium",
       "files": "~80",
-      "question": "How does FMDB execute a prepared SQL statement and bind parameters?"
+      "question": "FMDB 是如何执行预编译 SQL 语句并绑定参数的？"
     },
     {
       "name": "SDWebImage",
       "repo": "https://github.com/SDWebImage/SDWebImage",
       "size": "Large",
       "files": "~400",
-      "question": "How does SDWebImage download, cache, and decode an image for a UIImageView?"
+      "question": "SDWebImage 是如何为 UIImageView 下载、缓存并解码图片的？"
     }
   ],
   "Mixed iOS (Swift+ObjC)": [
@@ -322,21 +322,21 @@
       "repo": "https://github.com/danielgindi/Charts",
       "size": "Small",
       "files": "~270",
-      "question": "How does the ChartsDemo ObjC demo controller drive the Swift Charts library to animate and notify a data update?"
+      "question": "ChartsDemo 的 ObjC 示例控制器是如何驱动 Swift Charts 库来播放动画并通知数据更新的？"
     },
     {
       "name": "realm-swift",
       "repo": "https://github.com/realm/realm-swift",
       "size": "Medium",
       "files": "~370",
-      "question": "How does a Swift `Realm.write { realm.add(obj) }` reach the Objective-C persistence layer?"
+      "question": "Swift 的 `Realm.write { realm.add(obj) }` 是如何到达 Objective-C 持久化层的？"
     },
     {
       "name": "wikipedia-ios",
       "repo": "https://github.com/wikimedia/wikipedia-ios",
       "size": "Large",
       "files": "~1700",
-      "question": "How does tapping a search result reach the article-fetch network call across the Swift / ObjC boundary?"
+      "question": "点击搜索结果是如何跨越 Swift / ObjC 边界到达文章获取网络调用的？"
     }
   ],
   "React Native (legacy bridge + TurboModule)": [
@@ -345,21 +345,21 @@
       "repo": "https://github.com/react-native-async-storage/async-storage",
       "size": "Small",
       "files": "~60",
-      "question": "How does `setItem` in JS reach the native `legacy_multiSet` implementation?"
+      "question": "JS 中的 `setItem` 是如何到达原生 `legacy_multiSet` 实现的？"
     },
     {
       "name": "react-native-svg",
       "repo": "https://github.com/software-mansion/react-native-svg",
       "size": "Medium",
       "files": "~700",
-      "question": "How does a JS `Svg.getTotalLength(...)` reach the iOS / Android native implementation via TurboModule?"
+      "question": "JS 的 `Svg.getTotalLength(...)` 是如何通过 TurboModule 到达 iOS/Android 原生实现的？"
     },
     {
       "name": "react-native-firebase",
       "repo": "https://github.com/invertase/react-native-firebase",
       "size": "Large",
       "files": "~1100",
-      "question": "How does a native iOS push notification reach the JS `messaging().onMessage(...)` listener?"
+      "question": "iOS 原生推送通知是如何到达 JS 的 `messaging().onMessage(...)` 监听器的？"
     }
   ],
   "Expo Modules": [
@@ -368,14 +368,14 @@
       "repo": "https://github.com/expo/expo/tree/main/packages/expo-haptics",
       "size": "Small",
       "files": "~15",
-      "question": "How does `Haptics.notificationAsync(...)` in JS reach `UINotificationFeedbackGenerator` in the Swift Module?"
+      "question": "JS 中的 `Haptics.notificationAsync(...)` 是如何到达 Swift Module 中的 `UINotificationFeedbackGenerator` 的？"
     },
     {
       "name": "expo-camera",
       "repo": "https://github.com/expo/expo/tree/main/packages/expo-camera",
       "size": "Medium",
       "files": "~70",
-      "question": "How does a JS `CameraView.takePictureAsync(options)` reach the native AVCaptureSession / CameraDevice call?"
+      "question": "JS 的 `CameraView.takePictureAsync(options)` 是如何到达原生 AVCaptureSession / CameraDevice 调用的？"
     }
   ],
   "React Native Fabric (view components)": [
@@ -384,21 +384,21 @@
       "repo": "https://github.com/react-native-segmented-control/segmented-control",
       "size": "Small",
       "files": "~25",
-      "question": "How does JSX `<SegmentedControl onChange={cb}/>` reach the native onChange handler on iOS/Android?"
+      "question": "JSX 的 `<SegmentedControl onChange={cb}/>` 是如何到达 iOS/Android 原生 onChange 处理器的？"
     },
     {
       "name": "react-native-screens",
       "repo": "https://github.com/software-mansion/react-native-screens",
       "size": "Medium",
       "files": "~1200",
-      "question": "How does JSX `<ScreenStack>` reach the native RNSScreenStackView component?"
+      "question": "JSX 的 `<ScreenStack>` 是如何到达原生 RNSScreenStackView 组件的？"
     },
     {
       "name": "react-native-skia",
       "repo": "https://github.com/Shopify/react-native-skia",
       "size": "Large",
       "files": "~1000",
-      "question": "How does a `<SkiaPictureView/>` JSX usage reach the iOS / Android native renderer?"
+      "question": "`<SkiaPictureView/>` 的 JSX 用法是如何到达 iOS/Android 原生渲染器的？"
     }
   ],
   "R": [
@@ -407,21 +407,21 @@
       "repo": "https://github.com/twitter/AnomalyDetection",
       "size": "Small",
       "files": "~24",
-      "question": "How does AnomalyDetectionTs go from the exported entry function to the underlying S-H-ESD statistical test? Name the functions on the path in order."
+      "question": "AnomalyDetectionTs 是如何从导出的入口函数到达底层 S-H-ESD 统计检验的？请按顺序列出路径上的函数。"
     },
     {
       "name": "dplyr",
       "repo": "https://github.com/tidyverse/dplyr",
       "size": "Medium",
       "files": "~450",
-      "question": "When mutate() is called on a grouped data frame, which functions handle the grouping and expression evaluation, in order, from mutate() down?"
+      "question": "对分组数据框调用 mutate() 时，哪些函数按什么顺序处理分组和表达式求值（从 mutate() 往下追踪）？"
     },
     {
       "name": "ggplot2",
       "repo": "https://github.com/tidyverse/ggplot2",
       "size": "Large",
       "files": "~1150",
-      "question": "When a ggplot object is printed, how does the plot actually get built and drawn \u2014 trace the path from print/plot to where geoms render. Name the key functions in order."
+      "question": "打印 ggplot 对象时，图形是如何实际构建和绘制的——请追踪从 print/plot 到 geom 渲染的路径，并按顺序列出关键函数。"
     }
   ]
 }
