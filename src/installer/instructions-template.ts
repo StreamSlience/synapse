@@ -36,10 +36,10 @@ export const SYNAPSE_SECTION_END = '<!-- SYNAPSE_END -->';
 export const SYNAPSE_INSTRUCTIONS_BLOCK = `${SYNAPSE_SECTION_START}
 ## Synapse
 
-In repositories indexed by Synapse (a \`.synapse/\` directory exists at the repo root), reach for it BEFORE grep/find or reading files when you need to understand or locate code:
+在由 Synapse 索引的仓库中（仓库根目录存在 \`.synapse/\` 目录），需要理解或定位代码时，请优先使用 Synapse，而非 grep/find 或直接读取文件：
 
-- **MCP tools** (when available): \`synapse_explore\` answers most code questions in one call — the relevant symbols' verbatim source plus the call paths between them. \`synapse_node\` returns one symbol's source + callers, or reads a whole file with line numbers. If the tools are listed but deferred, load them by name via tool search.
-- **Shell** (always works): \`synapse explore "<symbol names or question>"\` and \`synapse node <symbol-or-file>\` print the same output.
+- **MCP 工具**（可用时）：\`synapse_explore\` 一次调用即可回答大多数代码问题——返回相关符号的完整源码及其调用路径。\`synapse_node\` 返回单个符号的源码及其调用者/被调用者，或带行号读取整个文件。若工具已列出但处于延迟加载状态，请通过工具搜索按名称加载。
+- **Shell**（始终可用）：\`synapse explore "<符号名或问题>"\` 和 \`synapse node <符号或文件>\` 输出相同结果。
 
-If there is no \`.synapse/\` directory, skip Synapse entirely — indexing is the user's decision.
+若不存在 \`.synapse/\` 目录，请完全跳过 Synapse——是否建立索引由用户决定。
 ${SYNAPSE_SECTION_END}`;
