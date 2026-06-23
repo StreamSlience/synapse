@@ -378,7 +378,7 @@ export interface ToolResult {
  */
 const projectPathProperty: PropertySchema = {
   type: 'string',
-  description: 'Path to a different project with .synapse/ initialized. If omitted, uses current project. Use this to query other codebases.',
+  description: '已初始化 .synapse/ 的其他项目路径。省略则使用当前项目。可用于查询其他代码库。',
 };
 
 /**
@@ -392,22 +392,22 @@ const projectPathProperty: PropertySchema = {
 export const tools: ToolDefinition[] = [
   {
     name: 'synapse_search',
-    description: 'Quick symbol search by name. Returns locations only (no code). Use synapse_explore instead to get the actual source / understand an area in one call.',
+    description: '按名称快速搜索符号。仅返回位置（不含代码）。如需获取实际源码或一次性理解某个区域，请改用 synapse_explore。',
     inputSchema: {
       type: 'object',
       properties: {
         query: {
           type: 'string',
-          description: 'Symbol name or partial name (e.g., "auth", "signIn", "UserService")',
+          description: '符号名称或部分名称（例如 "auth"、"signIn"、"UserService"）',
         },
         kind: {
           type: 'string',
-          description: 'Filter by node kind',
+          description: '按节点类型过滤',
           enum: ['function', 'method', 'class', 'interface', 'type', 'variable', 'route', 'component'],
         },
         limit: {
           type: 'number',
-          description: 'Maximum results (default: 10)',
+          description: '最大结果数（默认：10）',
           default: 10,
         },
         projectPath: projectPathProperty,
@@ -417,21 +417,21 @@ export const tools: ToolDefinition[] = [
   },
   {
     name: 'synapse_callers',
-    description: 'List functions that call <symbol>. For the full flow, use synapse_explore.',
+    description: '列出调用 <symbol> 的函数。如需查看完整调用流程，请使用 synapse_explore。',
     inputSchema: {
       type: 'object',
       properties: {
         symbol: {
           type: 'string',
-          description: 'Name of the function, method, or class to find callers for',
+          description: '要查找调用者的函数、方法或类的名称',
         },
         file: {
           type: 'string',
-          description: 'Narrow to the definition in this file (path or suffix) when several same-named symbols exist (e.g. one UserService per app in a monorepo)',
+          description: '当存在多个同名符号时（例如单仓库中每个应用各有一个 UserService），通过文件路径或后缀缩小到指定文件中的定义',
         },
         limit: {
           type: 'number',
-          description: 'Maximum number of callers to return (default: 20)',
+          description: '返回的最大调用者数量（默认：20）',
           default: 20,
         },
         projectPath: projectPathProperty,
@@ -441,21 +441,21 @@ export const tools: ToolDefinition[] = [
   },
   {
     name: 'synapse_callees',
-    description: 'List functions that <symbol> calls. For the full flow, use synapse_explore.',
+    description: '列出 <symbol> 调用的函数。如需查看完整调用流程，请使用 synapse_explore。',
     inputSchema: {
       type: 'object',
       properties: {
         symbol: {
           type: 'string',
-          description: 'Name of the function, method, or class to find callees for',
+          description: '要查找被调用者的函数、方法或类的名称',
         },
         file: {
           type: 'string',
-          description: 'Narrow to the definition in this file (path or suffix) when several same-named symbols exist',
+          description: '当存在多个同名符号时，通过文件路径或后缀缩小到指定文件中的定义',
         },
         limit: {
           type: 'number',
-          description: 'Maximum number of callees to return (default: 20)',
+          description: '返回的最大被调用者数量（默认：20）',
           default: 20,
         },
         projectPath: projectPathProperty,
@@ -465,21 +465,21 @@ export const tools: ToolDefinition[] = [
   },
   {
     name: 'synapse_impact',
-    description: 'List symbols affected by changing <symbol>. Use before a refactor.',
+    description: '列出修改 <symbol> 后受影响的符号。在重构前使用。',
     inputSchema: {
       type: 'object',
       properties: {
         symbol: {
           type: 'string',
-          description: 'Name of the symbol to analyze impact for',
+          description: '要分析影响范围的符号名称',
         },
         file: {
           type: 'string',
-          description: 'Narrow to the definition in this file (path or suffix) when several same-named symbols exist',
+          description: '当存在多个同名符号时，通过文件路径或后缀缩小到指定文件中的定义',
         },
         depth: {
           type: 'number',
-          description: 'How many levels of dependencies to traverse (default: 2)',
+          description: '遍历依赖关系的层数（默认：2）',
           default: 2,
         },
         projectPath: projectPathProperty,
@@ -489,39 +489,39 @@ export const tools: ToolDefinition[] = [
   },
   {
     name: 'synapse_node',
-    description: 'Two modes. (1) READ A FILE — use INSTEAD of the Read tool: pass `file` (a path or basename) with no `symbol` and it returns that file\'s current on-disk source with line numbers, exactly the shape Read gives you (`<n>\\t<line>`, safe to Edit from), narrowable with `offset`/`limit` just like Read — PLUS a one-line note of which files depend on it. Same bytes as Read, faster (served from the index), with the blast radius attached. Use it whenever you would Read a source file. (2) ONE SYMBOL you can name — its location, signature, verbatim source (includeCode=true) and caller/callee trail in one call, so before changing it you see what calls it and what your edit would break. For an AMBIGUOUS name it returns EVERY matching definition\'s body in one call (so you never Read a file to find the right overload); pass `file`/`line` to pin one. Use synapse_explore for several related symbols or the full flow.',
+    description: '两种模式。（1）读取文件——替代 Read 工具：仅传入 `file`（路径或基名），不传 `symbol`，返回该文件当前磁盘源码及行号，格式与 Read 完全一致（`<n>\\t<行>`，可直接用于 Edit），支持 `offset`/`limit` 缩窄，与 Read 用法相同——并附带一行依赖说明。字节与 Read 完全相同，速度更快（由索引提供），并附带影响范围。在需要读取源文件时优先使用此工具。（2）指定一个符号——一次调用即可获得其位置、签名、逐字源码（includeCode=true）及调用者/被调用者路径，方便在修改前了解调用关系和可能受影响的内容。对于有歧义的名称，一次调用即返回所有匹配定义的正文（无需读取文件来找到正确的重载）；可通过 `file`/`line` 精确定位。如需查看多个相关符号或完整调用流程，请使用 synapse_explore。',
     inputSchema: {
       type: 'object',
       properties: {
         symbol: {
           type: 'string',
-          description: 'Name of the symbol to read (symbol mode). Omit it and pass `file` alone to read a whole file like Read.',
+          description: '要读取的符号名称（符号模式）。省略此参数并单独传入 `file` 即可像 Read 工具一样读取整个文件。',
         },
         includeCode: {
           type: 'boolean',
-          description: 'Symbol mode: include the symbol\'s full body (default: false). Ignored in file mode, which always returns source unless `symbolsOnly` is set.',
+          description: '符号模式：是否包含符号的完整正文（默认：false）。文件模式下忽略此参数，文件模式始终返回源码（除非设置了 `symbolsOnly`）。',
           default: false,
         },
         file: {
           type: 'string',
-          description: 'A file path or basename (e.g. "harness.rs", "src/auth/session.ts"). Pass it ALONE (no symbol) to READ the file like the Read tool — its full source with line numbers + which files depend on it. Or pass it WITH a symbol to disambiguate an overloaded name to the definition in this file.',
+          description: '文件路径或基名（例如 "harness.rs"、"src/auth/session.ts"）。单独传入（不带 symbol）即可像 Read 工具一样读取文件——返回带行号的完整源码及依赖该文件的其他文件。与 symbol 一起传入时，可将同名重载消歧到指定文件中的定义。',
         },
         offset: {
           type: 'number',
-          description: 'File mode: 1-based line to start reading from, exactly like Read\'s offset. Defaults to the start of the file.',
+          description: '文件模式：从第几行开始读取（1 起计），与 Read 的 offset 用法完全一致。默认从文件开头开始。',
         },
         limit: {
           type: 'number',
-          description: 'File mode: maximum number of lines to return, exactly like Read\'s limit. Defaults to the whole file (capped at 2000 lines, like Read).',
+          description: '文件模式：最多返回的行数，与 Read 的 limit 用法完全一致。默认返回整个文件（上限 2000 行，与 Read 一致）。',
         },
         symbolsOnly: {
           type: 'boolean',
-          description: 'File mode: return just the file\'s symbol map + dependents (a cheap structural overview) instead of its source.',
+          description: '文件模式：仅返回文件的符号映射及依赖方（轻量结构概览），而非源码。',
           default: false,
         },
         line: {
           type: 'number',
-          description: 'Symbol mode only: disambiguate to the definition at/around this line (use with the file:line a trail showed you).',
+          description: '仅限符号模式：消歧到指定行号处/附近的定义（与调用链中显示的 file:line 配合使用）。',
         },
         projectPath: projectPathProperty,
       },
@@ -530,17 +530,17 @@ export const tools: ToolDefinition[] = [
   },
   {
     name: 'synapse_explore',
-    description: 'PRIMARY TOOL — call FIRST for almost any question OR before an edit: how does X work, architecture, a bug, where/what is X, surveying an area, or the symbols you are about to change. Returns the verbatim source of the relevant symbols grouped by file in ONE capped call (Read-equivalent — treat the shown source as already Read; do NOT re-open those files), plus the call path among them. Query can be a natural-language question OR a bag of symbol/file names. Usually the ONLY call you need — more accurate context, in far fewer tokens and round-trips than a search/Read/Grep loop.',
+    description: '主工具——几乎任何问题或编辑前都应优先调用：了解 X 的工作原理、查看架构、排查 bug、定位 X 是什么/在哪里、概览某个区域，或查看即将修改的符号。一次调用即返回相关符号的逐字源码（按文件分组，等同于已 Read——不要再重新打开这些文件），以及符号间的调用路径。查询可以是自然语言问题，也可以是一组符号/文件名。通常是唯一需要的调用——比 search/Read/Grep 循环更准确，token 和往返次数大幅减少。',
     inputSchema: {
       type: 'object',
       properties: {
         query: {
           type: 'string',
-          description: 'Symbol names, file names, or short code terms to explore (e.g., "AuthService loginUser session-manager", "GraphTraverser BFS impact traversal.ts"). For a flow question, name the symbols spanning the flow (e.g. "mutateElement renderScene"). A natural-language question works too — no prior synapse_search needed.',
+          description: '要探索的符号名称、文件名或简短代码术语（例如 "AuthService loginUser session-manager"、"GraphTraverser BFS impact traversal.ts"）。对于流程问题，列出跨越该流程的符号（例如 "mutateElement renderScene"）。也可以直接输入自然语言问题——无需事先调用 synapse_search。',
         },
         maxFiles: {
           type: 'number',
-          description: 'Maximum number of files to include source code from (default: 12)',
+          description: '包含源码的最大文件数（默认：12）',
           default: 12,
         },
         projectPath: projectPathProperty,
@@ -550,7 +550,7 @@ export const tools: ToolDefinition[] = [
   },
   {
     name: 'synapse_status',
-    description: 'Index health check (files / nodes / edges). Skip unless debugging.',
+    description: '索引健康检查（文件数 / 节点数 / 边数）。仅在调试时使用。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -560,32 +560,32 @@ export const tools: ToolDefinition[] = [
   },
   {
     name: 'synapse_files',
-    description: 'Indexed file tree with language + symbol counts. Faster than Glob for project layout.',
+    description: '带语言和符号数量的已索引文件树。比 Glob 更快地了解项目结构。',
     inputSchema: {
       type: 'object',
       properties: {
         path: {
           type: 'string',
-          description: 'Filter to files under this directory path (e.g., "src/components"). Returns all files if not specified.',
+          description: '过滤到此目录路径下的文件（例如 "src/components"）。不指定则返回所有文件。',
         },
         pattern: {
           type: 'string',
-          description: 'Filter files matching this glob pattern (e.g., "*.tsx", "**/*.test.ts")',
+          description: '过滤匹配此 glob 模式的文件（例如 "*.tsx"、"**/*.test.ts"）',
         },
         format: {
           type: 'string',
-          description: 'Output format: "tree" (hierarchical, default), "flat" (simple list), "grouped" (by language)',
+          description: '输出格式："tree"（层级树，默认）、"flat"（简单列表）、"grouped"（按语言分组）',
           enum: ['tree', 'flat', 'grouped'],
           default: 'tree',
         },
         includeMetadata: {
           type: 'boolean',
-          description: 'Include file metadata like language and symbol count (default: true)',
+          description: '是否包含语言和符号数量等文件元数据（默认：true）',
           default: true,
         },
         maxDepth: {
           type: 'number',
-          description: 'Maximum directory depth to show (default: unlimited)',
+          description: '显示的最大目录深度（默认：不限）',
         },
         projectPath: projectPathProperty,
       },
@@ -760,7 +760,7 @@ export class ToolHandler {
         if (tool.name === 'synapse_explore') {
           return {
             ...tool,
-            description: `${tool.description} Budget: make at most ${budget} calls for this project (${stats.fileCount.toLocaleString()} files indexed).`,
+            description: `${tool.description} 预算：本项目最多调用 ${budget} 次（已索引 ${stats.fileCount.toLocaleString()} 个文件）。`,
           };
         }
         return tool;
